@@ -82,18 +82,6 @@ impl StaticIdentity {
         })
     }
 
-    /// Static-static X25519 with a peer's public key. Used by the mesh relay
-    /// layer to derive a pairwise end-to-end key for multi-hop envelopes
-    /// (beta stand-in for the §22.7(5) MLS exporter). Rejects a
-    /// non-contributory (all-zero) result.
-    pub fn dh_agree(&self, peer_public: &[u8; DHLEN]) -> Result<zeroize::Zeroizing<[u8; 32]>> {
-        let ss = self.dh.diffie_hellman(&X25519Public::from(*peer_public));
-        if !ss.was_contributory() {
-            return Err(OmcpError::Crypto("x25519 non-contributory"));
-        }
-        Ok(zeroize::Zeroizing::new(ss.to_bytes()))
-    }
-
     /// Deterministically derive a static identity from a 32-byte master seed
     /// (e.g. recovery-phrase entropy, see [`crate::recovery`]).
     ///

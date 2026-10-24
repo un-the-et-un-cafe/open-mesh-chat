@@ -4,7 +4,7 @@
 //! Application messages are encrypted under MLS epoch secrets via OpenMLS.
 //! PQ hybrid mix is layered via [`super::mls_pq`] (provisional; see extensions/mls-pq.md).
 
-use openmls::prelude::tls_codec::Deserialize;
+use openmls::prelude::tls_codec::{Deserialize, Serialize as _};
 use openmls::prelude::*;
 use openmls_basic_credential::SignatureKeyPair;
 use openmls_rust_crypto::OpenMlsRustCrypto;
@@ -21,6 +21,31 @@ pub const OMCP_MLS_CIPHERSUITE: Ciphersuite =
 /// Soft cap for M3 small groups (PROTOCOL milestone text).
 pub const MAX_SMALL_GROUP_MEMBERS: usize = 32;
 
+/// Store-and-forward reorders heavily: keep this many skipped message keys
+/// per sender (§22.8(1), mesh delivery is out of order).
+pub const MESH_OUT_OF_ORDER_TOLERANCE: u32 = 1_000;
+/// How far ahead of the last seen generation a message may be.
+pub const MESH_MAX_FORWARD_DISTANCE: u32 = 10_000;
+/// Past epochs whose message keys are kept (commit races).
+pub const MESH_MAX_PAST_EPOCHS: usize = 4;
+/// Application-message padding (relays only see bucketed sizes, §22.3).
+pub const MESH_PADDING: usize = 64;
+
+/// Serializable member state (everything needed to resume after a restart).
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct MlsMemberState {
+    pub identity: Vec<u8>,
+    pub signer_public: Vec<u8>,
+    pub group_id: Option<Vec<u8>>,
+    /// Public half of the pending key package (joiner before the Welcome).
+    pub key_package: Option<Vec<u8>>,
+    pub storage: Vec<(Vec<u8>, Vec<u8>)>,
+}
+
+fn ratchet() -> SenderRatchetConfiguration {
+    SenderRatchetConfiguration::new(MESH_OUT_OF_ORDER_TOLERANCE, MESH_MAX_FORWARD_DISTANCE)
+}
+
 /// One peer’s MLS + OMCP-MLS-PQ state.
 /// `(extension_bytes, kem_shared_secrets, hybrid_exporter)` for one epoch.
 pub type PqEpochSecrets = (Vec<u8>, Vec<[u8; 32]>, [u8; 32]);
@@ -32,6 +57,9 @@ pub struct OmcpMlsMember {
     credential_with_key: CredentialWithKey,
     /// Key package for others to add this member (refreshed after consume).
     key_package: Option<KeyPackageBundle>,
+    /// Serialized public key package (survives a restart; the private part
+    /// lives in the OpenMLS key store).
+    kp_bytes: Option<Vec<u8>>,
     group: Option<MlsGroup>,
     /// ML-KEM key for OMCP-MLS-PQ (out-of-band with credential).
     pub pq_kem: MlsPqKemKeyPair,
@@ -61,19 +89,166 @@ impl OmcpMlsMember {
                 credential_with_key.clone(),
             )
             .map_err(|_| OmcpError::Mls("key package"))?;
-        let join_config = MlsGroupJoinConfig::builder()
-            .use_ratchet_tree_extension(true)
-            .build();
+        let join_config = Self::join_config();
         Ok(Self {
             identity,
             provider,
             signer,
             credential_with_key,
             key_package: Some(key_package),
+            kp_bytes: None,
             group: None,
             pq_kem: MlsPqKemKeyPair::generate()?,
             join_config,
         })
+    }
+
+    fn join_config() -> MlsGroupJoinConfig {
+        MlsGroupJoinConfig::builder()
+            .use_ratchet_tree_extension(true)
+            .sender_ratchet_configuration(ratchet())
+            .max_past_epochs(MESH_MAX_PAST_EPOCHS)
+            .padding_size(MESH_PADDING)
+            .build()
+    }
+
+    /// Snapshot for persistence (the OpenMLS key store, group id, signer).
+    pub fn export_state(&self) -> Result<MlsMemberState> {
+        let values = self
+            .provider
+            .storage()
+            .values
+            .read()
+            .map_err(|_| OmcpError::Mls("storage lock"))?;
+        let mut storage: Vec<(Vec<u8>, Vec<u8>)> =
+            values.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+        storage.sort();
+        let key_package = match &self.key_package {
+            Some(_) => Some(self.key_package_bytes()?),
+            None => self.kp_bytes.clone(),
+        };
+        Ok(MlsMemberState {
+            identity: self.identity.clone(),
+            signer_public: self.signer.to_public_vec(),
+            group_id: self
+                .group
+                .as_ref()
+                .map(|g| g.group_id().as_slice().to_vec()),
+            key_package,
+            storage,
+        })
+    }
+
+    /// Resume from [`Self::export_state`]. The OMCP-MLS-PQ KEM is regenerated
+    /// (it is not used by 1:1 mesh chats).
+    pub fn restore(st: &MlsMemberState) -> Result<Self> {
+        let provider = OpenMlsRustCrypto::default();
+        {
+            let mut values = provider
+                .storage()
+                .values
+                .write()
+                .map_err(|_| OmcpError::Mls("storage lock"))?;
+            for (k, v) in &st.storage {
+                values.insert(k.clone(), v.clone());
+            }
+        }
+        let signer = SignatureKeyPair::read(
+            provider.storage(),
+            &st.signer_public,
+            OMCP_MLS_CIPHERSUITE.signature_algorithm(),
+        )
+        .ok_or(OmcpError::Mls("restore signer"))?;
+        let credential_with_key = CredentialWithKey {
+            credential: BasicCredential::new(st.identity.clone()).into(),
+            signature_key: signer.to_public_vec().into(),
+        };
+        let group = match &st.group_id {
+            Some(id) => Some(
+                MlsGroup::load(provider.storage(), &GroupId::from_slice(id))
+                    .map_err(|_| OmcpError::Mls("load group"))?
+                    .ok_or(OmcpError::Mls("group missing"))?,
+            ),
+            None => None,
+        };
+        Ok(Self {
+            identity: st.identity.clone(),
+            provider,
+            signer,
+            credential_with_key,
+            key_package: None,
+            kp_bytes: st.key_package.clone(),
+            group,
+            pq_kem: MlsPqKemKeyPair::generate()?,
+            join_config: Self::join_config(),
+        })
+    }
+
+    /// Whether a group exists (created or joined).
+    pub fn has_group(&self) -> bool {
+        self.group.is_some()
+    }
+
+    /// Current key package (without consuming it), serialized.
+    pub fn key_package_bytes(&self) -> Result<Vec<u8>> {
+        match &self.key_package {
+            Some(b) => b
+                .key_package()
+                .tls_serialize_detached()
+                .map_err(|_| OmcpError::Mls("serialize key package")),
+            None => self
+                .kp_bytes
+                .clone()
+                .ok_or(OmcpError::Mls("no key package")),
+        }
+    }
+
+    /// Validate a peer's serialized key package.
+    pub fn parse_key_package(&self, bytes: &[u8]) -> Result<KeyPackage> {
+        KeyPackageIn::tls_deserialize_exact(bytes)
+            .map_err(|_| OmcpError::Mls("key package decode"))?
+            .validate(self.provider.crypto(), ProtocolVersion::Mls10)
+            .map_err(|_| OmcpError::Mls("key package validate"))
+    }
+
+    /// Encrypt with `aad` authenticated (not encrypted) in the MLS framing.
+    pub fn encrypt_app_message_with_aad(
+        &mut self,
+        plaintext: &[u8],
+        aad: &[u8],
+    ) -> Result<Vec<u8>> {
+        let group = self.group.as_mut().ok_or(OmcpError::Mls("no group"))?;
+        group.set_aad(aad.to_vec());
+        let msg = group
+            .create_message(&self.provider, &self.signer, plaintext)
+            .map_err(|_| OmcpError::Mls("create_message"))?;
+        msg.to_bytes()
+            .map_err(|_| OmcpError::Mls("serialize app message"))
+    }
+
+    /// Decrypt an application message; returns `(plaintext, aad, sender leaf)`.
+    pub fn decrypt_app_message_with_aad(
+        &mut self,
+        bytes: &[u8],
+    ) -> Result<(Vec<u8>, Vec<u8>, u32)> {
+        let msg = MlsMessageIn::tls_deserialize_exact(bytes)
+            .map_err(|_| OmcpError::Mls("app deserialize"))?;
+        let protocol = msg
+            .try_into_protocol_message()
+            .map_err(|_| OmcpError::Mls("not protocol message"))?;
+        let group = self.group.as_mut().ok_or(OmcpError::Mls("no group"))?;
+        let processed = group
+            .process_message(&self.provider, protocol)
+            .map_err(|_| OmcpError::Mls("process app"))?;
+        let aad = processed.aad().to_vec();
+        let leaf = match processed.sender() {
+            Sender::Member(l) => l.u32(),
+            _ => return Err(OmcpError::Mls("sender not a member")),
+        };
+        match processed.into_content() {
+            ProcessedMessageContent::ApplicationMessage(app) => Ok((app.into_bytes(), aad, leaf)),
+            _ => Err(OmcpError::Mls("expected application message")),
+        }
     }
 
     /// Create a new MLS group with this member as sole creator.
@@ -81,6 +256,9 @@ impl OmcpMlsMember {
         let config = MlsGroupCreateConfig::builder()
             .ciphersuite(OMCP_MLS_CIPHERSUITE)
             .use_ratchet_tree_extension(true)
+            .sender_ratchet_configuration(ratchet())
+            .max_past_epochs(MESH_MAX_PAST_EPOCHS)
+            .padding_size(MESH_PADDING)
             .build();
         let group = MlsGroup::new(
             &self.provider,
@@ -412,5 +590,33 @@ mod tests {
         assert_eq!(bob.member_count().unwrap(), 2);
 
         let _ = commit1;
+    }
+
+    #[test]
+    fn one_to_one_restore_out_of_order_and_aad() {
+        let mut alice = OmcpMlsMember::generate(b"alice".to_vec()).unwrap();
+        let bob0 = OmcpMlsMember::generate(b"bob".to_vec()).unwrap();
+        // Bob restarts between sending his key package and the Welcome.
+        let kp_bytes = bob0.key_package_bytes().unwrap();
+        let mut bob = OmcpMlsMember::restore(&bob0.export_state().unwrap()).unwrap();
+        assert_eq!(bob.key_package_bytes().unwrap(), kp_bytes);
+        alice.create_group().unwrap();
+        let kp = alice.parse_key_package(&kp_bytes).unwrap();
+        let (_c, w) = alice.add_members(&[kp]).unwrap();
+        bob.join_from_welcome(&w).unwrap();
+        let cts: Vec<Vec<u8>> = (0..5u8)
+            .map(|i| alice.encrypt_app_message_with_aad(&[i], &[9, i]).unwrap())
+            .collect();
+        let mut alice = OmcpMlsMember::restore(&alice.export_state().unwrap()).unwrap();
+        let mut bob = OmcpMlsMember::restore(&bob.export_state().unwrap()).unwrap();
+        for i in [4usize, 0, 2, 1, 3] {
+            let (p, aad, leaf) = bob.decrypt_app_message_with_aad(&cts[i]).unwrap();
+            assert_eq!((p, aad), (vec![i as u8], vec![9, i as u8]));
+            assert_eq!(leaf, alice.own_leaf_index().unwrap());
+        }
+        assert!(bob.decrypt_app_message_with_aad(&cts[1]).is_err(), "replay");
+        let back = bob.encrypt_app_message_with_aad(b"ok", b"").unwrap();
+        assert_eq!(alice.decrypt_app_message_with_aad(&back).unwrap().0, b"ok");
+        assert_eq!(alice.tag_exporter(5).unwrap(), bob.tag_exporter(5).unwrap());
     }
 }

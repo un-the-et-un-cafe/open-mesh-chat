@@ -91,7 +91,9 @@ pub enum TlvClass {
     MailboxTag,
     /// `0x56`: recipient sub-tags (8·n).
     RecipientSubtags,
-    /// `0x55`, `0x57`–`0x7F`: unassigned (extension process §16).
+    /// `0x58`: `outer_expiry` (len 4, u32 unix seconds, §22.8(2)).
+    OuterExpiry,
+    /// `0x55`, `0x57`, `0x59`–`0x7F`: unassigned (extension process §16).
     Unassigned,
     /// `0x80`–`0xFF`: experimental / private use.
     Experimental,
@@ -104,7 +106,8 @@ pub fn tlv_class(t: u8) -> TlvClass {
         0x01..=0x3F => TlvClass::Core,
         AAD_TLV_TAG => TlvClass::MailboxTag,
         AAD_TLV_SUBTAGS => TlvClass::RecipientSubtags,
-        0x55 | 0x57..=0x7F => TlvClass::Unassigned,
+        0x58 => TlvClass::OuterExpiry,
+        0x55 | 0x57 | 0x59..=0x7F => TlvClass::Unassigned,
         0x80..=0xFF => TlvClass::Experimental,
         _ => TlvClass::Invalid,
     }
@@ -185,6 +188,9 @@ pub fn parse_routing_aad(aad: &[u8]) -> Result<RoutingAad> {
                 }
                 seen_sub = true;
                 out.subtags = v.chunks(8).map(|c| c.try_into().expect("8")).collect();
+            }
+            TlvClass::OuterExpiry if l != 4 => {
+                return Err(OmcpError::Sync("outer_expiry tlv length"))
             }
             _ => {}
         }
@@ -294,6 +300,10 @@ mod tests {
         assert_eq!(tlv_class(0x60), TlvClass::Unassigned);
         assert_eq!(tlv_class(0x55), TlvClass::Unassigned);
         assert_eq!(tlv_class(0x56), TlvClass::RecipientSubtags);
+        assert_eq!(tlv_class(0x58), TlvClass::OuterExpiry);
+        assert_eq!(tlv_class(0x57), TlvClass::Unassigned);
+        assert!(parse_routing_aad(&[0x58, 8, 0, 0, 0, 0, 0, 0, 0, 0]).is_err());
+        assert!(parse_routing_aad(&[0x58, 4, 0, 0, 0, 1]).is_ok());
         assert_eq!(tlv_class(0x90), TlvClass::Experimental);
         assert_eq!(tlv_class(0x00), TlvClass::Invalid);
         assert_eq!(tlv_class(0x40), TlvClass::Invalid);

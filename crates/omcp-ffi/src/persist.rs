@@ -15,7 +15,10 @@ use crate::{BurnMeta, BurnSpec, Contact, FfiError, LinkOutput, NodeState, Queued
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum MessageStatus {
     Queued,
+    /// Sent directly, or handed to a relay (mesh).
     Sent,
+    /// End-to-end delivery ack received over the mesh (§22.8(3)).
+    Delivered,
     Received,
     /// In-chat system notice (restore notice, RS1); `text` = `restored:<ms>`.
     System,
@@ -109,6 +112,7 @@ pub(crate) fn to_stored(m: &MessageRec) -> StoredMessage {
         status: match m.status {
             st::STATUS_QUEUED => MessageStatus::Queued,
             st::STATUS_SENT => MessageStatus::Sent,
+            st::STATUS_DELIVERED => MessageStatus::Delivered,
             st::STATUS_SYSTEM => MessageStatus::System,
             _ => MessageStatus::Received,
         },

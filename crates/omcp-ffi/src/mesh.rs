@@ -13,62 +13,74 @@
 //! opaque envelopes; see the relay module). Mesh frames therefore only ever
 //! travel inside an authenticated, encrypted link to a contact.
 //!
-//! # End-to-end sealing (beta, spec gap)
+//! # End-to-end keys: 2-member MLS (§22.7(5), §22.8(1))
 //!
-//! §22.7(5) makes every chat a 2-member MLS group and derives tags from the
-//! MLS exporter. The apps do not run MLS for 1:1 chats yet, so the beta uses a
-//! **pairwise secret** both contacts can compute without being in range:
+//! Every 1:1 chat is a 2-member MLS group, created the first time the two
+//! contacts have a direct link (link PDU `0x04`, see [`PDU_MLS_SETUP`]):
+//! the contact with the higher id sends a KeyPackage, the lower id creates
+//! the group, adds it and answers with the Welcome, the joiner confirms
+//! with `JOINED`. Existing contacts migrate the same way on their next
+//! direct link. Until both sides have the group, messages wait in the local
+//! queue (direct only) and are not mesh-relayed.
 //!
 //! ```text
-//! pair       = HKDF-SHA-384(salt = "OMCP-mesh-pair-v1",
-//!                           ikm  = X25519(our device key, their device key),
-//!                           info = min(id_a, id_b) ‖ max(id_a, id_b))
-//! tag_secret = HKDF-SHA-384(ikm = pair, info = "OMCP-tag" ‖ epoch_be)   // exporter stand-in
-//! chat tag   = mailbox_tag(tag_secret, epoch)            // TLV 0x54
-//! sub-tag    = subtag(tag_secret, leaf, epoch)           // TLV 0x56, leaf 0 = lower id
-//! msg_key    = HKDF-SHA-384(ikm = pair, info = "OMCP-mesh-msg-v1" ‖ sender_leaf ‖ envelope_id)
-//! ciphertext = seal_padded(msg_key, nonce = 0, aad, [Secret frame: InnerV1])
-//! aad        = "OMCP-mesh-v1" ‖ version ‖ suite ‖ envelope_id ‖ created_ms ‖ flags ‖ header_aad
+//! tag_secret = MLS-Exporter("OMCP-tag", tag_epoch_be, 32)
+//! chat tag   = mailbox_tag(tag_secret, epoch)             // TLV 0x54
+//! sub-tag    = subtag(tag_secret, recipient_leaf, epoch)  // TLV 0x56
+//! ciphertext = MLS application message (PrivateMessage), MLS AAD =
+//!              "OMCP-mesh-v1" ‖ version ‖ suite ‖ envelope_id ‖ created_ms ‖ flags ‖ header_aad
 //! ```
 //!
-//! The key is unique per `envelope_id` (random) and sender, so the fixed
-//! nonce is never reused. Relays see only tags, sizes (bucket-padded, §22.3)
-//! and expiry. No forward secrecy / PQ for mesh hops (Noise still protects
-//! each hop): this is the gap MLS closes.
+//! Envelopes are bound to the MLS epoch, not to the device key (§22.8(5)):
+//! rotating the device key does not touch the group. Relays see only tags,
+//! padded sizes (MLS padding) and `outer_expiry` (TLV `0x58`).
+//!
+//! # Delivery acks (§22.8(3))
+//!
+//! The recipient answers every mesh message with `DELIVERY_ACK`:
+//! `msg_hash` = BLAKE2b-256(ciphertext)[0..16] in the clear for relays, plus an
+//! envelope to the sender's sub-tag whose MLS application message is
+//! `0x45 ‖ msg_hash`. The sender only trusts the MLS-authenticated copy; the
+//! message then moves Queued → Sent (handed to a relay) → Delivered.
 
 use std::collections::{BTreeSet, HashMap, VecDeque};
 
-use hkdf::Hkdf;
 use omcp_core::ble::fragment::{fragment_and_seal, random_frag_id};
 use omcp_core::ble::message::CONTENT_TYPE_INNER_V1;
 use omcp_core::burn::{self as core_burn, BurnHeader};
 use omcp_core::framing::flags;
-use omcp_core::store::CarryRec;
+use omcp_core::mls::group::{MlsMemberState, OmcpMlsMember};
+use omcp_core::store::{self as st, CarryRec};
 use omcp_core::suite::{ENVELOPE_VERSION_V1, SUITE_OMCP_2026_A};
-use omcp_core::sync::budget::{RelayBudget, MAX_EXPIRY_MS, MB};
-use omcp_core::sync::compress::{open_padded, seal_padded, Frame, FrameClass, SealOptions};
-use omcp_core::sync::relay::{put_expires_in_aad, CarryItem, RelayConfig, RelayEngine, RelayEvent};
+use omcp_core::sync::budget::{RelayBudget, DEFAULT_EXPIRY_MS, MAX_EXPIRY_MS, MB};
+use omcp_core::sync::relay::{
+    effective_expiry, msg_hash, put_expires_in_aad, CarryItem, RelayConfig, RelayEngine,
+    RelayEvent, FRAME_DELIVERY_ACK, MSG_HASH_LEN,
+};
 use omcp_core::sync::tag::{
     mailbox_tag, put_subtags_in_aad, put_tag_in_aad, subtag, tag_epoch, MailboxTag,
 };
 use omcp_core::EnvelopeV1;
-use sha2::Sha384;
-use zeroize::Zeroizing;
 
 use crate::{
-    invalid, now_ms, Contact, Established, FfiError, LinkOutput, MeshLink, NodeInner, NodeState,
-    OmcpNode, Queued, LINK_FRAGMENT_PAYLOAD,
+    invalid, now_ms, random_id16, Contact, Established, FfiError, LinkOutput, MeshLink,
+    MessageStatus, NodeInner, NodeState, OmcpNode, Queued, LINK_FRAGMENT_PAYLOAD,
 };
 
-/// Link PDU kind for mesh frames.
+/// Link PDU `0x03` `MESH_FRAME` (§21.9).
 pub(crate) const PDU_MESH: u8 = 0x03;
+/// Link PDU `0x04`: MLS group setup for a 1:1 chat (KeyPackage / Welcome /
+/// JOINED). Not in the §21.9 registry (spec gap).
+pub(crate) const PDU_MLS_SETUP: u8 = 0x04;
+const SETUP_KEY_PACKAGE: u8 = 0x01;
+const SETUP_WELCOME: u8 = 0x02;
+const SETUP_JOINED: u8 = 0x03;
 /// Mesh frames sealed onto one link per call (keeps BLE queues short).
 pub(crate) const MESH_FRAMES_PER_FLUSH: usize = 32;
 /// Simultaneous mesh links the apps should keep (central + peripheral roles).
 pub const MAX_MESH_LINKS: u32 = 4;
 const SETTINGS_KEY: &[u8] = b"mesh-settings";
-const PAIR_SALT: &[u8] = b"OMCP-mesh-pair-v1";
-const MSG_INFO: &[u8] = b"OMCP-mesh-msg-v1";
+const MLS_KEY: &[u8] = b"mesh-mls:";
 const AAD_PREFIX: &[u8] = b"OMCP-mesh-v1";
 
 /// Relay settings shown in Settings → Mesh relay.
@@ -89,6 +101,14 @@ pub struct MeshStats {
     pub neighbours: u32,
 }
 
+/// A message status change caused by the mesh (handed to a relay, acked).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct MessageStatusUpdate {
+    pub id_hex: String,
+    pub contact_id: String,
+    pub status: MessageStatus,
+}
+
 /// §22.4 default relay storage budget (battery / cellular): 50 MB.
 #[uniffi::export]
 pub fn mesh_default_carry_cap_bytes() -> u64 {
@@ -107,14 +127,40 @@ pub fn mesh_max_links() -> u32 {
     MAX_MESH_LINKS
 }
 
+/// One contact's 1:1 MLS group state.
+pub(crate) struct ContactMls {
+    member: OmcpMlsMember,
+    /// Both sides have the group (creator: `JOINED` received).
+    ready: bool,
+}
+
+/// A mesh envelope for us: `(wanted tag, envelope, acked msg_hash if an ack)`.
+pub(crate) type MeshDelivery = (MailboxTag, EnvelopeV1, Option<[u8; MSG_HASH_LEN]>);
+type PendingCopy = ([u8; 16], u64, zeroize::Zeroizing<Vec<u8>>, bool);
+
+/// One frame waiting for a link: link PDU kind, plain frame, and our own
+/// message id it hands over (status → Sent once it is actually sealed).
+pub(crate) struct OutFrame {
+    pdu: u8,
+    frame: Vec<u8>,
+    handed: Option<[u8; 16]>,
+}
+
+/// Persisted as `(ready, member state)` (sealed meta row).
+type ContactMlsRec = (bool, MlsMemberState);
+
 pub(crate) struct MeshState {
     pub engine: RelayEngine,
     /// Wanted sub-tag → contact.
     pub tags: HashMap<MailboxTag, [u8; 32]>,
-    /// (epoch, contacts fingerprint) the tags were computed for.
+    /// (epoch, MLS fingerprint) the tags were computed for.
     pub tags_for: Option<(u64, [u8; 32])>,
-    /// Plain mesh frames waiting to be sealed onto each link.
-    pub out: HashMap<u64, VecDeque<Vec<u8>>>,
+    /// Frames waiting to be sealed onto each link.
+    pub out: HashMap<u64, VecDeque<OutFrame>>,
+    /// 1:1 MLS groups by contact.
+    pub mls: HashMap<[u8; 32], ContactMls>,
+    /// Status changes for the apps (`mesh_take_status_updates`).
+    pub status: Vec<MessageStatusUpdate>,
 }
 
 impl MeshState {
@@ -125,6 +171,8 @@ impl MeshState {
             tags: HashMap::new(),
             tags_for: None,
             out: HashMap::new(),
+            mls: HashMap::new(),
+            status: Vec::new(),
         }
     }
 
@@ -139,25 +187,17 @@ impl MeshState {
         v.sort_unstable();
         v
     }
+
+    /// MLS group with this contact is up on both sides.
+    pub(crate) fn mls_ready(&self, peer: &[u8; 32]) -> bool {
+        self.mls.get(peer).is_some_and(|m| m.ready)
+    }
 }
 
 fn rand16() -> [u8; 16] {
     let mut b = [0u8; 16];
     let _ = getrandom::getrandom(&mut b);
     b
-}
-
-fn hkdf32(
-    salt: Option<&[u8]>,
-    ikm: &[u8],
-    info: &[&[u8]],
-) -> Result<Zeroizing<[u8; 32]>, FfiError> {
-    let hk = Hkdf::<Sha384>::new(salt, ikm);
-    let mut out = Zeroizing::new([0u8; 32]);
-    let info: Vec<u8> = info.concat();
-    hk.expand(&info, &mut out[..])
-        .map_err(|_| invalid("mesh hkdf"))?;
-    Ok(out)
 }
 
 /// Our id as this contact knows us (legacy contacts know the legacy id).
@@ -167,29 +207,6 @@ fn my_id(inner: &NodeInner, id: &[u8; 32], c: &Contact) -> [u8; 32] {
     } else {
         inner.peer_id
     }
-}
-
-struct Pair {
-    secret: Zeroizing<[u8; 32]>,
-    my_leaf: u8,
-}
-
-fn pair(inner: &NodeInner, id: &[u8; 32], c: &Contact) -> Result<Pair, FfiError> {
-    let me = my_id(inner, id, c);
-    let ss = inner.identity()?.dh_agree(&c.dh)?;
-    let (lo, hi) = if me < *id { (me, *id) } else { (*id, me) };
-    Ok(Pair {
-        secret: hkdf32(Some(PAIR_SALT), &ss[..], &[&lo, &hi])?,
-        my_leaf: u8::from(me >= *id),
-    })
-}
-
-fn tag_secret(p: &Pair, epoch: u64) -> Result<Zeroizing<[u8; 32]>, FfiError> {
-    hkdf32(None, &p.secret[..], &[b"OMCP-tag", &epoch.to_be_bytes()])
-}
-
-fn msg_key(p: &Pair, sender_leaf: u8, id: &[u8; 16]) -> Result<Zeroizing<[u8; 32]>, FfiError> {
-    hkdf32(None, &p.secret[..], &[MSG_INFO, &[sender_leaf], id])
 }
 
 fn aad(env: &EnvelopeV1) -> Vec<u8> {
@@ -203,36 +220,40 @@ fn aad(env: &EnvelopeV1) -> Vec<u8> {
     a
 }
 
-fn no_compress(burn: bool) -> SealOptions {
-    SealOptions {
-        compress: false,
-        compress_quoted: false,
-        burn,
-        nearby: false,
-    }
+fn mls_err(_: omcp_core::error::OmcpError) -> FfiError {
+    invalid("mls")
 }
 
-/// Seal `inner` (InnerV1) for contact `id` as an opaque mesh envelope.
+/// The other member's leaf in a 2-member group.
+fn other_leaf(m: &OmcpMlsMember) -> Result<u32, FfiError> {
+    Ok(1 - m.own_leaf_index().map_err(mls_err)?.min(1))
+}
+
+/// Seal `plain` for contact `peer` as an opaque mesh envelope (MLS
+/// application message), addressed to the other leaf's sub-tag.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn seal_for(
-    inner: &NodeInner,
-    id: &[u8; 32],
-    c: &Contact,
+fn seal_for(
+    st: &mut NodeState,
+    peer: &[u8; 32],
     envelope_id: [u8; 16],
     created_ms: u64,
     expires_at: u64,
     ttl_hops: u8,
     plain: &[u8],
-    burn: bool,
 ) -> Result<EnvelopeV1, FfiError> {
-    let p = pair(inner, id, c)?;
+    let m = st
+        .mesh
+        .mls
+        .get_mut(peer)
+        .filter(|m| m.ready)
+        .ok_or_else(|| invalid("no MLS group"))?;
     let epoch = tag_epoch(created_ms);
-    let ts = tag_secret(&p, epoch)?;
+    let ts = m.member.tag_exporter(epoch).map_err(mls_err)?;
     let mut header_aad = Vec::new();
-    put_tag_in_aad(&mut header_aad, &mailbox_tag(&ts[..], epoch)?);
+    put_tag_in_aad(&mut header_aad, &mailbox_tag(&ts, epoch)?);
     put_subtags_in_aad(
         &mut header_aad,
-        &[subtag(&ts[..], u32::from(1 - p.my_leaf), epoch)?],
+        &[subtag(&ts, other_leaf(&m.member)?, epoch)?],
     )?;
     put_expires_in_aad(&mut header_aad, expires_at);
     let mut env = EnvelopeV1 {
@@ -245,43 +266,52 @@ pub(crate) fn seal_for(
         header_aad,
         ciphertext: Vec::new(),
     };
-    let key = msg_key(&p, p.my_leaf, &envelope_id)?;
-    env.ciphertext = seal_padded(
-        &key,
-        &[0u8; 12],
-        &aad(&env),
-        &[Frame {
-            class: FrameClass::Secret,
-            data: plain.to_vec(),
-        }],
-        no_compress(burn),
-    )?;
+    env.ciphertext = m
+        .member
+        .encrypt_app_message_with_aad(plain, &aad(&env))
+        .map_err(mls_err)?;
+    st.save_mls(peer)?;
     Ok(env)
 }
 
-/// Open a mesh envelope from contact `id` (sender = the other leaf).
-pub(crate) fn open_from(
-    inner: &NodeInner,
-    id: &[u8; 32],
-    c: &Contact,
+/// Open a mesh envelope from contact `peer` (sender = the other leaf).
+fn open_from(
+    st: &mut NodeState,
+    peer: &[u8; 32],
     env: &EnvelopeV1,
-) -> Result<Zeroizing<Vec<u8>>, FfiError> {
-    let p = pair(inner, id, c)?;
-    let key = msg_key(&p, 1 - p.my_leaf, &env.envelope_id)?;
-    let frames = open_padded(&key, &[0u8; 12], &aad(env), &env.ciphertext)?;
-    let f = frames
-        .into_iter()
-        .next()
-        .ok_or_else(|| invalid("empty mesh payload"))?;
-    Ok(Zeroizing::new(f.data))
+) -> Result<zeroize::Zeroizing<Vec<u8>>, FfiError> {
+    let m = st
+        .mesh
+        .mls
+        .get_mut(peer)
+        .ok_or_else(|| invalid("no MLS group"))?;
+    let (plain, got_aad, leaf) = m
+        .member
+        .decrypt_app_message_with_aad(&env.ciphertext)
+        .map_err(mls_err)?;
+    let plain = zeroize::Zeroizing::new(plain);
+    st.save_mls(peer)?;
+    let m = &st.mesh.mls[peer];
+    if got_aad != aad(env) || leaf != other_leaf(&m.member)? {
+        return Err(invalid("mesh envelope binding"));
+    }
+    Ok(plain)
 }
 
 impl NodeState {
-    /// Load settings, carry store and dedup set (node start).
+    /// Load settings, MLS groups, carry store and dedup set (node start).
     pub(crate) fn load_mesh(&mut self, now: u64) -> Result<(), FfiError> {
         let mut mesh = MeshState::new(now);
         if let Some((enabled, cap)) = self.db.get_meta::<(bool, u64)>(SETTINGS_KEY)? {
             mesh.engine.set_config(config(enabled, cap));
+        }
+        for id in self.contacts.keys() {
+            let Some(r) = self.db.get_meta::<ContactMlsRec>(&mls_key(id))? else {
+                continue;
+            };
+            if let Ok(member) = OmcpMlsMember::restore(&r.1) {
+                mesh.mls.insert(*id, ContactMls { member, ready: r.0 });
+            }
         }
         for r in self.db.carry_items()? {
             match EnvelopeV1::decode(&r.envelope) {
@@ -291,6 +321,7 @@ impl NodeState {
                         expires_at: r.expires_at,
                         hop_count: r.hop_count,
                         own: r.own,
+                        ack_of: r.ack_of,
                     },
                     now,
                 ),
@@ -301,6 +332,14 @@ impl NodeState {
             mesh.engine.mark_seen(s.id, s.until_ms);
         }
         self.mesh = mesh;
+        Ok(())
+    }
+
+    pub(crate) fn save_mls(&self, peer: &[u8; 32]) -> Result<(), FfiError> {
+        if let Some(m) = self.mesh.mls.get(peer) {
+            let rec: ContactMlsRec = (m.ready, m.member.export_state().map_err(mls_err)?);
+            self.db.put_meta(&mls_key(peer), &rec)?;
+        }
         Ok(())
     }
 
@@ -336,17 +375,47 @@ impl NodeState {
         }
     }
 
-    /// Apply engine events: queue frames, persist carry changes. Returns
-    /// deliveries for the caller to open.
-    pub(crate) fn route(
-        &mut self,
-        ev: Vec<RelayEvent>,
-    ) -> Result<Vec<(MailboxTag, EnvelopeV1)>, FfiError> {
+    pub(crate) fn set_status(&mut self, id: &[u8; 16], status: u8) -> Result<(), FfiError> {
+        let Some(m) = self.db.message(id)? else {
+            return Ok(());
+        };
+        // Never go backwards (Delivered > Sent > Queued).
+        let rank = |s: u8| match s {
+            st::STATUS_QUEUED => 0,
+            st::STATUS_SENT => 1,
+            st::STATUS_DELIVERED => 2,
+            _ => 3,
+        };
+        if !m.mine || rank(status) <= rank(m.status) {
+            return Ok(());
+        }
+        self.update_message(id, |m| m.status = status)?;
+        self.mesh.status.push(MessageStatusUpdate {
+            id_hex: hex::encode(id),
+            contact_id: hex::encode(m.peer),
+            status: if status == st::STATUS_DELIVERED {
+                MessageStatus::Delivered
+            } else {
+                MessageStatus::Sent
+            },
+        });
+        Ok(())
+    }
+
+    /// Apply engine events: queue frames, persist carry changes, status
+    /// changes. Returns deliveries for the caller to open.
+    pub(crate) fn route(&mut self, ev: Vec<RelayEvent>) -> Result<Vec<MeshDelivery>, FfiError> {
         let mut got = Vec::new();
+        let mut last_link = None;
         for e in ev {
             match e {
                 RelayEvent::Send { link, frame } => {
-                    self.mesh.out.entry(link).or_default().push_back(frame)
+                    last_link = Some(link);
+                    self.mesh.out.entry(link).or_default().push_back(OutFrame {
+                        pdu: PDU_MESH,
+                        frame,
+                        handed: None,
+                    })
                 }
                 RelayEvent::Stored(it) => self.db.put_carry(&CarryRec {
                     id: it.envelope.envelope_id,
@@ -354,9 +423,24 @@ impl NodeState {
                     expires_at: it.expires_at,
                     hop_count: it.hop_count,
                     own: it.own,
+                    ack_of: it.ack_of,
                 })?,
                 RelayEvent::Removed(id) => self.db.delete_carry(&id)?,
-                RelayEvent::Deliver { tag, envelope, .. } => got.push((tag, envelope)),
+                RelayEvent::Deliver {
+                    tag,
+                    envelope,
+                    ack_of,
+                    ..
+                } => got.push((tag, envelope, ack_of)),
+                // Emitted right after the Send carrying it.
+                RelayEvent::Handed(id) => {
+                    if let Some(f) = last_link
+                        .and_then(|l| self.mesh.out.get_mut(&l))
+                        .and_then(|q| q.back_mut())
+                    {
+                        f.handed = Some(id);
+                    }
+                }
             }
         }
         Ok(got)
@@ -380,6 +464,23 @@ impl NodeState {
     pub(crate) fn mesh_seen(&self, id: &[u8; 16]) -> bool {
         self.mesh.engine.seen(id)
     }
+
+    fn queue_setup(&mut self, link: u64, kind: u8, body: &[u8]) {
+        let mut f = Vec::with_capacity(1 + body.len());
+        f.push(kind);
+        f.extend_from_slice(body);
+        self.mesh.out.entry(link).or_default().push_back(OutFrame {
+            pdu: PDU_MLS_SETUP,
+            frame: f,
+            handed: None,
+        });
+    }
+}
+
+fn mls_key(peer: &[u8; 32]) -> Vec<u8> {
+    let mut k = MLS_KEY.to_vec();
+    k.extend_from_slice(peer);
+    k
 }
 
 fn config(enabled: bool, cap: u64) -> RelayConfig {
@@ -393,40 +494,44 @@ fn config(enabled: bool, cap: u64) -> RelayConfig {
     }
 }
 
-/// Fingerprint of the contact set + device keys (tags must be recomputed
-/// when it changes).
-fn contacts_fp(st: &NodeState) -> [u8; 32] {
-    let mut ids: Vec<(&[u8; 32], &[u8; 32])> =
-        st.contacts.iter().map(|(id, c)| (id, &c.dh)).collect();
-    ids.sort();
+/// Fingerprint of the ready MLS groups (tags must be recomputed when a group
+/// comes up or changes epoch).
+fn mls_fp(st: &NodeState) -> [u8; 32] {
+    let mut v: Vec<([u8; 32], u64)> = st
+        .mesh
+        .mls
+        .iter()
+        .filter(|(id, m)| m.ready && st.contacts.contains_key(*id))
+        .map(|(id, m)| (*id, m.member.epoch().unwrap_or(0)))
+        .collect();
+    v.sort();
     let mut h = blake3::Hasher::new();
-    for (id, dh) in ids {
-        h.update(id);
-        h.update(dh);
+    for (id, e) in v {
+        h.update(&id);
+        h.update(&e.to_be_bytes());
     }
     *h.finalize().as_bytes()
 }
 
-/// Recompute our wanted sub-tags (current and previous epoch) if the epoch
-/// or the contact set changed.
-pub(crate) fn refresh_wants(
-    inner: &NodeInner,
-    st: &mut NodeState,
-    now: u64,
-) -> Result<(), FfiError> {
+/// Recompute our wanted sub-tags (current and previous tag epoch) if the
+/// epoch or the set of MLS groups changed.
+pub(crate) fn refresh_wants(st: &mut NodeState, now: u64) -> Result<(), FfiError> {
     let epoch = tag_epoch(now);
-    let fp = contacts_fp(st);
+    let fp = mls_fp(st);
     if st.mesh.tags_for == Some((epoch, fp)) {
         return Ok(());
     }
     let mut tags = HashMap::new();
-    for (id, c) in &st.contacts {
-        let Ok(p) = pair(inner, id, c) else {
+    for (id, m) in &st.mesh.mls {
+        if !m.ready || !st.contacts.contains_key(id) {
+            continue;
+        }
+        let Ok(leaf) = m.member.own_leaf_index() else {
             continue;
         };
         for e in [epoch.saturating_sub(1), epoch] {
-            let ts = tag_secret(&p, e)?;
-            tags.insert(subtag(&ts[..], u32::from(p.my_leaf), e)?, *id);
+            let ts = m.member.tag_exporter(e).map_err(mls_err)?;
+            tags.insert(subtag(&ts, leaf, e)?, *id);
         }
     }
     let wants: BTreeSet<MailboxTag> = tags.keys().copied().collect();
@@ -437,45 +542,89 @@ pub(crate) fn refresh_wants(
     Ok(())
 }
 
-/// Hand a freshly queued message to the mesh as an opaque envelope.
+/// Hand a freshly queued message to the mesh as an opaque envelope. Without
+/// an MLS group it stays in the local queue only (§22.8(1)).
 pub(crate) fn submit_own(
-    inner: &NodeInner,
+    _inner: &NodeInner,
     st: &mut NodeState,
     peer: &[u8; 32],
     q: &Queued,
     burn: Option<&BurnHeader>,
 ) -> Result<(), FfiError> {
-    let Some(c) = st.contacts.get(peer) else {
+    if !st.contacts.contains_key(peer) || !st.mesh.mls_ready(peer) {
         return Ok(());
-    };
+    }
     let expires_at = match burn {
         Some(h) => core_burn::expires_at_ms(q.created_ms, h),
-        None => q
-            .created_ms
-            .saturating_add(omcp_core::sync::budget::DEFAULT_EXPIRY_MS),
+        None => q.created_ms.saturating_add(DEFAULT_EXPIRY_MS),
     };
     let ttl = st.mesh.engine.new_ttl();
     let env = seal_for(
-        inner,
+        st,
         peer,
-        c,
         q.envelope_id,
         q.created_ms,
         expires_at,
         ttl,
         &q.inner,
-        burn.is_some(),
     )?;
-    refresh_wants(inner, st, now_ms())?;
+    refresh_wants(st, now_ms())?;
     let ev = st.mesh.engine.submit_own(env, now_ms())?;
+    st.route(ev)?;
+    Ok(())
+}
+
+/// The MLS group just came up: hand everything still queued for `peer` to
+/// the mesh.
+fn submit_pending(inner: &NodeInner, st: &mut NodeState, peer: &[u8; 32]) -> Result<(), FfiError> {
+    refresh_wants(st, now_ms())?;
+    let pending: Vec<PendingCopy> = st
+        .queues
+        .get(peer)
+        .map(|q| {
+            q.iter()
+                .map(|q| (q.envelope_id, q.created_ms, q.inner.clone(), q.control))
+                .collect()
+        })
+        .unwrap_or_default();
+    for (id, created_ms, plain, control) in pending {
+        if st.mesh.engine.seen(&id) {
+            continue;
+        }
+        let burn = st
+            .db()
+            .message(&id)?
+            .and_then(|m| m.burn)
+            .and_then(|b| BurnHeader::decode(&b).ok());
+        let q = Queued {
+            envelope_id: id,
+            created_ms,
+            inner: plain,
+            control,
+        };
+        submit_own(inner, st, peer, &q, burn.as_ref())?;
+    }
+    Ok(())
+}
+
+/// Recipient side: send the end-to-end `DELIVERY_ACK` for `env`.
+fn send_ack(st: &mut NodeState, peer: &[u8; 32], env: &EnvelopeV1) -> Result<(), FfiError> {
+    let h = msg_hash(&env.ciphertext);
+    let now = now_ms();
+    let expires_at = effective_expiry(env, now)?.max(now.saturating_add(60_000));
+    let mut body = vec![FRAME_DELIVERY_ACK];
+    body.extend_from_slice(&h);
+    let ttl = st.mesh.engine.new_ttl();
+    let ack = seal_for(st, peer, random_id16()?, now, expires_at, ttl, &body)?;
+    let ev = st.mesh.engine.submit_ack(ack, h, now)?;
     st.route(ev)?;
     Ok(())
 }
 
 /// Periodic work (beacons, expiry, epoch rotation). Returns links with
 /// frames waiting.
-pub(crate) fn tick(inner: &NodeInner, st: &mut NodeState, now: u64) -> Result<Vec<u64>, FfiError> {
-    refresh_wants(inner, st, now)?;
+pub(crate) fn tick(st: &mut NodeState, now: u64) -> Result<Vec<u64>, FfiError> {
+    refresh_wants(st, now)?;
     // Own copies of messages that were burned meanwhile are withdrawn.
     let stale: Vec<[u8; 16]> = st
         .mesh
@@ -494,13 +643,120 @@ pub(crate) fn tick(inner: &NodeInner, st: &mut NodeState, now: u64) -> Result<Ve
 }
 
 impl MeshLink {
-    /// Link established: start mesh sync on it.
+    /// Link established: start mesh sync, and MLS setup if this contact has
+    /// no 1:1 group yet.
     pub(crate) fn mesh_link_up(&self, peer: &[u8; 32]) -> Result<(), FfiError> {
         let now = now_ms();
         let mut node = self.node.lock();
-        refresh_wants(&self.node, &mut node, now)?;
+        if !node.mesh.mls_ready(peer) {
+            self.start_mls_setup(&mut node, peer)?;
+        }
+        refresh_wants(&mut node, now)?;
         let ev = node.mesh.engine.link_up(self.handle, peer, now);
         node.route(ev)?;
+        Ok(())
+    }
+
+    /// The higher id is the joiner: it sends its KeyPackage (or repeats
+    /// `JOINED` if it already joined).
+    fn start_mls_setup(&self, node: &mut NodeState, peer: &[u8; 32]) -> Result<(), FfiError> {
+        let Some(c) = node.contacts.get(peer) else {
+            return Ok(());
+        };
+        let me = my_id(&self.node, peer, c);
+        if me < *peer {
+            return Ok(()); // creator: waits for the KeyPackage
+        }
+        let joined = node
+            .mesh
+            .mls
+            .get(peer)
+            .is_some_and(|m| m.member.has_group());
+        if joined {
+            node.queue_setup(self.handle, SETUP_JOINED, &[]);
+            return Ok(());
+        }
+        if !node.mesh.mls.contains_key(peer) {
+            let member = OmcpMlsMember::generate(me.to_vec()).map_err(mls_err)?;
+            node.mesh.mls.insert(
+                *peer,
+                ContactMls {
+                    member,
+                    ready: false,
+                },
+            );
+            node.save_mls(peer)?;
+        }
+        let kp = node.mesh.mls[peer]
+            .member
+            .key_package_bytes()
+            .map_err(mls_err)?;
+        node.queue_setup(self.handle, SETUP_KEY_PACKAGE, &kp);
+        Ok(())
+    }
+
+    /// One reassembled MLS setup frame (PDU `0x04`) from this link's contact.
+    pub(crate) fn mls_setup_frame(&self, peer: &[u8; 32], frame: &[u8]) -> Result<(), FfiError> {
+        let (&kind, body) = frame.split_first().ok_or_else(|| invalid("empty setup"))?;
+        let mut node = self.node.lock();
+        let Some(c) = node.contacts.get(peer) else {
+            return Ok(());
+        };
+        let me = my_id(&self.node, peer, c);
+        let creator = me < *peer;
+        let mut became_ready = false;
+        match (kind, creator) {
+            (SETUP_KEY_PACKAGE, true) => {
+                // New group (also after the joiner lost its state).
+                let mut member = OmcpMlsMember::generate(me.to_vec()).map_err(mls_err)?;
+                let kp = member.parse_key_package(body).map_err(mls_err)?;
+                member.create_group().map_err(mls_err)?;
+                let (_commit, welcome) = member.add_members(&[kp]).map_err(mls_err)?;
+                node.mesh.mls.insert(
+                    *peer,
+                    ContactMls {
+                        member,
+                        ready: false,
+                    },
+                );
+                node.save_mls(peer)?;
+                node.queue_setup(self.handle, SETUP_WELCOME, &welcome);
+            }
+            (SETUP_WELCOME, false) => {
+                let Some(m) = node.mesh.mls.get_mut(peer) else {
+                    return Ok(());
+                };
+                if m.member.has_group() {
+                    // Creator restarted the group: start over with a fresh member.
+                    let mut fresh = OmcpMlsMember::generate(me.to_vec()).map_err(mls_err)?;
+                    std::mem::swap(&mut m.member, &mut fresh);
+                    m.ready = false;
+                    let kp = m.member.key_package_bytes().map_err(mls_err)?;
+                    node.save_mls(peer)?;
+                    node.queue_setup(self.handle, SETUP_KEY_PACKAGE, &kp);
+                    return Ok(());
+                }
+                m.member.join_from_welcome(body).map_err(mls_err)?;
+                m.ready = true;
+                became_ready = true;
+                node.save_mls(peer)?;
+                node.queue_setup(self.handle, SETUP_JOINED, &[]);
+            }
+            (SETUP_JOINED, true) => {
+                if let Some(m) = node.mesh.mls.get_mut(peer) {
+                    if m.member.has_group() && !m.ready {
+                        m.ready = true;
+                        became_ready = true;
+                        node.save_mls(peer)?;
+                    }
+                }
+            }
+            _ => return Err(invalid("unexpected MLS setup frame")),
+        }
+        if became_ready {
+            node.mesh.tags_for = None;
+            submit_pending(&self.node, &mut node, peer)?;
+        }
         Ok(())
     }
 
@@ -508,18 +764,42 @@ impl MeshLink {
     pub(crate) fn mesh_frame(&self, frame: &[u8], out: &mut LinkOutput) -> Result<(), FfiError> {
         let now = now_ms();
         let mut node = self.node.lock();
-        refresh_wants(&self.node, &mut node, now)?;
+        refresh_wants(&mut node, now)?;
         let ev = node.mesh.engine.on_frame(self.handle, frame, now)?;
-        for (tag, env) in node.route(ev)? {
+        for (tag, env, ack_of) in node.route(ev)? {
             let Some(peer) = node.mesh.tags.get(&tag).copied() else {
                 continue;
             };
-            let Some(c) = node.contacts.get(&peer) else {
+            if !node.contacts.contains_key(&peer) {
                 continue;
+            }
+            let Ok(plain) = open_from(&mut node, &peer, &env) else {
+                continue; // not for us after all (tag collision), replayed or forged
             };
-            let Ok(plain) = open_from(&self.node, &peer, c, &env) else {
-                continue; // not for us after all (tag collision) or forged
-            };
+            if let Some(h) = ack_of {
+                // Only the MLS-authenticated ack counts.
+                let mut want = vec![FRAME_DELIVERY_ACK];
+                want.extend_from_slice(&h);
+                if plain.as_slice() != want.as_slice() {
+                    continue;
+                }
+                if let Some(id) = node.mesh.engine.own_by_hash(&h) {
+                    node.mesh_cancel_own(&id)?;
+                    node.set_status(&id, st::STATUS_DELIVERED)?;
+                }
+                continue;
+            }
+            // Receiving a valid application message proves the joiner joined.
+            if let Some(m) = node.mesh.mls.get_mut(&peer) {
+                if !m.ready {
+                    m.ready = true;
+                    node.save_mls(&peer)?;
+                    node.mesh.tags_for = None;
+                    submit_pending(&self.node, &mut node, &peer)?;
+                }
+            }
+            // A failed ack only costs a redundant copy; never block delivery.
+            let _ = send_ack(&mut node, &peer, &env);
             if node.db().message(&env.envelope_id)?.is_some()
                 || node
                     .seen
@@ -534,13 +814,13 @@ impl MeshLink {
         Ok(())
     }
 
-    /// Seal waiting mesh frames for this link into `out`.
+    /// Seal waiting mesh / setup frames for this link into `out`.
     pub(crate) fn drain_mesh(
         &self,
         up: &mut Established,
         out: &mut LinkOutput,
     ) -> Result<(), FfiError> {
-        let frames: Vec<Vec<u8>> = {
+        let frames: Vec<OutFrame> = {
             let mut node = self.node.lock();
             let Some(q) = node.mesh.out.get_mut(&self.handle) else {
                 return Ok(());
@@ -552,14 +832,25 @@ impl MeshLink {
             }
             v
         };
+        let mut handed = Vec::new();
         for f in frames {
-            for frag in
-                fragment_and_seal(&mut up.link, &f, random_frag_id()?, LINK_FRAGMENT_PAYLOAD)?
-            {
+            for frag in fragment_and_seal(
+                &mut up.link,
+                &f.frame,
+                random_frag_id()?,
+                LINK_FRAGMENT_PAYLOAD,
+            )? {
                 let mut p = Vec::with_capacity(1 + frag.len());
-                p.push(PDU_MESH);
+                p.push(f.pdu);
                 p.extend_from_slice(&frag);
                 out.outgoing.push(p);
+            }
+            handed.extend(f.handed);
+        }
+        if !handed.is_empty() {
+            let mut node = self.node.lock();
+            for id in handed {
+                node.set_status(&id, st::STATUS_SENT)?;
             }
         }
         Ok(())
@@ -567,8 +858,15 @@ impl MeshLink {
 
     pub(crate) fn mesh_link_down(&self) {
         let mut node = self.node.lock();
+        if let Some(q) = node.mesh.out.remove(&self.handle) {
+            let lost: Vec<Vec<u8>> = q
+                .into_iter()
+                .filter(|f| f.pdu == PDU_MESH)
+                .map(|f| f.frame)
+                .collect();
+            node.mesh.engine.unsent(self.handle, &lost);
+        }
         node.mesh.engine.link_down(self.handle, now_ms());
-        node.mesh.out.remove(&self.handle);
     }
 
     pub(crate) fn relay_links(&self, out: &mut LinkOutput) {
@@ -583,7 +881,7 @@ impl OmcpNode {
     /// `flush()` on each.
     pub fn mesh_tick(&self, now_ms: u64) -> Result<Vec<u64>, FfiError> {
         let mut st = self.inner.lock();
-        tick(&self.inner, &mut st, now_ms)
+        tick(&mut st, now_ms)
     }
 
     /// Link handles with mesh frames waiting (e.g. after queueing a message).
@@ -594,7 +892,7 @@ impl OmcpNode {
     /// 6-byte `HELLO` beacon (§22.7(12)) for BLE advertisement service data.
     pub fn mesh_beacon(&self) -> Vec<u8> {
         let mut st = self.inner.lock();
-        let _ = refresh_wants(&self.inner, &mut st, now_ms());
+        let _ = refresh_wants(&mut st, now_ms());
         st.mesh.engine.beacon().to_vec()
     }
 
@@ -608,5 +906,18 @@ impl OmcpNode {
 
     pub fn mesh_stats(&self) -> MeshStats {
         self.inner.lock().mesh_stats()
+    }
+
+    /// Message status changes caused by the mesh since the last call
+    /// (Queued → Sent when handed to a relay, → Delivered on an ack).
+    pub fn mesh_take_status_updates(&self) -> Vec<MessageStatusUpdate> {
+        std::mem::take(&mut self.inner.lock().mesh.status)
+    }
+
+    /// Whether the 1:1 MLS group with this contact is up (mesh relaying is
+    /// only used once it is, §22.8(1)).
+    pub fn mesh_ready(&self, contact_id: String) -> Result<bool, FfiError> {
+        let id = crate::parse_id(&contact_id)?;
+        Ok(self.inner.lock().mesh.mls_ready(&id))
     }
 }

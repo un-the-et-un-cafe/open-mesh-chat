@@ -264,6 +264,10 @@ pub fn burn_expires_at_ms(sent_ms: u64, spec: BurnSpec) -> Result<u64, FfiError>
     Ok(core_burn::expires_at_ms(sent_ms, &spec.header()?))
 }
 
+/// §22.8(5): a replaced device key keeps answering handshakes this long
+/// (matches the maximum `outer_expiry`).
+pub const DEVICE_KEY_OVERLAP_MS: u64 = omcp_core::sync::budget::MAX_EXPIRY_MS;
+
 /// Result of feeding a link: PDUs to transmit (in order) + decrypted messages.
 #[derive(Debug, Clone, Default, PartialEq, Eq, uniffi::Record)]
 pub struct LinkOutput {
@@ -592,6 +596,9 @@ pub(crate) struct NodeInner {
     /// This installation's device key (RS1). Never locked while holding `state`
     /// is required; lock order is `state` → `device`.
     device: Mutex<OwnDevice>,
+    /// The device key replaced by [`OmcpNode::rotate_device_key`], kept until
+    /// the given time (§22.8(5): 7-day overlap). Lock order: after `device`.
+    prev_device: Mutex<Option<(OwnDevice, u64)>>,
 }
 
 impl NodeInner {
@@ -607,6 +614,16 @@ impl NodeInner {
     }
     fn device(&self) -> MutexGuard<'_, OwnDevice> {
         self.device.lock().unwrap_or_else(|p| p.into_inner())
+    }
+    fn prev_device(&self) -> MutexGuard<'_, Option<(OwnDevice, u64)>> {
+        self.prev_device.lock().unwrap_or_else(|p| p.into_inner())
+    }
+    /// The previous device's Noise identity while its overlap lasts.
+    fn prev_identity(&self, now: u64) -> Option<StaticIdentity> {
+        let g = self.prev_device();
+        g.as_ref()
+            .filter(|(_, until)| now < *until)
+            .and_then(|(d, _)| d.static_identity().ok())
     }
     fn device_public(&self) -> [u8; 32] {
         self.device().public().unwrap_or([0; 32])
@@ -738,6 +755,11 @@ impl OmcpNode {
         let legacy_install = db.rebind_owner(&legacy_id, &peer_id)?;
         let device =
             chatbackup::load_or_create_device(&db, &seed, peer_id, legacy_install, now_ms())?;
+        let prev_device = db
+            .get_meta::<(OwnDevice, u64)>(chatbackup::META_PREV_DEVICE)
+            .ok()
+            .flatten()
+            .filter(|(d, until)| now_ms() < *until && d.valid_for(&peer_id));
         let node = Arc::new(Self {
             inner: Arc::new(NodeInner {
                 seed,
@@ -745,6 +767,7 @@ impl OmcpNode {
                 legacy_id,
                 name: display_name,
                 device: Mutex::new(device),
+                prev_device: Mutex::new(prev_device),
                 state: Mutex::new(NodeState {
                     contacts: HashMap::new(),
                     queues: HashMap::new(),
@@ -1366,6 +1389,22 @@ impl OmcpNode {
         Ok(self.new_link(Role::Initiator(Box::new(init)), Some(id)))
     }
 
+    /// Replace this installation's device key (Noise static + device
+    /// certificate). The previous key keeps answering handshakes for
+    /// [`DEVICE_KEY_OVERLAP_MS`] (§22.8(5)); 1:1 MLS groups and envelopes in
+    /// flight are unaffected because they are bound to the MLS epoch.
+    pub fn rotate_device_key(&self) -> Result<(), FfiError> {
+        let now = now_ms();
+        let st = self.inner.lock();
+        let fresh = OwnDevice::generate(&self.inner.seed, now, None)?;
+        let old = std::mem::replace(&mut *self.inner.device(), fresh.clone());
+        let prev = (old, now.saturating_add(DEVICE_KEY_OVERLAP_MS));
+        st.db().put_meta(chatbackup::META_DEVICE, &fresh)?;
+        st.db().put_meta(chatbackup::META_PREV_DEVICE, &prev)?;
+        *self.inner.prev_device() = Some(prev);
+        Ok(())
+    }
+
     /// New link as Noise responder (we are the GATT peripheral).
     pub fn open_responder_link(&self) -> Result<Arc<MeshLink>, FfiError> {
         let resp = HybridResponder::new(self.inner.identity()?);
@@ -1476,6 +1515,7 @@ pub(crate) struct Established {
     initiator: bool,
     reasm: FragmentReassembler,
     mesh_reasm: FragmentReassembler,
+    setup_reasm: FragmentReassembler,
     app_send: u64,
     app_recv: u64,
 }
@@ -1607,6 +1647,24 @@ impl MeshLink {
                 {
                     // A malformed frame from a neighbour is dropped, not fatal.
                     let _ = self.mesh_frame(&frame, &mut out);
+                }
+                if let Role::Up(up) = &mut st.role {
+                    self.drain_mesh(up, &mut out)?;
+                }
+            }
+            mesh::PDU_MLS_SETUP => {
+                let peer = st.peer.ok_or(FfiError::UnknownContact)?;
+                let Role::Up(up) = &mut st.role else {
+                    return Err(FfiError::State {
+                        msg: "MLS setup before handshake".into(),
+                    });
+                };
+                if let Some(frame) =
+                    up.setup_reasm
+                        .push_frame(&mut up.link, body, Instant::now())?
+                {
+                    // A failed setup is retried on the next link; not fatal.
+                    let _ = self.mls_setup_frame(&peer, &frame);
                 }
                 if let Role::Up(up) = &mut st.role {
                     self.drain_mesh(up, &mut out)?;
@@ -1883,7 +1941,7 @@ impl MeshLink {
             node.db().delete_outbox(&q.envelope_id)?;
             node.mesh_cancel_own(&q.envelope_id)?;
             if !q.control {
-                node.update_message(&q.envelope_id, |m| m.status = st::STATUS_SENT)?;
+                node.set_status(&q.envelope_id, st::STATUS_SENT)?;
             }
         }
         // Then the active file transfer, a few chunks per call.
@@ -1968,12 +2026,28 @@ impl MeshLink {
                     initiator: true,
                     reasm: FragmentReassembler::default(),
                     mesh_reasm: FragmentReassembler::default(),
+                    setup_reasm: FragmentReassembler::default(),
                     app_send: 0,
                     app_recv: 0,
                 }
             }
             Role::Responder(mut resp) => {
-                let (payload, h) = resp.read_message_1_bound(msg)?;
+                // §22.8(5): an initiator that still has our previous device
+                // key reaches us through it during the overlap.
+                let mut use_prev = false;
+                let (payload, h) = match resp.read_message_1_bound(msg) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        let Some(id) = self.node.prev_identity(now_ms()) else {
+                            return Err(e.into());
+                        };
+                        let mut r2 = Box::new(HybridResponder::new(id));
+                        let v = r2.read_message_1_bound(msg).map_err(|_| e)?;
+                        resp = r2;
+                        use_prev = true;
+                        v
+                    }
+                };
                 let rs = resp.remote_static().ok_or(FfiError::UnknownContact)?;
                 // (c) device binding; then find the contact by PeerID (or a legacy
                 // contact by its X25519 id). Unknown initiators are refused
@@ -1995,7 +2069,16 @@ impl MeshLink {
                 };
                 applied = true;
                 let node = &self.node;
-                let (m2, keys) = resp.write_message_2_with(|h| node.handshake_payload(h))?;
+                let (m2, keys) = resp.write_message_2_with(|h| {
+                    if use_prev {
+                        match node.prev_device().as_ref() {
+                            Some((d, _)) => d.handshake_payload(h),
+                            None => node.handshake_payload(h),
+                        }
+                    } else {
+                        node.handshake_payload(h)
+                    }
+                })?;
                 chunk_handshake(&m2, &mut out.outgoing)?;
                 peer_cert = cert;
                 st.peer = Some(peer);
@@ -2005,6 +2088,7 @@ impl MeshLink {
                     initiator: false,
                     reasm: FragmentReassembler::default(),
                     mesh_reasm: FragmentReassembler::default(),
+                    setup_reasm: FragmentReassembler::default(),
                     app_send: 0,
                     app_recv: 0,
                 }

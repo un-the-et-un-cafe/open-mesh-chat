@@ -28,7 +28,9 @@ use crate::{
     NodeState, OmcpNode, Queued, StoredFileState,
 };
 
-const META_DEVICE: &[u8] = b"own_device";
+pub(crate) const META_DEVICE: &[u8] = b"own_device";
+/// Previous device key kept for the §22.8(5) overlap: `(device, until_ms)`.
+pub(crate) const META_PREV_DEVICE: &[u8] = b"own_device_prev";
 const META_RESTORED_AT: &[u8] = b"own_restored_at";
 
 /// An encrypted, padded blob to upload.

@@ -7,14 +7,15 @@ fn node(name: &str) -> Arc<OmcpNode> {
 /// Deliver every PDU in `out` to `to`, ping-ponging until quiet.
 fn pump(from: &MeshLink, to: &MeshLink, out: LinkOutput) -> Vec<ReceivedText> {
     let mut got = Vec::new();
-    let mut queue = vec![(false, out.outgoing)];
-    while let Some((dir_back, pdus)) = queue.pop() {
+    // FIFO: a BLE link delivers each direction in order (link AEAD counters).
+    let mut queue = std::collections::VecDeque::from([(false, out.outgoing)]);
+    while let Some((dir_back, pdus)) = queue.pop_front() {
         for p in pdus {
             let (dst, back) = if dir_back { (from, true) } else { (to, false) };
             let o = dst.on_pdu(p).unwrap();
             got.extend(o.received);
             if !o.outgoing.is_empty() {
-                queue.push((!back, o.outgoing));
+                queue.push_back((!back, o.outgoing));
             }
         }
     }
@@ -219,16 +220,16 @@ fn pump_all(
     // Like `pump`, but also collects OPENED events from both sides.
     let mut got = Vec::new();
     let mut opened = Vec::new();
-    let mut queue = vec![(false, out.outgoing)];
+    let mut queue = std::collections::VecDeque::from([(false, out.outgoing)]);
     opened.extend(out.opened);
-    while let Some((back, pdus)) = queue.pop() {
+    while let Some((back, pdus)) = queue.pop_front() {
         for p in pdus {
             let dst = if back { la } else { lb };
             let o = dst.on_pdu(p).unwrap();
             got.extend(o.received);
             opened.extend(o.opened);
             if !o.outgoing.is_empty() {
-                queue.push((!back, o.outgoing));
+                queue.push_back((!back, o.outgoing));
             }
         }
     }
@@ -1626,9 +1627,29 @@ fn down(l: &(Arc<MeshLink>, Arc<MeshLink>, Vec<LinkOutput>)) {
     l.1.shutdown();
 }
 
+/// Mutual QR add plus one direct link: the first handshake creates the 1:1
+/// MLS group (§22.8(1)). Afterwards the two may never be in range again.
+fn befriend_mls(x: &Arc<OmcpNode>, y: &Arc<OmcpNode>) {
+    befriend(x, y);
+    let l = up(x, y);
+    down(&l);
+    assert!(x.mesh_ready(y.identity().peer_id_hex).unwrap());
+    assert!(y.mesh_ready(x.identity().peer_id_hex).unwrap());
+}
+
+fn status_of(n: &OmcpNode, contact: &str, id: &str) -> MessageStatus {
+    n.stored_messages(contact.to_string())
+        .unwrap()
+        .into_iter()
+        .find(|m| m.id_hex == id)
+        .unwrap()
+        .status
+}
+
 #[test]
 fn mesh_chain_a_b_c_store_and_forward_end_to_end() {
-    // A and C know each other (QR) but are never in range; B is a friend of both.
+    // A and C added each other (QR + first handshake: MLS group), then are
+    // never in range again; B is a friend of both.
     let dir = tempfile::tempdir().unwrap();
     let pb = generate_recovery_phrase().unwrap();
     let a = node("Alice");
@@ -1636,7 +1657,7 @@ fn mesh_chain_a_b_c_store_and_forward_end_to_end() {
     let c = node("Carol");
     befriend(&a, &b);
     befriend(&b, &c);
-    befriend(&a, &c);
+    befriend_mls(&a, &c);
     let aid = a.identity().peer_id_hex;
     let cid = c.identity().peer_id_hex;
     assert!(b.mesh_settings().relay_enabled, "relay defaults to on");
@@ -1647,11 +1668,18 @@ fn mesh_chain_a_b_c_store_and_forward_end_to_end() {
 
     // A meets B and sends to C: B carries an opaque envelope.
     let secret = "meet at the north gate 7pm";
-    a.queue_text(cid.clone(), secret.into()).unwrap();
+    let mid = a.queue_message(cid.clone(), secret.into(), None).unwrap();
     assert_eq!(a.mesh_stats().own_pending, 1);
+    assert_eq!(status_of(&a, &cid, &mid), MessageStatus::Queued);
     let ab = up(&a, &b);
     assert!(texts(&ab.2).is_empty(), "B must not receive A→C");
     assert_eq!(b.mesh_stats().carried, 1);
+    // Handed to a relay: Sent.
+    assert_eq!(status_of(&a, &cid, &mid), MessageStatus::Sent);
+    let ups = a.mesh_take_status_updates();
+    assert!(ups
+        .iter()
+        .any(|u| u.id_hex == mid && u.status == MessageStatus::Sent));
     assert_eq!(c.queued_for(aid.clone()), 0);
     down(&ab);
 
@@ -1675,6 +1703,8 @@ fn mesh_chain_a_b_c_store_and_forward_end_to_end() {
     assert_eq!(got[0].contact_id, aid);
     let stored = c.stored_messages(aid.clone()).unwrap();
     assert_eq!(stored.len(), 1);
+    // C's DELIVERY_ACK reached B: B dropped its copy and now carries the ack.
+    assert_eq!(b.mesh_stats().carried, 1, "only the ack is carried");
     down(&bc);
     // Meeting again does not deliver twice.
     let bc2 = up(&b, &c);
@@ -1693,6 +1723,77 @@ fn mesh_chain_a_b_c_store_and_forward_end_to_end() {
         (got[0].text.as_str(), got[0].contact_id.as_str()),
         ("ok", cid.as_str())
     );
+    // The end-to-end ack arrived with it: Delivered, own copy withdrawn.
+    assert_eq!(status_of(&a, &cid, &mid), MessageStatus::Delivered);
+    assert!(a
+        .mesh_take_status_updates()
+        .iter()
+        .any(|u| u.id_hex == mid && u.status == MessageStatus::Delivered));
+    assert_eq!(a.mesh_stats().own_pending, 1, "only A's ack for \"ok\"");
+    down(&ba);
+}
+
+#[test]
+fn mesh_waits_for_mls_group_before_relaying() {
+    // Contacts by QR only: no 1:1 MLS group yet, so nothing goes on the mesh.
+    let (a, b, c) = (node("A"), node("B"), node("C"));
+    befriend(&a, &b);
+    befriend(&a, &c);
+    let cid = c.identity().peer_id_hex;
+    let aid = a.identity().peer_id_hex;
+    assert!(!a.mesh_ready(cid.clone()).unwrap());
+    let mid = a.queue_message(cid.clone(), "later".into(), None).unwrap();
+    assert_eq!(a.mesh_stats().own_pending, 0);
+    let ab = up(&a, &b);
+    down(&ab);
+    assert_eq!(b.mesh_stats().carried, 0);
+    assert_eq!(a.queued_for(cid.clone()), 1, "still in the local queue");
+    // First direct link: group created (existing contacts migrate here) and
+    // the queue is delivered directly.
+    let ac = up(&a, &c);
+    assert_eq!(texts(&ac.2).len(), 1);
+    assert!(a.mesh_ready(cid.clone()).unwrap() && c.mesh_ready(aid).unwrap());
+    assert_eq!(status_of(&a, &cid, &mid), MessageStatus::Sent);
+    down(&ac);
+}
+
+#[test]
+fn mesh_device_key_rotation_mid_transit_still_delivers() {
+    let (a, b, c) = (node("A"), node("B"), node("C"));
+    befriend(&a, &b);
+    befriend(&b, &c);
+    befriend_mls(&a, &c);
+    let aid = a.identity().peer_id_hex;
+    let cid = c.identity().peer_id_hex;
+    a.queue_text(cid.clone(), "across a rotation".into())
+        .unwrap();
+    let ab = up(&a, &b);
+    down(&ab);
+    assert_eq!(b.mesh_stats().carried, 1);
+    // C rotates its device key while the envelope is with B.
+    let old = c.device_info().unwrap().fingerprint;
+    c.rotate_device_key().unwrap();
+    assert_ne!(c.device_info().unwrap().fingerprint, old);
+    // B still knows C's previous key and dials it: C answers with it.
+    let bc = up(&b, &c);
+    let got = texts(&bc.2);
+    assert_eq!(got.len(), 1);
+    assert_eq!(
+        (got[0].text.as_str(), got[0].contact_id.as_str()),
+        ("across a rotation", aid.as_str())
+    );
+    down(&bc);
+    // A (also holding the old key) reaches C directly, and C's new key works
+    // when C dials.
+    let ac = up(&a, &c);
+    down(&ac);
+    let ca = up(&c, &a);
+    down(&ca);
+    c.queue_text(aid.clone(), "after".into()).unwrap();
+    let cb = up(&c, &b);
+    down(&cb);
+    let ba = up(&b, &a);
+    assert!(texts(&ba.2).iter().any(|t| t.text == "after"));
     down(&ba);
 }
 
@@ -1703,7 +1804,7 @@ fn mesh_live_three_hop_line_and_relay_toggle() {
     befriend(&a, &b);
     befriend(&b, &d);
     befriend(&d, &c);
-    befriend(&a, &c);
+    befriend_mls(&a, &c);
     let cid = c.identity().peer_id_hex;
     let aid = a.identity().peer_id_hex;
     let ab = up(&a, &b);
@@ -1755,7 +1856,7 @@ fn mesh_burn_after_read_crosses_relay_and_opened_returns() {
     let (a, b, c) = (node("A"), node("B"), node("C"));
     befriend(&a, &b);
     befriend(&b, &c);
-    befriend(&a, &c);
+    befriend_mls(&a, &c);
     let aid = a.identity().peer_id_hex;
     let cid = c.identity().peer_id_hex;
     let id = a
@@ -1794,7 +1895,7 @@ fn mesh_direct_delivery_and_mesh_copy_do_not_duplicate() {
     let (a, b, c) = (node("A"), node("B"), node("C"));
     befriend(&a, &b);
     befriend(&b, &c);
-    befriend(&a, &c);
+    befriend_mls(&a, &c);
     let cid = c.identity().peer_id_hex;
     a.queue_text(cid.clone(), "once".into()).unwrap();
     let ab = up(&a, &b); // B carries a copy

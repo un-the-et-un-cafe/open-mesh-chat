@@ -9,6 +9,8 @@ use crate::burn::BurnSnapshot;
 pub const STATUS_QUEUED: u8 = 0;
 pub const STATUS_SENT: u8 = 1;
 pub const STATUS_RECEIVED: u8 = 2;
+/// Our message, end-to-end acked over the mesh (§22.8(3)).
+pub const STATUS_DELIVERED: u8 = 4;
 
 /// [`MessageRec::burn_state`] values.
 pub const BURN_NONE: u8 = 0;
@@ -284,6 +286,9 @@ pub struct CarryRec {
     pub hop_count: u8,
     /// Our own outbound mesh copy (not relayed for someone else).
     pub own: bool,
+    /// `DELIVERY_ACK` envelope: the acked `msg_hash` (§22.8(3)).
+    #[serde(default)]
+    pub ack_of: Option<[u8; 16]>,
 }
 
 /// A mesh envelope id already delivered to us (dedup across restarts).

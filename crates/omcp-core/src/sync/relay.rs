@@ -11,15 +11,27 @@
 //! `header_aad` TLVs (`0x54` chat tag, `0x56` recipient sub-tags) and never
 //! needs, or gets, a key that opens a ciphertext: relays never see plaintext.
 //!
-//! # Mesh frames (beta convention inside the link-AEAD channel)
+//! # Mesh frames (inside link PDU `0x03` `MESH_FRAME`, §21.9 / §22.8(2))
 //!
 //! | first byte | frame | |
 //! |---|---|---|
-//! | `0x48` | `HELLO` (6 B) | §22.7(12), registry §21.9 |
-//! | `0x52` | `DIGEST_REQ` (6 B) | §22.7(12), registry §21.9 |
-//! | `0x44` | full want-digest: `0x44 ‖ CuckooFilter::encode()` | beta, not in §21.9 |
-//! | `0x64` | digest delta: `0x64 ‖ DigestDelta::encode()` | beta, not in §21.9 |
-//! | `0x45` | envelope: `0x45 ‖ EnvelopeV1::encode()` | beta, not in §21.9 |
+//! | `0x48` | `HELLO` (6 B) | §22.7(12) |
+//! | `0x52` | `DIGEST_REQ` (6 B) | §22.7(12) |
+//! | `0x44` | `DATA`: `0x44 ‖ EnvelopeV1::encode()` | §22.8(2) |
+//! | `0x45` | `DELIVERY_ACK`: `0x45 ‖ msg_hash[0..16] ‖ EnvelopeV1::encode()` | §22.8(2), (3) |
+//! | `0x64` | `DIGEST_DELTA`: `0x64 ‖ mode ‖ body` | §22.8(2) |
+//!
+//! `DIGEST_DELTA` mode `0x00` = `DigestDelta::encode()`, mode `0x01` = the
+//! full `CuckooFilter::encode()` (link-up / resync). §22.8(2) assigns no
+//! separate full-digest type; the mode byte is this implementation's
+//! convention (spec gap).
+//!
+//! `DELIVERY_ACK`: the 16-byte `msg_hash` (first 16 B of BLAKE2b-256 over the
+//! acked envelope's ciphertext) is in the clear so relays can delete the
+//! acked envelope; the attached envelope carries the end-to-end MACed copy
+//! (MLS application message to the original sender's sub-tag) and is routed
+//! like `DATA`. Relays cannot authenticate the clear hash, so they only drop
+//! envelopes for others, never the original sender's own copy.
 //!
 //! # Behaviour
 //!
@@ -32,7 +44,7 @@
 //!   forward costs one hop. A peer is never sent the same envelope twice.
 //! - **Carry store**: envelopes for others are kept (store-and-forward, §8.4)
 //!   under the §22.4 [`RelayStore`] budget and eviction order, expiring at the
-//!   envelope's `expires_at` (TLV `0x80`, see below) or `created + 72 h`,
+//!   envelope's `outer_expiry` (TLV `0x58`, §22.8(2)) or `created + 72 h`,
 //!   never later than 7 days. Our own outbound envelopes are kept outside the
 //!   relay budget until they expire.
 //! - **Dedup**: a seen set keyed by `envelope_id` that lives as long as the
@@ -41,10 +53,9 @@
 //! - **Relay off**: own envelopes are still sent and our own are still
 //!   delivered; nothing is stored or forwarded for others.
 //!
-//! `expires_at` on the wire: §22.4 / REQUIREMENTS B4 need an outer
-//! `expires_at`, which `EnvelopeV1` lacks; the beta carries it as the
-//! experimental `header_aad` TLV `0x80` (len 8, u64 BE ms) on every mesh
-//! envelope (spec gap: needs a registry entry).
+//! `outer_expiry` on the wire: `header_aad` TLV `0x58` (len 4, u32 BE unix
+//! seconds, §21.8). Relays drop expired envelopes and never keep one longer
+//! than now + 7 d (a later `outer_expiry` is clamped, not rejected).
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
@@ -62,14 +73,20 @@ use crate::error::{OmcpError, Result};
 use crate::framing::EnvelopeV1;
 use crate::gateway::policy::NetworkKind;
 
-/// Full want-digest frame.
-pub const FRAME_DIGEST_FULL: u8 = 0x44;
-/// Digest delta frame.
+/// `DATA` mesh frame (one envelope).
+pub const FRAME_DATA: u8 = 0x44;
+/// `DELIVERY_ACK` mesh frame.
+pub const FRAME_DELIVERY_ACK: u8 = 0x45;
+/// `DIGEST_DELTA` mesh frame.
 pub const FRAME_DIGEST_DELTA: u8 = 0x64;
-/// Envelope frame.
-pub const FRAME_ENVELOPE: u8 = 0x45;
-/// Experimental `header_aad` TLV: outer `expires_at` (u64 BE ms).
-pub const AAD_TLV_EXPIRES_AT: u8 = 0x80;
+/// `DIGEST_DELTA` body mode: delta against the receiver's copy.
+pub const DELTA_MODE_DELTA: u8 = 0x00;
+/// `DIGEST_DELTA` body mode: full filter.
+pub const DELTA_MODE_FULL: u8 = 0x01;
+/// `header_aad` TLV `outer_expiry` (u32 BE unix seconds, §21.8).
+pub const AAD_TLV_OUTER_EXPIRY: u8 = 0x58;
+/// Length of `msg_hash` in a `DELIVERY_ACK`.
+pub const MSG_HASH_LEN: usize = 16;
 /// Minimum padded size of our want-digest (decoys hide the real count).
 pub const DIGEST_MIN_ENTRIES: usize = 32;
 /// Dedup memory cap (entries).
@@ -100,6 +117,8 @@ pub struct CarryItem {
     pub hop_count: u8,
     /// Our own outbound envelope (not counted against the relay budget).
     pub own: bool,
+    /// Set for a `DELIVERY_ACK` envelope: the acked `msg_hash`.
+    pub ack_of: Option<[u8; MSG_HASH_LEN]>,
 }
 
 /// What the caller must do.
@@ -112,7 +131,11 @@ pub enum RelayEvent {
         link: u64,
         tag: MailboxTag,
         envelope: EnvelopeV1,
+        /// `Some(msg_hash)` when it arrived as a `DELIVERY_ACK`.
+        ack_of: Option<[u8; MSG_HASH_LEN]>,
     },
+    /// Our own envelope was handed to a neighbour for the first time.
+    Handed([u8; 16]),
     /// Persist (or overwrite) this carry item.
     Stored(CarryItem),
     /// Drop this carry item from persistent storage (evicted / expired).
@@ -152,6 +175,8 @@ pub struct RelayEngine {
     neighbours: BTreeMap<u64, Neighbour>,
     sent_to: HashMap<[u8; 16], HashSet<Vec<u8>>>,
     seen: HashMap<[u8; 16], u64>,
+    /// Acked `msg_hash` → keep-until (drop later copies).
+    acked: HashMap<[u8; MSG_HASH_LEN], u64>,
     hll: HyperLogLog,
     /// Tests: pretend the mesh has this many visible peers.
     visible_override: Option<usize>,
@@ -164,7 +189,25 @@ fn frame_with(kind: u8, body: &[u8]) -> Vec<u8> {
     v
 }
 
-/// Outer `expires_at` from `header_aad` TLV `0x80`, if present.
+/// `msg_hash` (§22.8(3)): first 16 bytes of BLAKE2b-256 over the ciphertext.
+pub fn msg_hash(ciphertext: &[u8]) -> [u8; MSG_HASH_LEN] {
+    use blake2::digest::{Update, VariableOutput};
+    let mut h = blake2::Blake2bVar::new(32).expect("32 is a valid BLAKE2b output size");
+    h.update(ciphertext);
+    let mut out = [0u8; 32];
+    h.finalize_variable(&mut out).expect("output length");
+    let mut m = [0u8; MSG_HASH_LEN];
+    m.copy_from_slice(&out[..MSG_HASH_LEN]);
+    m
+}
+
+fn full_digest_frame(f: &CuckooFilter) -> Vec<u8> {
+    let mut v = vec![FRAME_DIGEST_DELTA, DELTA_MODE_FULL];
+    v.extend_from_slice(&f.encode());
+    v
+}
+
+/// Outer expiry (ms) from `header_aad` TLV `0x58`, if present.
 pub fn expires_from_aad(aad: &[u8]) -> Result<Option<u64>> {
     let mut i = 0;
     while i + 2 <= aad.len() {
@@ -172,22 +215,24 @@ pub fn expires_from_aad(aad: &[u8]) -> Result<Option<u64>> {
         let v = aad
             .get(i + 2..i + 2 + l)
             .ok_or(OmcpError::Sync("aad tlv truncated"))?;
-        if t == AAD_TLV_EXPIRES_AT {
-            let b: [u8; 8] = v
+        if t == AAD_TLV_OUTER_EXPIRY {
+            let b: [u8; 4] = v
                 .try_into()
-                .map_err(|_| OmcpError::Sync("expires tlv length"))?;
-            return Ok(Some(u64::from_be_bytes(b)));
+                .map_err(|_| OmcpError::Sync("outer_expiry tlv length"))?;
+            return Ok(Some(u64::from(u32::from_be_bytes(b)) * 1000));
         }
         i += 2 + l;
     }
     Ok(None)
 }
 
-/// Append TLV `0x80` (`expires_at`).
-pub fn put_expires_in_aad(aad: &mut Vec<u8>, expires_at: u64) {
-    aad.push(AAD_TLV_EXPIRES_AT);
-    aad.push(8);
-    aad.extend_from_slice(&expires_at.to_be_bytes());
+/// Append TLV `0x58` (`outer_expiry`) for `expires_at_ms` (rounded down to
+/// whole seconds, saturating at `u32::MAX`).
+pub fn put_expires_in_aad(aad: &mut Vec<u8>, expires_at_ms: u64) {
+    let secs = u32::try_from(expires_at_ms / 1000).unwrap_or(u32::MAX);
+    aad.push(AAD_TLV_OUTER_EXPIRY);
+    aad.push(4);
+    aad.extend_from_slice(&secs.to_be_bytes());
 }
 
 /// Effective store expiry: the envelope's own `expires_at`, else
@@ -217,6 +262,7 @@ impl RelayEngine {
             neighbours: BTreeMap::new(),
             sent_to: HashMap::new(),
             seen: HashMap::new(),
+            acked: HashMap::new(),
             hll: HyperLogLog::default(),
             visible_override: None,
         }
@@ -389,13 +435,34 @@ impl RelayEngine {
         vec![
             RelayEvent::Send {
                 link,
-                frame: frame_with(FRAME_DIGEST_FULL, &self.digest.encode()),
+                frame: full_digest_frame(&self.digest),
             },
             RelayEvent::Send {
                 link,
                 frame: self.beacon().to_vec(),
             },
         ]
+    }
+
+    /// Frames for `link` that were queued but never transmitted (the link
+    /// dropped first): forget that the neighbour has these envelopes so they
+    /// are offered again next time. Call before [`Self::link_down`].
+    pub fn unsent(&mut self, link: u64, frames: &[Vec<u8>]) {
+        let Some(peer) = self.neighbours.get(&link).map(|n| n.peer.clone()) else {
+            return;
+        };
+        for f in frames {
+            let body = match f.split_first() {
+                Some((&FRAME_DATA, b)) => b,
+                Some((&FRAME_DELIVERY_ACK, b)) if b.len() >= MSG_HASH_LEN => &b[MSG_HASH_LEN..],
+                _ => continue,
+            };
+            if let Ok(env) = EnvelopeV1::decode(body) {
+                if let Some(s) = self.sent_to.get_mut(&env.envelope_id) {
+                    s.remove(&peer);
+                }
+            }
+        }
     }
 
     pub fn link_down(&mut self, link: u64, now_ms: u64) {
@@ -407,6 +474,29 @@ impl RelayEngine {
 
     /// Hand our own sealed envelope to the mesh.
     pub fn submit_own(&mut self, envelope: EnvelopeV1, now_ms: u64) -> Result<Vec<RelayEvent>> {
+        self.submit(envelope, None, now_ms)
+    }
+
+    /// Send our `DELIVERY_ACK` for `msg_hash` (the envelope carries the
+    /// end-to-end MACed ack to the original sender's sub-tag).
+    pub fn submit_ack(
+        &mut self,
+        envelope: EnvelopeV1,
+        msg_hash: [u8; MSG_HASH_LEN],
+        now_ms: u64,
+    ) -> Result<Vec<RelayEvent>> {
+        let mut ev = Vec::new();
+        self.note_ack(&msg_hash, now_ms, &mut ev);
+        ev.extend(self.submit(envelope, Some(msg_hash), now_ms)?);
+        Ok(ev)
+    }
+
+    fn submit(
+        &mut self,
+        envelope: EnvelopeV1,
+        ack_of: Option<[u8; MSG_HASH_LEN]>,
+        now_ms: u64,
+    ) -> Result<Vec<RelayEvent>> {
         parse_routing_aad(&envelope.header_aad)?;
         let expires_at = effective_expiry(&envelope, now_ms)?;
         let id = envelope.envelope_id;
@@ -415,6 +505,7 @@ impl RelayEngine {
             expires_at,
             hop_count: 0,
             own: true,
+            ack_of,
         };
         self.mark_seen(id, expires_at);
         self.items.insert(id, item.clone());
@@ -442,10 +533,11 @@ impl RelayEngine {
             ev.push(RelayEvent::Removed(id));
         }
         self.seen.retain(|_, t| *t > now_ms);
+        self.acked.retain(|_, t| *t > now_ms);
         ev.extend(self.refresh_digest(now_ms));
         if now_ms >= self.last_full_ms + DIGEST_REFRESH_MS {
             self.last_full_ms = now_ms;
-            let full = frame_with(FRAME_DIGEST_FULL, &self.digest.encode());
+            let full = full_digest_frame(&self.digest);
             for l in self.neighbours.keys() {
                 ev.push(RelayEvent::Send {
                     link: *l,
@@ -497,8 +589,12 @@ impl RelayEngine {
         self.advertised = next;
         let mut ev = Vec::new();
         let (frame, has_delta) = match old.delta_to(&self.digest) {
-            Some(d) => (frame_with(FRAME_DIGEST_DELTA, &d.encode()), true),
-            None => (frame_with(FRAME_DIGEST_FULL, &self.digest.encode()), false),
+            Some(d) => {
+                let mut f = vec![FRAME_DIGEST_DELTA, DELTA_MODE_DELTA];
+                f.extend_from_slice(&d.encode());
+                (f, true)
+            }
+            None => (full_digest_frame(&self.digest), false),
         };
         let hello = LinkControl::hello_for(&self.digest, has_delta).encode();
         for l in self.neighbours.keys() {
@@ -542,19 +638,19 @@ impl RelayEngine {
                     }
                     LinkControl::DigestReq { .. } => ev.push(RelayEvent::Send {
                         link,
-                        frame: frame_with(FRAME_DIGEST_FULL, &self.digest.encode()),
+                        frame: full_digest_frame(&self.digest),
                     }),
                 }
             }
-            FRAME_DIGEST_FULL => {
-                let f = CuckooFilter::decode(body)?;
+            FRAME_DIGEST_DELTA if body.first() == Some(&DELTA_MODE_FULL) => {
+                let f = CuckooFilter::decode(&body[1..])?;
                 if let Some(n) = self.neighbours.get_mut(&link) {
                     n.digest = Some(f);
                 }
                 self.after_digest(link, now_ms, &mut ev);
             }
-            FRAME_DIGEST_DELTA => {
-                let d = DigestDelta::decode(body)?;
+            FRAME_DIGEST_DELTA if body.first() == Some(&DELTA_MODE_DELTA) => {
+                let d = DigestDelta::decode(&body[1..])?;
                 let applied = self
                     .neighbours
                     .get_mut(&link)
@@ -575,9 +671,19 @@ impl RelayEngine {
                     });
                 }
             }
-            FRAME_ENVELOPE => {
+            FRAME_DATA => {
                 let env = EnvelopeV1::decode(body)?;
-                self.on_envelope(link, env, now_ms, &mut ev)?;
+                self.on_envelope(link, env, None, now_ms, &mut ev)?;
+            }
+            FRAME_DELIVERY_ACK => {
+                if body.len() < MSG_HASH_LEN {
+                    return Err(OmcpError::Sync("delivery ack truncated"));
+                }
+                let (h, rest) = body.split_at(MSG_HASH_LEN);
+                let h: [u8; MSG_HASH_LEN] = h.try_into().expect("16");
+                let env = EnvelopeV1::decode(rest)?;
+                self.note_ack(&h, now_ms, &mut ev);
+                self.on_envelope(link, env, Some(h), now_ms, &mut ev)?;
             }
             _ => return Err(OmcpError::Sync("unknown mesh frame")),
         }
@@ -594,10 +700,48 @@ impl RelayEngine {
         }
     }
 
+    /// A `DELIVERY_ACK` for `h` passed by: drop envelopes we carry for others
+    /// with that hash and refuse later copies. Our own copy stays until the
+    /// end-to-end ack is verified ([`Self::cancel_own`]).
+    fn note_ack(&mut self, h: &[u8; MSG_HASH_LEN], now_ms: u64, ev: &mut Vec<RelayEvent>) {
+        let hit: Vec<[u8; 16]> = self
+            .items
+            .iter()
+            .filter(|(_, i)| !i.own && i.ack_of.is_none() && msg_hash(&i.envelope.ciphertext) == *h)
+            .map(|(k, _)| *k)
+            .collect();
+        for id in hit {
+            self.items.remove(&id);
+            self.store.take(&id);
+            self.sent_to.remove(&id);
+            ev.push(RelayEvent::Removed(id));
+        }
+        if self.acked.len() >= MAX_SEEN {
+            if let Some(old) = self.acked.iter().min_by_key(|(_, t)| **t).map(|(k, _)| *k) {
+                self.acked.remove(&old);
+            }
+        }
+        self.acked.insert(*h, now_ms.saturating_add(MAX_EXPIRY_MS));
+    }
+
+    /// Whether a `DELIVERY_ACK` for `h` was seen.
+    pub fn is_acked(&self, h: &[u8; MSG_HASH_LEN]) -> bool {
+        self.acked.contains_key(h)
+    }
+
+    /// Our own (non-ack) item whose ciphertext hashes to `h`.
+    pub fn own_by_hash(&self, h: &[u8; MSG_HASH_LEN]) -> Option<[u8; 16]> {
+        self.items
+            .iter()
+            .find(|(_, i)| i.own && i.ack_of.is_none() && msg_hash(&i.envelope.ciphertext) == *h)
+            .map(|(k, _)| *k)
+    }
+
     fn on_envelope(
         &mut self,
         link: u64,
         env: EnvelopeV1,
+        ack_of: Option<[u8; MSG_HASH_LEN]>,
         now_ms: u64,
         ev: &mut Vec<RelayEvent>,
     ) -> Result<()> {
@@ -632,6 +776,7 @@ impl RelayEngine {
                 link,
                 tag: *t,
                 envelope: env,
+                ack_of,
             });
             ev.extend(self.refresh_digest(now_ms));
             return Ok(());
@@ -639,11 +784,16 @@ impl RelayEngine {
         if !self.cfg.enabled || env.ttl_hops == 0 || tags.is_empty() {
             return Ok(());
         }
+        if ack_of.is_none() && self.acked.contains_key(&msg_hash(&env.ciphertext)) {
+            self.mark_seen(id, expires_at);
+            return Ok(()); // already delivered: do not carry
+        }
         let item = CarryItem {
             hop_count: MAX_CARRY_DISTANCE.saturating_sub(env.ttl_hops),
             envelope: env,
             expires_at,
             own: false,
+            ack_of,
         };
         match self.store.insert(Self::meta(&item), now_ms) {
             InsertOutcome::Rejected => {
@@ -751,6 +901,7 @@ impl RelayEngine {
         };
         let mut env = item.envelope.clone();
         let own = item.own;
+        let ack_of = item.ack_of;
         if !own {
             if env.ttl_hops == 0 {
                 return;
@@ -763,14 +914,25 @@ impl RelayEngine {
         if !own && self.store.try_forward(bytes.len() as u64, now_ms).is_err() {
             return; // daily forwarding budget spent (§22.4)
         }
+        let first = self.sent_to.get(id).is_none_or(|s| s.is_empty());
         self.sent_to.entry(*id).or_default().insert(peer);
         for t in tags {
             self.carry.note_activity(*t, now_ms);
         }
-        ev.push(RelayEvent::Send {
-            link,
-            frame: frame_with(FRAME_ENVELOPE, &bytes),
-        });
+        let frame = match ack_of {
+            Some(h) => {
+                let mut f = Vec::with_capacity(1 + MSG_HASH_LEN + bytes.len());
+                f.push(FRAME_DELIVERY_ACK);
+                f.extend_from_slice(&h);
+                f.extend_from_slice(&bytes);
+                f
+            }
+            None => frame_with(FRAME_DATA, &bytes),
+        };
+        ev.push(RelayEvent::Send { link, frame });
+        if own && ack_of.is_none() && first {
+            ev.push(RelayEvent::Handed(*id));
+        }
     }
 }
 
@@ -950,33 +1112,29 @@ mod tests {
         let sends = |ev: &[RelayEvent]| -> Vec<u64> {
             ev.iter()
                 .filter_map(|e| match e {
-                    RelayEvent::Send { link, frame } if frame[0] == FRAME_ENVELOPE => Some(*link),
+                    RelayEvent::Send { link, frame } if frame[0] == FRAME_DATA => Some(*link),
                     _ => None,
                 })
                 .collect()
         };
-        b.on_frame(2, &frame_with(FRAME_DIGEST_FULL, &carry.encode()), now)
-            .unwrap();
-        b.on_frame(3, &frame_with(FRAME_DIGEST_FULL, &none.encode()), now)
-            .unwrap();
-        b.on_frame(4, &frame_with(FRAME_DIGEST_FULL, &none.encode()), now)
-            .unwrap();
+        b.on_frame(2, &full_digest_frame(&carry), now).unwrap();
+        b.on_frame(3, &full_digest_frame(&none), now).unwrap();
+        b.on_frame(4, &full_digest_frame(&none), now).unwrap();
         // no want: lowest carry (link 2)
         let ev = b
             .on_frame(
                 1,
-                &frame_with(FRAME_ENVELOPE, &env(1, t, 8, now).encode().unwrap()),
+                &frame_with(FRAME_DATA, &env(1, t, 8, now).encode().unwrap()),
                 now,
             )
             .unwrap();
         assert_eq!(sends(&ev), vec![2]);
         // want beats carry
-        b.on_frame(3, &frame_with(FRAME_DIGEST_FULL, &want.encode()), now)
-            .unwrap();
+        b.on_frame(3, &full_digest_frame(&want), now).unwrap();
         let ev = b
             .on_frame(
                 1,
-                &frame_with(FRAME_ENVELOPE, &env(2, t, 8, now).encode().unwrap()),
+                &frame_with(FRAME_DATA, &env(2, t, 8, now).encode().unwrap()),
                 now,
             )
             .unwrap();
@@ -985,7 +1143,7 @@ mod tests {
         let ev = b
             .on_frame(
                 1,
-                &frame_with(FRAME_ENVELOPE, &env(3, [0x55; 8], 8, now).encode().unwrap()),
+                &frame_with(FRAME_DATA, &env(3, [0x55; 8], 8, now).encode().unwrap()),
                 now,
             )
             .unwrap();
@@ -994,7 +1152,7 @@ mod tests {
 
     #[test]
     fn expiry_tlv_cap_and_digest_resync() {
-        let now = 1_000;
+        let now = 1_000_000;
         let mut a = RelayEngine::new(
             RelayConfig {
                 enabled: true,
@@ -1008,18 +1166,19 @@ mod tests {
         );
         a.link_up(1, &[1], now);
         let mut e = env(1, [1; 8], 8, now);
-        put_expires_in_aad(&mut e.header_aad, now + 10);
+        put_expires_in_aad(&mut e.header_aad, now + 10_000);
+        assert_eq!(&e.header_aad[e.header_aad.len() - 6..][..2], &[0x58, 4]);
         let ev = a
-            .on_frame(1, &frame_with(FRAME_ENVELOPE, &e.encode().unwrap()), now)
+            .on_frame(1, &frame_with(FRAME_DATA, &e.encode().unwrap()), now)
             .unwrap();
         assert!(ev.iter().any(|e| matches!(e, RelayEvent::Stored(_))));
-        let ev = a.tick(now + 11);
+        let ev = a.tick(now + 11_000);
         assert!(ev.contains(&RelayEvent::Removed([1; 16])));
         assert_eq!(a.stats().carried, 0);
         // cap: two ~330 B envelopes fit in 700 B, the third evicts the oldest-expiring
         for i in 2..5u8 {
             let e = env(i, [1; 8], 8, now + i as u64);
-            a.on_frame(1, &frame_with(FRAME_ENVELOPE, &e.encode().unwrap()), now)
+            a.on_frame(1, &frame_with(FRAME_DATA, &e.encode().unwrap()), now)
                 .unwrap();
             assert!(a.stats().carried_bytes <= 700);
         }
@@ -1032,5 +1191,93 @@ mod tests {
         ));
         assert!(a.on_frame(1, &[0x33], now).is_err());
         assert!(a.on_frame(9, &[0x48, 0, 0, 0, 0, 1], now).is_err());
+    }
+
+    #[test]
+    fn delivery_ack_deletes_relay_copies_and_reaches_sender() {
+        let now = 1_000_000;
+        let (sub_a, sub_c) = ([0xA0; 8], [0xC0; 8]);
+        let mut nodes: Vec<RelayEngine> = (0..4)
+            .map(|i| RelayEngine::new(RelayConfig::default(), now, i))
+            .collect();
+        nodes[0].set_wants([sub_a].into(), now);
+        nodes[2].set_wants([sub_c].into(), now);
+        let mut wires = HashMap::new();
+        // A gives the message to B and to D (two carriers).
+        connect(&mut nodes, &mut wires, 0, 1, 1, now);
+        connect(&mut nodes, &mut wires, 0, 3, 4, now);
+        let ev = nodes[0].submit_own(env(1, sub_c, 8, now), now).unwrap();
+        assert!(ev.contains(&RelayEvent::Handed([1; 16])));
+        pump(
+            &mut nodes,
+            &wires,
+            ev.into_iter().map(|e| (0, e)).collect(),
+            now,
+        );
+        assert_eq!(nodes[1].stats().carried, 1);
+        assert_eq!(nodes[3].stats().carried, 1);
+        disconnect(&mut nodes, &mut wires, 0, 1, 1);
+        disconnect(&mut nodes, &mut wires, 0, 3, 4);
+        // B meets C: delivered; C acks to A's sub-tag through B.
+        let got = connect(&mut nodes, &mut wires, 1, 2, 2, now + 10);
+        let h = msg_hash(&got[0].1.ciphertext);
+        let ev = nodes[2]
+            .submit_ack(env(2, sub_a, 8, now + 10), h, now + 10)
+            .unwrap();
+        pump(
+            &mut nodes,
+            &wires,
+            ev.into_iter().map(|e| (2, e)).collect(),
+            now + 10,
+        );
+        assert!(
+            nodes[1].item(&[1; 16]).is_none(),
+            "B dropped the acked copy"
+        );
+        assert!(nodes[1].item(&[2; 16]).is_some(), "B carries the ack");
+        disconnect(&mut nodes, &mut wires, 1, 2, 2);
+        // D meets B: D learns the ack and drops its copy too.
+        connect(&mut nodes, &mut wires, 3, 1, 5, now + 20);
+        assert!(nodes[3].item(&[1; 16]).is_none());
+        // B meets A: the ack is delivered as an ack; A's own copy stays until verified.
+        let mut p: Vec<(usize, RelayEvent)> = Vec::new();
+        wires.insert((1, 6), (0, 6));
+        wires.insert((0, 6), (1, 6));
+        p.extend(
+            nodes[1]
+                .link_up(6, &[0], now + 30)
+                .into_iter()
+                .map(|e| (1, e)),
+        );
+        p.extend(
+            nodes[0]
+                .link_up(6, &[1], now + 30)
+                .into_iter()
+                .map(|e| (0, e)),
+        );
+        let mut acks = Vec::new();
+        while let Some((n, e)) = p.pop() {
+            match e {
+                RelayEvent::Send { link, frame } => {
+                    if let Some(&(m, ml)) = wires.get(&(n, link)) {
+                        p.extend(
+                            nodes[m]
+                                .on_frame(ml, &frame, now + 30)
+                                .unwrap()
+                                .into_iter()
+                                .map(|e| (m, e)),
+                        );
+                    }
+                }
+                RelayEvent::Deliver {
+                    ack_of: Some(a), ..
+                } if n == 0 => acks.push(a),
+                _ => {}
+            }
+        }
+        assert_eq!(acks, vec![h]);
+        assert_eq!(nodes[0].own_by_hash(&h), Some([1; 16]));
+        nodes[0].cancel_own(&[1; 16]);
+        assert_eq!(nodes[0].own_by_hash(&h), None);
     }
 }
