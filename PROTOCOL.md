@@ -804,6 +804,7 @@ Computed per community, and per stream host, from **participant attestations**:
 | `0x48` | `HELLO` | 6 B | §22.7(12) |
 | `0x52` | `DIGEST_REQ` | 6 B | §22.7(12) |
 | `0x03` | `MESH_FRAME` (link PDU; inner frame `0x44` DATA, `0x45` DELIVERY_ACK, `0x64` DIGEST_DELTA) | var | §22.8(2) |
+| `0x04` | `MLS_SETUP` (link PDU; KEY_PACKAGE, WELCOME, JOINED for 2-member MLS) | var | §22.8(1) |
 | other | unassigned (extension process §16) | — | — |
 
 ### 23.8 Clarifications (v0.2.1)

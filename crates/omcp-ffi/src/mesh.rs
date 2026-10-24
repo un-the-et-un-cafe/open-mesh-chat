@@ -25,7 +25,8 @@
 //! # End-to-end keys: 2-member MLS (§22.7(5), §22.8(1))
 //!
 //! Every 1:1 chat is a 2-member MLS group, created the first time the two
-//! contacts have a direct link (link PDU `0x04`, see [`PDU_MLS_SETUP`]):
+//! contacts have a direct link (link PDU `0x04` `MLS_SETUP`, §21.9, see
+//! [`PDU_MLS_SETUP`]):
 //! the contact with the higher id sends a KeyPackage, the lower id creates
 //! the group, adds it and answers with the Welcome, the joiner confirms
 //! with `JOINED`. Existing contacts migrate the same way on their next
@@ -78,12 +79,17 @@ use crate::{
 
 /// Link PDU `0x03` `MESH_FRAME` (§21.9).
 pub(crate) const PDU_MESH: u8 = 0x03;
-/// Link PDU `0x04`: MLS group setup for a 1:1 chat (KeyPackage / Welcome /
-/// JOINED). Not in the §21.9 registry (spec gap).
+/// Link PDU `0x04` `MLS_SETUP` (§21.9 registry, §22.8(1)): MLS group setup
+/// for a 1:1 chat. Wire: `0x04 ‖ link-AEAD fragment` of the setup frame
+/// `type ‖ body`, with `type` one of [`SETUP_KEY_PACKAGE`],
+/// [`SETUP_WELCOME`], [`SETUP_JOINED`].
 pub(crate) const PDU_MLS_SETUP: u8 = 0x04;
-const SETUP_KEY_PACKAGE: u8 = 0x01;
-const SETUP_WELCOME: u8 = 0x02;
-const SETUP_JOINED: u8 = 0x03;
+/// `MLS_SETUP` frame `KEY_PACKAGE` (joiner → creator: MLS KeyPackage).
+pub(crate) const SETUP_KEY_PACKAGE: u8 = 0x01;
+/// `MLS_SETUP` frame `WELCOME` (creator → joiner: MLS Welcome).
+pub(crate) const SETUP_WELCOME: u8 = 0x02;
+/// `MLS_SETUP` frame `JOINED` (joiner → creator: empty body).
+pub(crate) const SETUP_JOINED: u8 = 0x03;
 /// Mesh frames sealed onto one link per call (keeps BLE queues short).
 pub(crate) const MESH_FRAMES_PER_FLUSH: usize = 32;
 /// Simultaneous mesh links the apps should keep (central + peripheral roles).

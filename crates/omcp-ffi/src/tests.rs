@@ -2015,3 +2015,38 @@ fn rl4_storage_used_for_relaying_reported() {
     assert_eq!(sa.own_pending, 1);
     assert!(sa.storage_used_bytes > sa.carried_bytes);
 }
+
+// ---- Link PDU registry (PROTOCOL §21.9) ----
+
+#[test]
+fn mls_setup_is_link_pdu_0x04_per_registry() {
+    // §21.9: 0x03 MESH_FRAME, 0x04 MLS_SETUP; 0x01/0x02 are the handshake
+    // and link-data PDUs. No two kinds share a value.
+    assert_eq!(mesh::PDU_MLS_SETUP, 0x04);
+    assert_eq!(mesh::PDU_MESH, 0x03);
+    let kinds = [PDU_HANDSHAKE, PDU_LINK, mesh::PDU_MESH, mesh::PDU_MLS_SETUP];
+    let uniq: std::collections::BTreeSet<u8> = kinds.iter().copied().collect();
+    assert_eq!(uniq.len(), kinds.len());
+    let setup = [
+        mesh::SETUP_KEY_PACKAGE,
+        mesh::SETUP_WELCOME,
+        mesh::SETUP_JOINED,
+    ];
+    assert_eq!(setup, [0x01, 0x02, 0x03]);
+    // On the wire: the first direct link carries MLS setup as 0x04 PDUs and
+    // nothing outside the registry.
+    let (a, b) = (node("A"), node("B"));
+    befriend(&a, &b);
+    let l = up(&a, &b);
+    let first: Vec<u8> =
+        l.2.iter()
+            .flat_map(|o| o.outgoing.iter().map(|p| p[0]))
+            .collect();
+    assert!(first.contains(&0x04), "{first:?}");
+    assert!(first.iter().all(|k| uniq.contains(k)), "{first:?}");
+    assert!(a.mesh_ready(b.identity().peer_id_hex).unwrap());
+    down(&l);
+    // Unknown PDU kinds are refused.
+    let lb = b.open_responder_link().unwrap();
+    assert!(lb.on_pdu(vec![0x05, 0, 0]).is_err());
+}
