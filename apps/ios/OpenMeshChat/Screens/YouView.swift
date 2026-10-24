@@ -22,6 +22,7 @@ struct YouView: View {
                 Section {
                     NavigationLink { BackupSettingsView() } label: { row(L("backup_title"), L("backup_row_desc")) }
                     NavigationLink { StorageSettingsView() } label: { row(L("storage_title"), L("storage_keep_title")) }
+                    NavigationLink { MeshRelaySettingsView() } label: { row(L("relay_title"), L("relay_toggle_desc")) }
                     NavigationLink { NotificationSettingsView() } label: { row(L("notif_title"), L("notif_row_desc")) }
                     NavigationLink { PrivacySettingsView() } label: { row(L("privacy_title"), L("privacy_row_desc")) }
                     NavigationLink { GatewaySettingsView() } label: { row(L("gateway_title"), L("gateway_row_desc")) }
@@ -99,6 +100,35 @@ struct StorageSettingsView: View {
             }
         }
         .navigationTitle(L("storage_title"))
+        .onAppear(perform: reload)
+    }
+}
+
+/// Settings > Mesh relay (PROTOCOL §22.4). No mockup exists yet (design gap): plain Form.
+struct MeshRelaySettingsView: View {
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.omcpColors) private var c
+    @State private var prefs = MeshRelayPrefs()
+    @State private var stats = MeshRelayStats()
+
+    private func reload() { prefs = model.core.meshSettings(); stats = model.core.meshStats() }
+    private func apply(_ p: MeshRelayPrefs) { try? model.core.setMeshSettings(p); reload() }
+
+    var body: some View {
+        Form {
+            Section(footer: Text(L("relay_toggle_desc"))) {
+                Toggle(L("relay_toggle"), isOn: Binding(get: { prefs.enabled }, set: { var p = prefs; p.enabled = $0; apply(p) }))
+            }
+            Section(footer: Text(L("relay_privacy"))) {
+                Picker(L("relay_cap_title"), selection: Binding(get: { prefs.capBytes }, set: { var p = prefs; p.capBytes = $0; apply(p) })) {
+                    ForEach(MeshRelaySettings.capOptions, id: \.self) { Text(StorageSettings.formatBytes($0)).tag($0) }
+                }
+                .disabled(!prefs.enabled)
+                Text(L("relay_usage", stats.carried, StorageSettings.formatBytes(stats.carriedBytes), stats.neighbours))
+                    .font(.caption).foregroundStyle(c.ink2)
+            }
+        }
+        .navigationTitle(L("relay_title"))
         .onAppear(perform: reload)
     }
 }

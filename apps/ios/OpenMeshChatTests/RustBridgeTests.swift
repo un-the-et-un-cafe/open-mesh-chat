@@ -284,6 +284,59 @@ final class RustBridgeTests: XCTestCase {
         XCTAssertEqual(core.keptMediaUsage(), HoplaKit.KeptMediaUsage(count: 0, bytes: 0))
     }
 
+
+    // MARK: Multi-hop mesh relay (PROTOCOL §22)
+
+    private func linkUp(_ x: RustOmcpCore, _ y: RustOmcpCore) throws -> (CoreLink, CoreLink, [IncomingText]) {
+        let lx = try x.openInitiatorLink(x.contacts().first { $0.id == y.identity()!.peerIdHex }!.id)
+        let ly = try y.openResponderLink()
+        var got: [IncomingText] = []
+        var queue: [(toY: Bool, pdus: [Data])] = [(true, try lx.start().outgoing)]
+        func run() throws {
+            while !queue.isEmpty {
+                let (toY, pdus) = queue.removeFirst()
+                for p in pdus {
+                    let out = try (toY ? ly : lx).onPdu(p)
+                    got += out.received
+                    if !out.outgoing.isEmpty { queue.append((!toY, out.outgoing)) }
+                }
+            }
+        }
+        try run()
+        for _ in 0..<4 {
+            queue.append((true, try lx.flush().outgoing)); queue.append((false, try ly.flush().outgoing))
+            try run()
+        }
+        XCTAssertTrue(lx.isEstablished && ly.isEstablished)
+        XCTAssertNotEqual(lx.handle, 0)
+        return (lx, ly, got)
+    }
+
+    /// A → B → C where A and C are never connected: B carries an opaque envelope, C gets it.
+    func testMeshChainAtoBtoCNeverInRange() throws {
+        let a = try node("A").0
+        let b = try node("B").0
+        let c = try node("C").0
+        for (x, y) in [(a, b), (b, c), (a, c)] {
+            _ = try x.addContactFromQr(try y.qrPayload())
+            _ = try y.addContactFromQr(try x.qrPayload())
+        }
+        let cid = c.identity()!.peerIdHex, aid = a.identity()!.peerIdHex
+        _ = try a.queueMessage(cid, text: "via B", burn: nil)
+        XCTAssertEqual(a.meshStats().ownPending, 1)
+        let (ab, ba, gotB) = try linkUp(a, b)
+        XCTAssertTrue(gotB.isEmpty)
+        XCTAssertEqual(b.meshStats().carried, 1)
+        ab.close(); ba.close()
+        let (bc, cb, gotC) = try linkUp(b, c)
+        XCTAssertEqual(gotC.map { $0.text }, ["via B"])
+        XCTAssertEqual(gotC.first?.contactId, aid)
+        bc.close(); cb.close()
+        XCTAssertEqual(b.meshSettings(), MeshRelayPrefs(enabled: true, capBytes: 50_000_000))
+        try b.setMeshSettings(MeshRelayPrefs(enabled: false, capBytes: 10_000_000))
+        XCTAssertEqual(b.meshStats().carried, 0)
+        XCTAssertEqual(a.meshBeacon().count, 6)
+    }
 }
 
 extension RustOmcpCore {
@@ -292,5 +345,4 @@ extension RustOmcpCore {
         _ = try load(phrase: try generateRecoveryPhrase(), displayName: name)
         return try qrPayload()
     }
-
 }

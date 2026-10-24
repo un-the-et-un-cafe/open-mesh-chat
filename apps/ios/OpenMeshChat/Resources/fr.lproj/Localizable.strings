@@ -225,6 +225,12 @@
 "media_resend_note" = "Une seule demande est envoyée pour ce fichier. Ajoutez une courte note si vous voulez ; rien d’autre n’est partagé.";
 "media_resend_label" = "Note (facultative)";
 "media_resend_asked_note" = "%@ vous demande de renvoyer « %@ » : « %@ ». Vous ne l’avez plus sur ce téléphone.";
+"relay_title" = "Relais maillé";
+"relay_toggle" = "Relayer les messages des autres";
+"relay_toggle_desc" = "Transporter des messages chiffrés entre des amis proches qui sont hors de portée l’un de l’autre.";
+"relay_cap_title" = "Utiliser jusqu’à";
+"relay_privacy" = "Les messages relayés restent chiffrés de bout en bout : ce téléphone ne peut ni les lire ni voir qui les a envoyés. Ils sont supprimés à leur expiration (72 heures au plus par défaut) ou quand l’espace manque.";
+"relay_usage" = "%ld messages transportés · %@ · %ld à proximité";
 "storage_title" = "Stockage";
 "storage_keep_title" = "Conserver les médias envoyés";
 "storage_keep_body" = "Hopla conserve une copie chiffrée des photos et fichiers que vous envoyez, pour pouvoir les renvoyer si un contact restaure un nouveau téléphone. Les plus anciens sont supprimés en premier. Les médias à autodestruction et à vue unique ne sont jamais conservés.";

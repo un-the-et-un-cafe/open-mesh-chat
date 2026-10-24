@@ -1,6 +1,7 @@
 import CoreBluetooth
 import Foundation
 import HoplaKit
+import UIKit
 
 /// iOS BLE GATT transport, same GATT as Android (`OmcpGatt`, PROTOCOL §8.1). Every phone is both:
 /// - **peripheral** (`CBPeripheralManager`): advertises the OMCP service UUID and hosts
@@ -22,6 +23,14 @@ import HoplaKit
 ///   bluetooth-peripheral; both managers use state restoration identifiers so iOS can relaunch
 ///   the app for BLE events. Discovery between two backgrounded iPhones is unreliable; that's
 ///   why Gateway recommends an Android companion and Nearby uses a Live Activity session.
+///
+/// Multi-hop relay (PROTOCOL §22, v0.2 beta): Rust's relay engine rides on every established
+/// link; `LinkResult.relayLinks` names *other* links with frames to send, which we flush. A
+/// timer (`MeshDutyCycle`, battery / Low Power Mode aware) runs Rust's relay tick (HELLO
+/// beacons, carry-store expiry) and caps simultaneous links. iOS peripherals can't put the
+/// 6-byte HELLO in advertisement data, so it is exchanged in-link only. Relaying in the
+/// background works only while iOS keeps the app's BLE sessions alive (bluetooth-central /
+/// -peripheral background modes); between two backgrounded iPhones it is unreliable.
 ///
 /// Experimental: not run on hardware in this environment (no Mac/iPhone).
 final class BleMeshTransport: NSObject, MeshKick {
@@ -57,6 +66,13 @@ final class BleMeshTransport: NSObject, MeshKick {
     }
     private var clients: [UUID: Client] = [:]
 
+    // Relay
+    private var timer: DispatchSourceTimer?
+    private var profile: MeshDutyCycle.Profile?
+    private var scanning = false
+    private var relayPending: [UInt64] = []
+    private var draining = false
+
     init(repo: MeshRepository) {
         self.repo = repo
         super.init()
@@ -65,10 +81,76 @@ final class BleMeshTransport: NSObject, MeshKick {
     func start() {
         central = CBCentralManager(delegate: self, queue: q, options: [CBCentralManagerOptionRestoreIdentifierKey: "omcp.central"])
         peripheral = CBPeripheralManager(delegate: self, queue: q, options: [CBPeripheralManagerOptionRestoreIdentifierKey: "omcp.peripheral"])
+        DispatchQueue.main.async { UIDevice.current.isBatteryMonitoringEnabled = true }
+        q.async { [self] in tick() }
+    }
+
+    // MARK: Relay duty cycle
+
+    /// Battery state as last read on the main thread (UIDevice is main-thread only).
+    private var battery: (pct: Int, charging: Bool) = (-1, false)
+
+    private func currentProfile() -> MeshDutyCycle.Profile {
+        DispatchQueue.main.async { [weak self] in
+            let d = UIDevice.current
+            let v = (d.batteryLevel < 0 ? -1 : Int(d.batteryLevel * 100), d.batteryState == .charging || d.batteryState == .full)
+            self?.q.async { self?.battery = v }
+        }
+        return MeshDutyCycle.profile(batteryPercent: battery.pct, charging: battery.charging,
+                                     lowPowerMode: ProcessInfo.processInfo.isLowPowerModeEnabled,
+                                     coreMaxLinks: repo.core.meshMaxLinks())
+    }
+
+    private func tick() {
+        let p = currentProfile()
+        profile = p
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        if let c = central, c.state == .poweredOn {
+            let want = p.scanning(nowMs: now)
+            if want && !scanning {
+                c.scanForPeripherals(withServices: [service], options: [CBCentralManagerScanOptionAllowDuplicatesKey: false])
+                scanning = true
+            } else if !want && scanning {
+                c.stopScan()
+                scanning = false
+            }
+        }
+        queueRelay(repo.core.meshTick(nowMs: now))
+        let t = DispatchSource.makeTimerSource(queue: q)
+        t.schedule(deadline: .now() + .milliseconds(Int(p.tickMs)))
+        t.setEventHandler { [weak self] in self?.tick() }
+        timer = t
+        t.resume()
+    }
+
+    private var underLinkLimit: Bool {
+        clients.count + responders.count < (profile?.maxLinks ?? repo.core.meshMaxLinks())
+    }
+
+    /// Flush every link Rust says has relay frames (iteratively, never recursively).
+    private func queueRelay(_ handles: [UInt64]) {
+        relayPending += handles.filter { !relayPending.contains($0) }
+        guard !draining else { return }
+        draining = true
+        defer { draining = false }
+        while !relayPending.isEmpty {
+            let h = relayPending.removeFirst()
+            if let c = clients.values.first(where: { $0.link?.handle == h }),
+               let link = c.link, link.isEstablished, let r = try? link.flush() {
+                onClientResult(c, r)
+            } else if let (id, link) = responders.first(where: { $0.value.handle == h }),
+                      link.isEstablished, let r = try? link.flush() {
+                onResponderResult(id, r)
+            }
+        }
+        pumpNotify()
     }
 
     func stop() {
+        timer?.cancel()
+        timer = nil
         central?.stopScan()
+        scanning = false
         peripheral?.stopAdvertising()
         clients.values.forEach { central.cancelPeripheralConnection($0.p); $0.link?.close() }
         clients = [:]
@@ -85,11 +167,14 @@ final class BleMeshTransport: NSObject, MeshKick {
             repo.applyFileEvents(r)
             if let cid { repo.markFlushed(cid, count: r.flushed) }
         }
+        if !r.relayLinks.isEmpty { queueRelay(r.relayLinks) }
     }
 
     // MARK: MeshKick
     func kick(_ contactId: String) {
         q.async { [self] in
+            // A copy also went to the mesh relay (multi-hop): push it onto every link with frames.
+            queueRelay(repo.core.meshPendingLinks())
             for c in clients.values where c.contactId == contactId && c.link?.isEstablished == true {
                 guard let r = try? c.link?.flush() else { continue }
                 onClientResult(c, r)
@@ -158,10 +243,11 @@ extension BleMeshTransport: CBCentralManagerDelegate, CBPeripheralDelegate {
     func centralManagerDidUpdateState(_ c: CBCentralManager) {
         guard c.state == .poweredOn else { return }
         c.scanForPeripherals(withServices: [service], options: [CBCentralManagerScanOptionAllowDuplicatesKey: false])
+        scanning = true
     }
 
     func centralManager(_ c: CBCentralManager, didDiscover p: CBPeripheral, advertisementData: [String: Any], rssi: NSNumber) {
-        guard clients[p.identifier] == nil else { return }
+        guard clients[p.identifier] == nil, underLinkLimit else { return }
         let client = Client(p)
         clients[p.identifier] = client
         p.delegate = self

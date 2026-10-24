@@ -12,6 +12,13 @@ public final class FakeOmcpCore: OmcpCore {
     private var queued: [String: Int] = [:]
     private var burns: [String: (text: String, mime: String?, live: Bool, opened: Bool, spec: BurnSpec)] = [:]
     private var counter = 0
+    private var meshPrefs = MeshRelayPrefs()
+
+    public func meshSettings() -> MeshRelayPrefs { meshPrefs }
+    public func setMeshSettings(_ p: MeshRelayPrefs) throws {
+        guard p.capBytes >= 0, p.capBytes <= meshMaxCapBytes() else { throw CoreError.other("carry cap above maximum") }
+        meshPrefs = p
+    }
     public var maxFile: UInt64 = 50_000_000
 
     public init() {}

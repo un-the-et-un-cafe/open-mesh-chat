@@ -225,6 +225,12 @@
 "media_resend_note" = "They get one request for this file. Add a short note if you like; nothing else is shared.";
 "media_resend_label" = "Note (optional)";
 "media_resend_asked_note" = "%@ asked you to resend “%@”: “%@”. You no longer have it on this phone.";
+"relay_title" = "Mesh relay";
+"relay_toggle" = "Relay messages for others";
+"relay_toggle_desc" = "Carry encrypted messages between nearby friends who are out of each other’s range.";
+"relay_cap_title" = "Use up to";
+"relay_privacy" = "Relayed messages stay end-to-end encrypted: this phone can’t read them or see who sent them. They’re deleted when they expire (72 hours at most by default) or when space runs out.";
+"relay_usage" = "Carrying %ld messages · %@ · %ld nearby";
 "storage_title" = "Storage";
 "storage_keep_title" = "Keep sent media";
 "storage_keep_body" = "Hopla keeps an encrypted copy of photos and files you send, so it can resend them if a contact restores a new phone. The oldest are deleted first. Burn-after-read and view-once media are never kept.";
