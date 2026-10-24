@@ -327,6 +327,14 @@ class BleMeshTransport(private val context: Context, private val repo: MeshRepos
         return MeshDutyCycle.profile(pct, plugged, saver, repo.core.meshMaxLinks())
     }
 
+    /** RL2: Rust lowers the automatic relay cap when free storage is under 10 %. */
+    private fun reportFreeStorage() {
+        runCatching {
+            val fs = android.os.StatFs(context.filesDir.absolutePath)
+            repo.core.meshSetFreeStorage(fs.availableBytes, fs.totalBytes)
+        }
+    }
+
     /** Periodic: duty-cycle the scanner, run Rust's relay tick, refresh the beacon. */
     private fun tick() {
         if (!running) return
@@ -341,6 +349,7 @@ class BleMeshTransport(private val context: Context, private val repo: MeshRepos
         } else if (!want && scanOn) {
             stopScanning()
         }
+        reportFreeStorage()
         queueRelay(runCatching { repo.core.meshTick(now) }.getOrDefault(emptyList()))
         repo.onStatusUpdates(runCatching { repo.core.meshTakeStatusUpdates() }.getOrDefault(emptyList()))
         val beacon = runCatching { repo.core.meshBeacon() }.getOrNull()

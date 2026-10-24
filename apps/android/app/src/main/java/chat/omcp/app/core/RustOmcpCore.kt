@@ -164,11 +164,14 @@ class RustOmcpCore : OmcpCore {
     override fun restoreMediaFromBackup(msgId: String, blob: ByteArray): ByteArray = n().restoreMediaFromBackup(msgId, blob)
     override fun requestMedia(msgId: String) = n().requestMedia(msgId)
     override fun askToResend(msgId: String, note: String?) = n().askToResend(msgId, note)
-    override fun meshSettings() = n().meshSettings().let { MeshRelayPrefs(it.relayEnabled, it.carryCapBytes.toLong()) }
-    override fun setMeshSettings(p: MeshRelayPrefs) =
-        n().setMeshSettings(chat.omcp.ffi.MeshSettings(p.enabled, p.capBytes.toULong()))
     override fun meshStats() = n().meshStats().let {
-        MeshRelayStats(it.carried.toInt(), it.carriedBytes.toLong(), it.ownPending.toInt(), it.neighbours.toInt())
+        MeshRelayStats(
+            it.carried.toInt(), it.carriedBytes.toLong(), it.ownPending.toInt(), it.neighbours.toInt(),
+            it.storageUsedBytes.toLong(), it.storageCapBytes.toLong(),
+        )
+    }
+    override fun meshSetFreeStorage(freeBytes: Long, totalBytes: Long) {
+        node?.meshSetFreeStorage(freeBytes.coerceAtLeast(0).toULong(), totalBytes.coerceAtLeast(0).toULong())
     }
     override fun meshTick(nowMs: Long) = node?.meshTick(nowMs.toULong())?.map { it.toLong() } ?: emptyList()
     override fun meshPendingLinks() = node?.meshPendingLinks()?.map { it.toLong() } ?: emptyList()
@@ -177,7 +180,6 @@ class RustOmcpCore : OmcpCore {
     } ?: emptyList()
     override fun meshBeacon() = node?.meshBeacon() ?: ByteArray(0)
     override fun meshMaxLinks() = chat.omcp.ffi.meshMaxLinks().toInt()
-    override fun meshMaxCapBytes() = chat.omcp.ffi.meshMaxCarryCapBytes().toLong()
     override fun keptMediaSettings() = n().keptMediaSettings().let { KeptMediaPrefs(it.maxDays.toInt(), it.maxBytes.toLong()) }
     override fun setKeptMediaSettings(p: KeptMediaPrefs, nowMs: Long) =
         n().setKeptMediaSettings(chat.omcp.ffi.KeptMediaSettings(p.maxDays.toUInt(), p.maxBytes.toULong()), nowMs.toULong()).toInt()

@@ -118,10 +118,18 @@ data class LinkResult(
     val relayLinks: List<Long> = emptyList(),
 )
 
-/** Settings > Mesh relay (PROTOCOL §22.4 relay budget). Defaults come from Rust. */
-data class MeshRelayPrefs(val enabled: Boolean = true, val capBytes: Long = 50_000_000L)
-
-data class MeshRelayStats(val carried: Int = 0, val carriedBytes: Long = 0, val ownPending: Int = 0, val neighbours: Int = 0)
+/**
+ * Mesh relay counters from Rust. The relay is always on with an automatic cap
+ * (REQUIREMENTS RL1, RL2); Settings shows only [storageUsedBytes] (RL4).
+ */
+data class MeshRelayStats(
+    val carried: Int = 0,
+    val carriedBytes: Long = 0,
+    val ownPending: Int = 0,
+    val neighbours: Int = 0,
+    val storageUsedBytes: Long = 0,
+    val storageCapBytes: Long = 500_000_000L,
+)
 
 /** Mesh-caused status change (PROTOCOL §22.8(3)): [status] is "Sent" (handed to a relay) or "Delivered" (end-to-end ack). */
 data class MeshStatusUpdate(val msgId: String, val contactId: String, val status: String)
@@ -293,9 +301,9 @@ interface OmcpCore {
     /** User-confirmed "Ask to resend": ONE message with the optional [note] (≤ 280 bytes). */
     fun askToResend(msgId: String, note: String?) {}
     // ---- multi-hop mesh relay (PROTOCOL §22) ----
-    fun meshSettings(): MeshRelayPrefs = MeshRelayPrefs()
-    fun setMeshSettings(p: MeshRelayPrefs) {}
     fun meshStats(): MeshRelayStats = MeshRelayStats()
+    /** RL2: report free/total storage; under 10 % free Rust lowers the relay cap. */
+    fun meshSetFreeStorage(freeBytes: Long, totalBytes: Long) {}
     /** Periodic relay work; returns link handles with frames waiting. */
     fun meshTick(nowMs: Long): List<Long> = emptyList()
     fun meshPendingLinks(): List<Long> = emptyList()
@@ -304,7 +312,6 @@ interface OmcpCore {
     /** 6-byte HELLO beacon (§22.7(12)) for advertisement data. */
     fun meshBeacon(): ByteArray = ByteArray(0)
     fun meshMaxLinks(): Int = 4
-    fun meshMaxCapBytes(): Long = 500_000_000L
 
     fun keptMediaSettings(): KeptMediaPrefs = KeptMediaPrefs()
     /** Applies at once; returns how many kept copies were evicted (oldest first). */
