@@ -104,3 +104,7 @@ CI: the `ios` job in `.github/workflows/ci.yml` (macos-latest) runs exactly this
 - NFC, PeerID entry, Nearby: not in this beta. File transfer has no end-to-end ack yet (sender
   shows "Sent" once the last chunk is on the link).
 - Message history is in memory (as on Android); contacts and settings persist.
+
+## Mesh relay
+
+Multi-hop store-and-forward relay (PROTOCOL §22) is described in [docs/MESH_RELAY.md](../../docs/MESH_RELAY.md).

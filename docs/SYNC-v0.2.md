@@ -74,3 +74,7 @@ Idle at 32 neighbours ≈ 0.83 MB/day.
 - SY1 models spray/delivery costs (documented in `sy1.rs`) rather than
   executing every hop; SY3 does not execute a full mesh, only the
   watermark catch-up exchange.
+
+## Mesh relay
+
+Multi-hop store-and-forward relay (PROTOCOL §22) is described in [docs/MESH_RELAY.md](MESH_RELAY.md).
