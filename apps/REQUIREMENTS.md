@@ -185,3 +185,9 @@ Messages and images that delete themselves once they've been read.
    - **iOS**: all sensitive views (chats, media, Nearby, profiles) render inside a secure-capture layer (the `UITextField.isSecureTextEntry` container technique), so they come out blank in screenshots and recordings. The app switcher shows a blurred privacy cover. If screen recording or mirroring is detected (`UIScreen.isCaptured`), the content is hidden behind a cover until it stops.
    - The app tells users plainly (in Settings > Privacy) that a second camera can still photograph the screen.
    - Acceptance: SS1 with the toggle on (default), screenshots and recordings of every Hopla screen are black or blank; with it off, burn-after-read and view-once content still comes out black or blank, on Android 10–15 and iOS 17–26; SS2 the app switcher never shows chat content while Block screenshots is on; with it off, the preview is normal, but open burn-after-read and view-once screens stay hidden.
+
+## Relay (store and forward), maintainer decision 2026-10-24
+- RL1: Relay is always on, with no toggle and no contact/stranger split. Every phone carries all encrypted envelopes (messages and news) and passes them on, as §22 already does.
+- RL2: Automatic cap of 500 MB, lowered automatically when free storage is under 10%. When full, drop the oldest envelopes first. Priority order: own chats, then contacts' envelopes, then everything else, then news.
+- RL3: Envelopes are deleted once delivery is acknowledged or at outer expiry (max 7 d).
+- RL4: Settings show only "Storage used for relaying: X MB", for information.

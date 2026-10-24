@@ -23,11 +23,39 @@ the spec is still open.
   only while ≤ 32 peers are visible). Dedup by `envelope_id`, persisted in
   `mesh_seen`.
 
+## Relay rules RL1–RL4 (apps/REQUIREMENTS.md, maintainer decision 2026-10-24)
+- **RL1, always on.** There is no relay switch anywhere (core, FFI, Android, iOS).
+  Every envelope from any neighbour is carried and passed on; whether the
+  neighbour is a contact only affects RL2 priority. A `mesh-settings` row
+  left by older builds (relay off, custom cap) is ignored.
+  Tests: `rl1_relay_always_on_carries_from_contacts_and_strangers` (core),
+  `rl1_relay_always_on_old_off_setting_ignored` (FFI).
+- **RL2, automatic cap.** One carry store, own outbound envelopes included,
+  capped at 500 MB (`RELAY_CAP_BYTES`). The apps report free and total
+  storage on every mesh tick (`mesh_set_free_storage`; Android `StatFs` on
+  `filesDir`, iOS `volumeAvailableCapacityForImportantUsage`). Under 10 % free,
+  the cap becomes `500 MB × free / (10 % of total)`, reaching 0 when the disk is
+  full. When full, the store drops by class, then oldest first (by
+  `created_ms`, clamped to the time it was stored): news, then everything
+  else, then contacts' envelopes, then own chats. Store-and-forward offers
+  to a neighbour use the reverse order (own chats first, oldest first within
+  a class). The class is persisted per carry row; rows from older builds map
+  to own chats (own rows) or contacts (all earlier links were contact links).
+  Tests: `rl2_*` in `omcp-core::sync::{budget,relay}` and `omcp-ffi`.
+- **RL3, deletion.** On a `DELIVERY_ACK` (§22.8(3)) or at `outer_expiry`, at most
+  7 d after it was stored. Tests: `rl3_*` (core, FFI).
+- **RL4, Settings.** Settings › Mesh relay shows only "Storage used for relaying:
+  X MB" / "Stockage utilisé pour le relais : X Mo" (`MeshStats.storage_used_bytes`,
+  the whole carry store). Tests: `rl4_*` (FFI, Android `MeshRelayTest`, iOS
+  `MeshRelayTests`).
+- Gateway rules are unchanged: Wi-Fi only by default, a warning (not a block)
+  on metered cellular, and the separate 500 MB/day gateway Internet cap.
+
 ## Carry store
 - Store schema v3 has a `relay` table. It holds sealed envelopes only, so relays
-  never see plaintext. Budgets follow §22.4: 50 MB storage by default (the user
-  can raise the cap to 500 MB), 20 MB/day forwarding, 72 h default expiry and a
-  7 d maximum.
+  never see plaintext. Storage follows RL2 above (automatic 500 MB cap). The
+  §22.4 forwarding budget (20 MB/day), 72 h default expiry and 7 d maximum are
+  unchanged.
 - `outer_expiry` is `header_aad` TLV `0x58` (u32 BE unix seconds). Relays drop
   expired envelopes, and a later expiry is clamped to now + 7 d. Burn envelopes
   expire at sent + unread TTL.
@@ -90,7 +118,8 @@ counted against the cap) is not implemented.
   only (iOS). Up to 4 links (2 on low battery). Duty cycle: charging, 5 s tick;
   battery ≥ 20 %, 15 s; low battery or power saver, a 30 s scan every 5 min with
   a 60 s tick.
-- Settings › Mesh relay: on/off and carry cap (EN/FR).
+- Settings › Mesh relay: read-only "Storage used for relaying: X MB" (EN/FR), RL4.
+  The You tab row reads "Always on · storage used for relaying".
 
 ## Release builds
 `[profile.release]` uses `lto = "fat"` and `codegen-units = 1`, which keeps the
@@ -99,10 +128,13 @@ arm64 core library small enough for the APK to stay under 25 MB.
 ## Open items and spec gaps
 1. **MLS setup transport**: the spec says the KeyPackage is exchanged "with the
    contact QR or first handshake". This implementation uses link PDU `0x04`
-   right after the first handshake. `0x04`, and its inner types `0x01`–`0x03`,
-   are not in the §21.9 registry. Contacts who added each other by QR but have
-   never been in range cannot use the mesh. The spec could allow a Welcome to
-   travel over the mesh.
+   `MLS_SETUP` (registered in §21.9) right after the first handshake. Its inner
+   frame types (`0x01` KEY_PACKAGE, `0x02` WELCOME, `0x03` JOINED) are named in
+   the registry but their values are not; these values are this
+   implementation's. Link PDUs `0x01` (handshake) and `0x02` (link data) are
+   not in §21.9 either. Contacts who added each other by QR but have never been
+   in range cannot use the mesh. The spec could allow a Welcome to travel over
+   the mesh. Test: `mls_setup_is_link_pdu_0x04_per_registry`.
 2. **Full digest**: §22.8(2) assigns no full-digest frame. A full filter is sent
    as `DIGEST_DELTA` with mode byte `0x01`.
 3. **`DELIVERY_ACK` layout**: §22.8(3) describes a 16-byte ack that is also
@@ -117,11 +149,21 @@ arm64 core library small enough for the APK to stay under 25 MB.
    (the existing restore notice and badge). The spec does not say whether a
    planned rotation should show that notice. The overlap also only covers
    handshakes where we are the responder.
-6. **Relay default and cap presets** and **non-contact relays** (items (3) and
-   (4) of the v0.2.2 review answers) are still pending. The current values
-   (on, 50 MB) are placeholders, and relaying only happens over contact links.
-7. **No settings mockup** for Mesh relay.
+6. **Non-contact links**: RL1 removes the contact/stranger split, and the engine
+   carries for any neighbour, but the apps still only open links to contacts,
+   so in practice every carried envelope is a "contact" one. Opening links to
+   strangers needs its own handshake rules (not specified).
+7. **No settings mockup** for Mesh relay (DESIGN_SPEC Q36 is a placeholder):
+   plain one-row layouts, and the You-tab subtitle is placeholder copy.
 8. **MLS epoch races**: 1:1 groups have no commits after setup. A future
    re-key commit would need the receiver to keep previous-epoch exporters for
    tags (4 past epochs are kept for content).
 9. **Platform rule**: core calls for a given link must be made one at a time.
+10. **RL2 open points** (conservative choices, see "Relay rules RL1–RL4"):
+    how far the cap is lowered under 10 % free (proportional here); "oldest"
+    measured by `created_ms`; own outbound copies counted in the cap (the
+    local direct queue keeps the message either way); "contacts' envelopes"
+    = envelopes handed over by a contact (relays cannot see the real sender);
+    news = envelopes on registered news channel tags (`set_news_tags`; news
+    tags are not wired up yet). PROTOCOL §22.4 (50 MB default, eviction by
+    `(priority, expires_at, hops)`) and SY5 still describe the old budget.
