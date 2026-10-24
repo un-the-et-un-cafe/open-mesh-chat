@@ -29,26 +29,28 @@ public enum MeshDutyCycle {
     }
 }
 
-/// Settings > Mesh relay model (testable; the SwiftUI view lives in the app target).
+/// Settings > Mesh relay model (REQUIREMENTS "Relay", RL1–RL4; the SwiftUI view lives in the
+/// app target). The relay is always on and its 500 MB cap is automatic, so there is nothing
+/// to set: the screen shows only "Storage used for relaying: X MB" (RL4).
 public final class MeshRelaySettings {
-    /// Placeholder presets (spec gap: no design for this screen yet); 50 MB is the §22.4 default.
-    public static let capOptions: [Int64] = [10_000_000, 50_000_000, 100_000_000, 250_000_000, 500_000_000]
     private let core: OmcpCore
-    public private(set) var prefs: MeshRelayPrefs
     public private(set) var stats: MeshRelayStats
 
     public init(core: OmcpCore) {
         self.core = core
-        prefs = core.meshSettings()
         stats = core.meshStats()
     }
 
-    public func setEnabled(_ on: Bool) { var p = prefs; p.enabled = on; apply(p) }
-    public func setCap(_ bytes: Int64) { var p = prefs; p.capBytes = bytes; apply(p) }
-    public func refresh() { prefs = core.meshSettings(); stats = core.meshStats() }
+    public func refresh() { stats = core.meshStats() }
 
-    private func apply(_ p: MeshRelayPrefs) {
-        try? core.setMeshSettings(p)
-        refresh()
+    /// The "X" in "X MB" for `stats.storageUsedBytes`.
+    public var storageUsedMb: String { Self.formatMb(stats.storageUsedBytes) }
+
+    /// Decimal MB, one decimal under 10 MB (same as Android `MeshRelayViewModel.formatMb`).
+    public static func formatMb(_ bytes: Int64) -> String {
+        if bytes <= 0 { return "0" }
+        let mb = Double(bytes) / 1e6
+        if mb < 10 { return String(format: "%.1f", locale: Locale(identifier: "en_US_POSIX"), mb) }
+        return String(Int64(mb.rounded()))
     }
 }

@@ -490,26 +490,25 @@ public extension CoreLink {
     var handle: UInt64 { 0 }
 }
 
-/// Settings > Mesh relay (PROTOCOL §22.4 relay budget). Defaults come from Rust.
-public struct MeshRelayPrefs: Equatable, Sendable {
-    public var enabled: Bool
-    public var capBytes: Int64
-    public init(enabled: Bool = true, capBytes: Int64 = 50_000_000) {
-        self.enabled = enabled
-        self.capBytes = capBytes
-    }
-}
-
+/// Mesh relay counters from Rust. The relay is always on with an automatic cap
+/// (REQUIREMENTS RL1, RL2); Settings shows only `storageUsedBytes` (RL4).
 public struct MeshRelayStats: Equatable, Sendable {
     public var carried: Int
     public var carriedBytes: Int64
     public var ownPending: Int
     public var neighbours: Int
-    public init(carried: Int = 0, carriedBytes: Int64 = 0, ownPending: Int = 0, neighbours: Int = 0) {
+    /// RL4 "Storage used for relaying".
+    public var storageUsedBytes: Int64
+    /// RL2 automatic cap in force (500 MB unless storage is low).
+    public var storageCapBytes: Int64
+    public init(carried: Int = 0, carriedBytes: Int64 = 0, ownPending: Int = 0, neighbours: Int = 0,
+                storageUsedBytes: Int64 = 0, storageCapBytes: Int64 = 500_000_000) {
         self.carried = carried
         self.carriedBytes = carriedBytes
         self.ownPending = ownPending
         self.neighbours = neighbours
+        self.storageUsedBytes = storageUsedBytes
+        self.storageCapBytes = storageCapBytes
     }
 }
 
@@ -568,9 +567,9 @@ public protocol OmcpCore: AnyObject {
     /// ONE message carrying the optional note (≤ 280 UTF-8 bytes).
     func askToResend(_ msgId: String, note: String?) throws
     // Multi-hop mesh relay (PROTOCOL §22).
-    func meshSettings() -> MeshRelayPrefs
-    func setMeshSettings(_ p: MeshRelayPrefs) throws
     func meshStats() -> MeshRelayStats
+    /// RL2: report free/total storage; under 10 % free Rust lowers the relay cap.
+    func meshSetFreeStorage(freeBytes: Int64, totalBytes: Int64)
     /// Periodic relay work; returns link handles with frames waiting.
     func meshTick(nowMs: Int64) -> [UInt64]
     func meshPendingLinks() -> [UInt64]
@@ -579,7 +578,6 @@ public protocol OmcpCore: AnyObject {
     /// 6-byte HELLO beacon (§22.7(12)).
     func meshBeacon() -> Data
     func meshMaxLinks() -> Int
-    func meshMaxCapBytes() -> Int64
     func keptMediaSettings() -> KeptMediaPrefs
     /// Applies at once; returns how many kept copies were evicted (oldest first).
     func setKeptMediaSettings(_ p: KeptMediaPrefs, nowMs: Int64) throws -> Int
@@ -662,15 +660,13 @@ public extension OmcpCore {
     func restoreMediaFromBackup(msgId: String, blob: Data) throws -> Data { throw CoreError.other("no media backup") }
     func requestMedia(_ msgId: String) throws {}
     func askToResend(_ msgId: String, note: String?) throws {}
-    func meshSettings() -> MeshRelayPrefs { MeshRelayPrefs() }
-    func setMeshSettings(_ p: MeshRelayPrefs) throws {}
     func meshStats() -> MeshRelayStats { MeshRelayStats() }
+    func meshSetFreeStorage(freeBytes: Int64, totalBytes: Int64) {}
     func meshTick(nowMs: Int64) -> [UInt64] { [] }
     func meshPendingLinks() -> [UInt64] { [] }
     func meshTakeStatusUpdates() -> [MeshStatusUpdate] { [] }
     func meshBeacon() -> Data { Data() }
     func meshMaxLinks() -> Int { 4 }
-    func meshMaxCapBytes() -> Int64 { 500_000_000 }
     func keptMediaSettings() -> KeptMediaPrefs { KeptMediaPrefs() }
     func setKeptMediaSettings(_ p: KeptMediaPrefs, nowMs: Int64) throws -> Int { 0 }
     func keptMediaUsage() -> KeptMediaUsage { KeptMediaUsage(count: 0, bytes: 0) }

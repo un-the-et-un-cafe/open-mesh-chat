@@ -182,16 +182,13 @@ public final class RustOmcpCore: HoplaKit.OmcpCore {
     public func requestMedia(_ msgId: String) throws { try call { try n().requestMedia(msgIdHex: msgId) } }
     public func askToResend(_ msgId: String, note: String?) throws { try call { try n().askToResend(msgIdHex: msgId, note: note) } }
     // Multi-hop mesh relay (PROTOCOL §22).
-    public func meshSettings() -> MeshRelayPrefs {
-        guard let s = node?.meshSettings() else { return MeshRelayPrefs() }
-        return MeshRelayPrefs(enabled: s.relayEnabled, capBytes: Int64(s.carryCapBytes))
-    }
-    public func setMeshSettings(_ p: MeshRelayPrefs) throws {
-        try call { try n().setMeshSettings(settings: OmcpFFI.MeshSettings(relayEnabled: p.enabled, carryCapBytes: UInt64(max(0, p.capBytes)))) }
-    }
     public func meshStats() -> MeshRelayStats {
         guard let s = node?.meshStats() else { return MeshRelayStats() }
-        return MeshRelayStats(carried: Int(s.carried), carriedBytes: Int64(s.carriedBytes), ownPending: Int(s.ownPending), neighbours: Int(s.neighbours))
+        return MeshRelayStats(carried: Int(s.carried), carriedBytes: Int64(s.carriedBytes), ownPending: Int(s.ownPending), neighbours: Int(s.neighbours),
+                              storageUsedBytes: Int64(s.storageUsedBytes), storageCapBytes: Int64(s.storageCapBytes))
+    }
+    public func meshSetFreeStorage(freeBytes: Int64, totalBytes: Int64) {
+        try? node?.meshSetFreeStorage(freeBytes: UInt64(max(0, freeBytes)), totalBytes: UInt64(max(0, totalBytes)))
     }
     public func meshTick(nowMs: Int64) -> [UInt64] { (try? node?.meshTick(nowMs: UInt64(max(0, nowMs)))).flatMap { $0 } ?? [] }
     public func meshPendingLinks() -> [UInt64] { node?.meshPendingLinks() ?? [] }
@@ -202,7 +199,6 @@ public final class RustOmcpCore: HoplaKit.OmcpCore {
     }
     public func meshBeacon() -> Data { node?.meshBeacon() ?? Data() }
     public func meshMaxLinks() -> Int { Int(OmcpFFI.meshMaxLinks()) }
-    public func meshMaxCapBytes() -> Int64 { Int64(OmcpFFI.meshMaxCarryCapBytes()) }
 
     public func keptMediaSettings() -> KeptMediaPrefs {
         (try? node?.keptMediaSettings()).flatMap { $0 }.map { KeptMediaPrefs(maxDays: Int($0.maxDays), maxBytes: Int64($0.maxBytes)) } ?? KeptMediaPrefs()

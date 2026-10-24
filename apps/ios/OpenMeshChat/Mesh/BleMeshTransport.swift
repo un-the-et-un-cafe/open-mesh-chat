@@ -101,6 +101,14 @@ final class BleMeshTransport: NSObject, MeshKick {
                                      coreMaxLinks: repo.core.meshMaxLinks())
     }
 
+    /// RL2: Rust lowers the automatic relay cap when free storage is under 10 %.
+    private func reportFreeStorage() {
+        let url = URL(fileURLWithPath: NSHomeDirectory())
+        guard let v = try? url.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey, .volumeTotalCapacityKey]),
+              let free = v.volumeAvailableCapacityForImportantUsage, let total = v.volumeTotalCapacity else { return }
+        repo.core.meshSetFreeStorage(freeBytes: free, totalBytes: Int64(total))
+    }
+
     private func tick() {
         let p = currentProfile()
         profile = p
@@ -115,6 +123,7 @@ final class BleMeshTransport: NSObject, MeshKick {
                 scanning = false
             }
         }
+        reportFreeStorage()
         queueRelay(repo.core.meshTick(nowMs: now))
         applyMeshStatus()
         let t = DispatchSource.makeTimerSource(queue: q)

@@ -341,9 +341,12 @@ final class RustBridgeTests: XCTestCase {
         let (ba2, ab2, _) = try linkUp(b, a)
         XCTAssertTrue(a.meshTakeStatusUpdates().contains { $0.msgId == mid && $0.status == .delivered })
         ba2.close(); ab2.close()
-        XCTAssertEqual(b.meshSettings(), MeshRelayPrefs(enabled: true, capBytes: 50_000_000))
-        try b.setMeshSettings(MeshRelayPrefs(enabled: false, capBytes: 10_000_000))
-        XCTAssertEqual(b.meshStats().carried, 0)
+        // RL1/RL2: always on with the automatic cap, lowered when storage is low.
+        XCTAssertEqual(b.meshStats().storageCapBytes, 500_000_000)
+        b.meshSetFreeStorage(freeBytes: 5_000_000_000, totalBytes: 100_000_000_000)
+        XCTAssertEqual(b.meshStats().storageCapBytes, 250_000_000)
+        // RL4: what Settings shows.
+        XCTAssertEqual(b.meshStats().storageUsedBytes, b.meshStats().carriedBytes)
         XCTAssertEqual(a.meshBeacon().count, 6)
     }
 }

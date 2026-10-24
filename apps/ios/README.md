@@ -108,3 +108,6 @@ CI: the `ios` job in `.github/workflows/ci.yml` (macos-latest) runs exactly this
 ## Mesh relay
 
 Multi-hop store-and-forward relay (PROTOCOL §22) is described in [docs/MESH_RELAY.md](../../docs/MESH_RELAY.md).
+The relay is always on with an automatic 500 MB cap (REQUIREMENTS RL1–RL4): there is no relay switch or cap
+setting, and Settings › Mesh relay shows only "Storage used for relaying: X MB". The app reports free storage
+to the core on every mesh tick so the cap is lowered under 10 % free.

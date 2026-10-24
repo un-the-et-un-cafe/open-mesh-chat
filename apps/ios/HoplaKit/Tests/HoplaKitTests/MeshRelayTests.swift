@@ -3,17 +3,42 @@ import XCTest
 
 /// Multi-hop mesh relay (PROTOCOL §22): settings model, duty cycle, Android parity.
 final class MeshRelayTests: XCTestCase {
-    func testSettingsDefaultsToggleAndCap() {
+    /// RL1/RL2/RL4: no toggle or cap setting; the model only reads "Storage used for relaying".
+    func testRl4SettingsShowOnlyStorageUsed() {
         let core = FakeOmcpCore()
         let m = MeshRelaySettings(core: core)
-        XCTAssertEqual(m.prefs, MeshRelayPrefs(enabled: true, capBytes: 50_000_000))
-        m.setEnabled(false)
-        m.setCap(100_000_000)
-        XCTAssertEqual(core.meshSettings(), MeshRelayPrefs(enabled: false, capBytes: 100_000_000))
-        m.setCap(core.meshMaxCapBytes() + 1) // rejected, unchanged
-        XCTAssertEqual(m.prefs.capBytes, 100_000_000)
-        XCTAssertTrue(MeshRelaySettings.capOptions.contains(50_000_000))
-        XCTAssertEqual(MeshRelaySettings.capOptions.last, core.meshMaxCapBytes())
+        XCTAssertEqual(m.stats.storageUsedBytes, 0)
+        XCTAssertEqual(m.storageUsedMb, "0")
+        XCTAssertEqual(m.stats.storageCapBytes, 500_000_000, "RL2 automatic cap")
+        core.fakeMeshStats = MeshRelayStats(carried: 2, carriedBytes: 1_200_000, storageUsedBytes: 12_400_000)
+        m.refresh()
+        XCTAssertEqual(m.storageUsedMb, "12")
+        core.meshSetFreeStorage(freeBytes: 1, totalBytes: 100) // protocol default: no-op in the fake
+    }
+
+    func testRl4StorageUsedFormatsAsMb() {
+        XCTAssertEqual(MeshRelaySettings.formatMb(0), "0")
+        XCTAssertEqual(MeshRelaySettings.formatMb(330_000), "0.3")
+        XCTAssertEqual(MeshRelaySettings.formatMb(9_900_000), "9.9")
+        XCTAssertEqual(MeshRelaySettings.formatMb(120_400_000), "120")
+        XCTAssertEqual(MeshRelaySettings.formatMb(500_000_000), "500")
+    }
+
+    /// RL1/RL4 strings and UI: the read-only line exists in EN/FR; the toggle and cap strings
+    /// and controls are gone (reads the sources when present).
+    func testRl1Rl4NoToggleInStringsOrView() throws {
+        let ios = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent()
+        guard let strings = try? String(contentsOf: ios.appendingPathComponent("scripts/strings.py"), encoding: .utf8),
+              let you = try? String(contentsOf: ios.appendingPathComponent("OpenMeshChat/Screens/YouView.swift"), encoding: .utf8)
+        else { throw XCTSkip("app sources not available") }
+        XCTAssertTrue(strings.contains("\"relay_storage_used\": (\"Storage used for relaying: %@ MB\", \"Stockage utilisé pour le relais : %@ Mo\")"))
+        for k in ["relay_toggle", "relay_cap_title", "relay_privacy", "relay_usage"] {
+            XCTAssertFalse(strings.contains("\"\(k)"), k)
+        }
+        let view = you.components(separatedBy: "struct MeshRelaySettingsView").last ?? ""
+        XCTAssertFalse(view.contains("Toggle(") || view.contains("Picker("))
     }
 
     func testDutyCycleFollowsBattery() {
