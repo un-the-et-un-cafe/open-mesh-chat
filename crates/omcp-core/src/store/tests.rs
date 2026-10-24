@@ -389,6 +389,7 @@ fn v2_store_migrates_to_relay_table_and_carry_rows_are_sealed() {
             hop_count: 2,
             own: false,
             ack_of: Some([3; 16]),
+            class: Some(2),
         };
         s.put_carry(&r).unwrap();
         s.put_mesh_seen(&[8; 16], 50).unwrap();

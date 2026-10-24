@@ -1660,11 +1660,8 @@ fn mesh_chain_a_b_c_store_and_forward_end_to_end() {
     befriend_mls(&a, &c);
     let aid = a.identity().peer_id_hex;
     let cid = c.identity().peer_id_hex;
-    assert!(b.mesh_settings().relay_enabled, "relay defaults to on");
-    assert_eq!(
-        b.mesh_settings().carry_cap_bytes,
-        mesh_default_carry_cap_bytes()
-    );
+    // RL1/RL2: always on, automatic 500 MB cap.
+    assert_eq!(b.mesh_stats().storage_cap_bytes, mesh_relay_cap_bytes());
 
     // A meets B and sends to C: B carries an opaque envelope.
     let secret = "meet at the north gate 7pm";
@@ -1798,7 +1795,7 @@ fn mesh_device_key_rotation_mid_transit_still_delivers() {
 }
 
 #[test]
-fn mesh_live_three_hop_line_and_relay_toggle() {
+fn mesh_live_three_hop_line() {
     // A — B — D — C, all links up at once; A and C are not neighbours.
     let (a, b, d, c) = (node("A"), node("B"), node("D"), node("C"));
     befriend(&a, &b);
@@ -1824,25 +1821,10 @@ fn mesh_live_three_hop_line_and_relay_toggle() {
         (got[0].text.as_str(), got[0].contact_id.as_str()),
         ("three hops", aid.as_str())
     );
-    // Relay off on D: B still carries, but nothing crosses D.
-    d.set_mesh_settings(MeshSettings {
-        relay_enabled: false,
-        carry_cap_bytes: mesh_default_carry_cap_bytes(),
-    })
-    .unwrap();
-    assert!(!d.mesh_settings().relay_enabled);
-    a.queue_text(cid.clone(), "blocked".into()).unwrap();
+    // RL1: every relay passes the next one on too (no switch to stop it).
+    a.queue_text(cid.clone(), "again".into()).unwrap();
     let outs = settle(&links);
-    assert!(texts(&outs).is_empty());
-    assert_eq!(d.mesh_stats().carried, 0);
-    assert!(b.mesh_stats().carried >= 1);
-    // Cap validation.
-    assert!(d
-        .set_mesh_settings(MeshSettings {
-            relay_enabled: true,
-            carry_cap_bytes: mesh_max_carry_cap_bytes() + 1,
-        })
-        .is_err());
+    assert_eq!(texts(&outs).len(), 1);
     let _ = mesh_max_links();
     // Beacon is a 6-byte HELLO.
     let beacon = a.mesh_beacon();
@@ -1906,4 +1888,130 @@ fn mesh_direct_delivery_and_mesh_copy_do_not_duplicate() {
     down(&ac);
     let bc = up(&b, &c); // the relayed copy is dropped as a duplicate
     assert!(texts(&bc.2).is_empty());
+}
+
+// ---- Relay RL1–RL4 (apps/REQUIREMENTS.md "Relay (store and forward)") ----
+
+/// A, B, C where only B is ever between A and C; A has queued one message
+/// for C and handed it to B. Returns (a, b, c, cid, B's db dir).
+fn carried_by_b() -> (
+    Arc<OmcpNode>,
+    Arc<OmcpNode>,
+    Arc<OmcpNode>,
+    String,
+    tempfile::TempDir,
+    String,
+) {
+    let dir = tempfile::tempdir().unwrap();
+    let pb = generate_recovery_phrase().unwrap();
+    let a = node("A");
+    let b = open_node(&pb, "B", dir.path());
+    let c = node("C");
+    befriend(&a, &b);
+    befriend(&b, &c);
+    befriend_mls(&a, &c);
+    let cid = c.identity().peer_id_hex;
+    a.queue_text(cid.clone(), "carried".into()).unwrap();
+    let ab = up(&a, &b);
+    down(&ab);
+    assert_eq!(b.mesh_stats().carried, 1);
+    (a, b, c, cid, dir, pb)
+}
+
+#[test]
+fn rl1_relay_always_on_old_off_setting_ignored() {
+    let (_a, b, c, _cid, dir, pb) = carried_by_b();
+    // A row left by the removed switch ("relay off", 10 MB) has no effect.
+    b.inner
+        .lock()
+        .db
+        .put_meta(b"mesh-settings", &(false, 10_000_000u64))
+        .unwrap();
+    drop(b);
+    let b = open_node(&pb, "B", dir.path());
+    assert_eq!(b.mesh_stats().carried, 1, "still carrying after restart");
+    assert_eq!(b.mesh_stats().storage_cap_bytes, mesh_relay_cap_bytes());
+    let bc = up(&b, &c);
+    assert_eq!(texts(&bc.2).len(), 1);
+    down(&bc);
+}
+
+#[test]
+fn rl2_automatic_cap_500_mb_lowered_on_low_storage() {
+    assert_eq!(mesh_relay_cap_bytes(), 500_000_000);
+    let (_a, b, c, _cid, dir, pb) = carried_by_b();
+    let gb = 1_000_000_000u64;
+    b.mesh_set_free_storage(64 * gb, 128 * gb).unwrap();
+    assert_eq!(b.mesh_stats().storage_cap_bytes, 500_000_000);
+    b.mesh_set_free_storage(5 * gb, 100 * gb).unwrap();
+    assert_eq!(b.mesh_stats().storage_cap_bytes, 250_000_000);
+    assert_eq!(b.mesh_stats().carried, 1);
+    // Disk full: the carried envelope is dropped, also on disk.
+    b.mesh_set_free_storage(0, 100 * gb).unwrap();
+    assert_eq!(b.mesh_stats().carried, 0);
+    assert_eq!(b.mesh_stats().storage_used_bytes, 0);
+    drop(b);
+    let b = open_node(&pb, "B", dir.path());
+    assert_eq!(b.mesh_stats().carried, 0);
+    let bc = up(&b, &c);
+    assert!(texts(&bc.2).is_empty());
+    down(&bc);
+}
+
+#[test]
+fn rl2_carry_class_persisted_and_legacy_rows_mapped() {
+    let (_a, b, _c, _cid, _dir, _pb) = carried_by_b();
+    let rows = b.inner.lock().db.carry_items().unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        rows[0].class,
+        Some(omcp_core::sync::budget::RelayClass::Contact.to_u8())
+    );
+    let mut legacy = rows[0].clone();
+    legacy.class = None;
+    assert_eq!(
+        mesh::carry_class(&legacy),
+        omcp_core::sync::budget::RelayClass::Contact
+    );
+    legacy.own = true;
+    assert_eq!(
+        mesh::carry_class(&legacy),
+        omcp_core::sync::budget::RelayClass::OwnChat
+    );
+}
+
+#[test]
+fn rl3_carried_copy_deleted_on_delivery_ack() {
+    let (_a, b, c, _cid, _dir, _pb) = carried_by_b();
+    let before = b.mesh_stats();
+    let bc = up(&b, &c);
+    assert_eq!(texts(&bc.2).len(), 1);
+    down(&bc);
+    // C's ack reached B: the message is gone, only the (small) ack is carried.
+    let after = b.mesh_stats();
+    assert_eq!(after.carried, 1);
+    assert!(b
+        .inner
+        .lock()
+        .db
+        .carry_items()
+        .unwrap()
+        .iter()
+        .all(|r| r.ack_of.is_some()));
+    assert!(after.carried_bytes <= before.carried_bytes);
+}
+
+#[test]
+fn rl4_storage_used_for_relaying_reported() {
+    let fresh = node("Z");
+    assert_eq!(fresh.mesh_stats().storage_used_bytes, 0);
+    let (a, b, _c, _cid, _dir, _pb) = carried_by_b();
+    let s = b.mesh_stats();
+    assert!(s.storage_used_bytes > 0);
+    // B relays only for others: everything it stores is relayed traffic.
+    assert_eq!(s.storage_used_bytes, s.carried_bytes);
+    // A's own pending copy counts towards A's relay storage as well.
+    let sa = a.mesh_stats();
+    assert_eq!(sa.own_pending, 1);
+    assert!(sa.storage_used_bytes > sa.carried_bytes);
 }

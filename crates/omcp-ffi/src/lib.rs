@@ -64,10 +64,7 @@ pub use chatbackup::{
     MediaBackupItem, MediaBackupSettings, MediaRequestEvent, MediaUpdate, RestoreNotice,
 };
 pub use files::{FileFailure, FileOffer, FileProgress, ReceivedFile, FILE_CHUNK_BYTES};
-pub use mesh::{
-    mesh_default_carry_cap_bytes, mesh_max_carry_cap_bytes, mesh_max_links, MeshSettings,
-    MeshStats, MAX_MESH_LINKS,
-};
+pub use mesh::{mesh_max_links, mesh_relay_cap_bytes, MeshStats, MAX_MESH_LINKS};
 pub use persist::{
     ChatSummary, MessageStatus, StoredBurnState, StoredFile, StoredFileState, StoredMessage,
 };

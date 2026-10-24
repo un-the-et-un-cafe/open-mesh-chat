@@ -289,6 +289,11 @@ pub struct CarryRec {
     /// `DELIVERY_ACK` envelope: the acked `msg_hash` (§22.8(3)).
     #[serde(default)]
     pub ack_of: Option<[u8; 16]>,
+    /// RL2 priority class (`omcp_core::sync::budget::RelayClass` as u8).
+    /// `None` in rows written before RL2: own rows are own chats, the rest
+    /// came over contact links.
+    #[serde(default)]
+    pub class: Option<u8>,
 }
 
 /// A mesh envelope id already delivered to us (dedup across restarts).

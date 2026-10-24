@@ -1,6 +1,9 @@
-//! SY5: relays never exceed their budget; eviction follows §22.4 order.
+//! SY5: relays never exceed their budget; eviction follows the RL2 order
+//! (class, then oldest).
 
-use omcp_core::sync::budget::{InsertOutcome, RelayBudget, RelayStore, StoredEnvelope, MB};
+use omcp_core::sync::budget::{
+    InsertOutcome, RelayBudget, RelayClass, RelayStore, StoredEnvelope, MB,
+};
 use omcp_core::sync::SplitMix64;
 
 #[derive(Debug, Clone)]
@@ -14,10 +17,10 @@ pub struct Sy5Report {
     pub forward_cap_violations: u64,
 }
 
-/// Random envelopes (0.3–64 KB, 10 % priority, 1 h–7 d expiry, 0–11 hops)
+/// Random envelopes (0.3–64 KB, random RL2 class, 1 h–7 d expiry, 0–11 hops)
 /// pushed through `relays` relays on the constrained 50 MB / 20 MB-day
 /// budget, over simulated time. Every eviction is checked to be the minimum
-/// `(priority, expires_at, Reverse(hop_count))` among stored envelopes.
+/// `(class, created_ms, Reverse(hop_count), id)` among stored envelopes.
 pub fn run(relays: usize, inserts_per_relay: u64, seed: u64) -> Sy5Report {
     let mut rng = SplitMix64(seed);
     let budget = RelayBudget {
@@ -44,7 +47,8 @@ pub fn run(relays: usize, inserts_per_relay: u64, seed: u64) -> Sy5Report {
             let e = StoredEnvelope {
                 id,
                 size: 300 + rng.below(64_000),
-                priority: rng.chance(0.1),
+                class: RelayClass::from_u8(rng.below(4) as u8).expect("0..4"),
+                created_ms: now.saturating_sub(rng.below(3_600_000)),
                 expires_at: now + 3_600_000 + rng.below(6 * 86_400_000),
                 hop_count: rng.below(12) as u8,
             };

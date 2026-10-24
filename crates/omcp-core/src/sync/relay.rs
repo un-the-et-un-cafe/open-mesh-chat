@@ -42,16 +42,23 @@
 //! - **Forwarding**: [`plan_forward`] — flood up to 32 visible peers, above that
 //!   want > lowest carry distance > scoped flood within `ttl_hops`. Each
 //!   forward costs one hop. A peer is never sent the same envelope twice.
-//! - **Carry store**: envelopes for others are kept (store-and-forward, §8.4)
-//!   under the §22.4 [`RelayStore`] budget and eviction order, expiring at the
-//!   envelope's `outer_expiry` (TLV `0x58`, §22.8(2)) or `created + 72 h`,
-//!   never later than 7 days. Our own outbound envelopes are kept outside the
-//!   relay budget until they expire.
+//! - **Always on (RL1)**: there is no relay switch and no contact/stranger
+//!   split in *what* is carried: every encrypted envelope (messages, acks,
+//!   news) from any neighbour is stored and passed on.
+//! - **Carry store (RL2)**: one store (store-and-forward, §8.4) for our own
+//!   outbound envelopes and everything carried for others, under the
+//!   automatic [`RelayStore`] cap (500 MB, lowered by
+//!   [`RelayEngine::set_free_storage`] when free storage is under 10 %).
+//!   When full, the lowest [`RelayClass`] is dropped first — news, then
+//!   everything else, then contacts' envelopes, then own chats — oldest first
+//!   within a class. Store-and-forward offers to a neighbour go in the
+//!   reverse order (own chats first).
+//! - **Deletion (RL3)**: an envelope is deleted once its delivery is
+//!   acknowledged (`DELIVERY_ACK`, §22.8(3)) or at its `outer_expiry`
+//!   (TLV `0x58`, §22.8(2)), else `created + 72 h`, never later than 7 days.
 //! - **Dedup**: a seen set keyed by `envelope_id` that lives as long as the
 //!   longest possible envelope lifetime (7 days, capped in size).
 //! - **Rate limit**: one token bucket per neighbour (64 envelopes/s, §22.4).
-//! - **Relay off**: own envelopes are still sent and our own are still
-//!   delivered; nothing is stored or forwarded for others.
 //!
 //! `outer_expiry` on the wire: `header_aad` TLV `0x58` (len 4, u32 BE unix
 //! seconds, §21.8). Relays drop expired envelopes and never keep one longer
@@ -60,7 +67,8 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use super::budget::{
-    InsertOutcome, RelayBudget, RelayStore, StoredEnvelope, DEFAULT_EXPIRY_MS, MAX_EXPIRY_MS,
+    auto_storage_cap, InsertOutcome, RelayBudget, RelayClass, RelayStore, StoredEnvelope,
+    DEFAULT_EXPIRY_MS, MAX_EXPIRY_MS,
 };
 use super::cuckoo::{CuckooFilter, DigestDelta};
 use super::hello::{digest_id32, HelloTimer, LinkControl, DIGEST_ID_FULL, DIGEST_REFRESH_MS};
@@ -71,7 +79,6 @@ use super::tag::{parse_routing_aad, MailboxTag, MAX_CARRY_DISTANCE};
 use super::SplitMix64;
 use crate::error::{OmcpError, Result};
 use crate::framing::EnvelopeV1;
-use crate::gateway::policy::NetworkKind;
 
 /// `DATA` mesh frame (one envelope).
 pub const FRAME_DATA: u8 = 0x44;
@@ -92,19 +99,19 @@ pub const DIGEST_MIN_ENTRIES: usize = 32;
 /// Dedup memory cap (entries).
 pub const MAX_SEEN: usize = 16_384;
 
-/// Relay settings (user-facing toggle + storage cap).
+/// Relay configuration. There is no on/off switch (RL1): the relay is
+/// always on. The storage cap is automatic (RL2); `budget` is the cap
+/// before any low-storage reduction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RelayConfig {
-    pub enabled: bool,
     pub budget: RelayBudget,
 }
 
 impl Default for RelayConfig {
-    /// Relay on with the §22.4 battery/cellular budget (50 MB, 20 MB/day).
+    /// RL2: automatic 500 MB cap (§22.4 20 MB/day forwarding budget kept).
     fn default() -> Self {
         Self {
-            enabled: true,
-            budget: RelayBudget::for_conditions(NetworkKind::Cellular { metered: true }, false),
+            budget: RelayBudget::automatic(),
         }
     }
 }
@@ -115,8 +122,10 @@ pub struct CarryItem {
     pub envelope: EnvelopeV1,
     pub expires_at: u64,
     pub hop_count: u8,
-    /// Our own outbound envelope (not counted against the relay budget).
+    /// Our own outbound envelope (or our own ack).
     pub own: bool,
+    /// RL2 priority class (own items are always [`RelayClass::OwnChat`]).
+    pub class: RelayClass,
     /// Set for a `DELIVERY_ACK` envelope: the acked `msg_hash`.
     pub ack_of: Option<[u8; MSG_HASH_LEN]>,
 }
@@ -145,6 +154,8 @@ pub enum RelayEvent {
 #[derive(Debug)]
 struct Neighbour {
     peer: Vec<u8>,
+    /// Class of what this neighbour hands us (RL2): contact or other.
+    class: RelayClass,
     digest: Option<CuckooFilter>,
     bucket: TokenBucket,
 }
@@ -153,7 +164,12 @@ struct Neighbour {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct RelayStats {
     pub carried: u32,
+    /// Bytes carried for others.
     pub carried_bytes: u64,
+    /// RL4: storage used for relaying (whole carry store, own included).
+    pub storage_used_bytes: u64,
+    /// Current automatic cap (RL2), after any low-storage reduction.
+    pub storage_cap_bytes: u64,
     pub own_pending: u32,
     pub neighbours: u32,
     pub forwarded_today_bytes: u64,
@@ -163,6 +179,10 @@ pub struct RelayStats {
 #[derive(Debug)]
 pub struct RelayEngine {
     cfg: RelayConfig,
+    /// Last free / total storage reported (RL2), if any.
+    free_storage: Option<(u64, u64)>,
+    /// Public news channel tags (RL2 lowest class).
+    news: BTreeSet<MailboxTag>,
     rng: SplitMix64,
     wants: BTreeSet<MailboxTag>,
     carry: CarryTable,
@@ -250,6 +270,8 @@ impl RelayEngine {
             .expect("empty digest always fits");
         Self {
             cfg,
+            free_storage: None,
+            news: BTreeSet::new(),
             rng,
             wants: BTreeSet::new(),
             carry: CarryTable::default(),
@@ -277,36 +299,60 @@ impl RelayEngine {
         self.visible_override = n;
     }
 
-    /// Change settings; disabling the relay drops everything carried for
-    /// others, a smaller cap evicts per §22.4.
+    /// Change the base budget (tests / simulations). A smaller cap evicts in
+    /// RL2 order.
     pub fn set_config(&mut self, cfg: RelayConfig) -> Vec<RelayEvent> {
         self.cfg = cfg;
+        self.apply_budget()
+    }
+
+    /// RL2: report the device's free and total storage. Under 10 % free the
+    /// cap is lowered ([`auto_storage_cap`]) and the store evicts in RL2
+    /// order; with more free space it goes back up to the full cap.
+    pub fn set_free_storage(&mut self, free_bytes: u64, total_bytes: u64) -> Vec<RelayEvent> {
+        self.free_storage = Some((free_bytes, total_bytes));
+        self.apply_budget()
+    }
+
+    /// The cap in force: the base cap, lowered for low storage.
+    pub fn storage_cap(&self) -> u64 {
+        let base = self.cfg.budget.storage_bytes;
+        match self.free_storage {
+            Some((f, t)) => base.min(auto_storage_cap(f, t)),
+            None => base,
+        }
+    }
+
+    fn apply_budget(&mut self) -> Vec<RelayEvent> {
+        let b = RelayBudget {
+            storage_bytes: self.storage_cap(),
+            daily_forward_bytes: self.cfg.budget.daily_forward_bytes,
+        };
         let mut ev = Vec::new();
-        if cfg.enabled {
-            for id in self.store.set_budget(cfg.budget) {
-                self.items.remove(&id);
-                self.sent_to.remove(&id);
-                ev.push(RelayEvent::Removed(id));
-            }
-        } else {
-            let others: Vec<[u8; 16]> = self
-                .items
-                .iter()
-                .filter(|(_, i)| !i.own)
-                .map(|(k, _)| *k)
-                .collect();
-            for id in others {
-                self.items.remove(&id);
-                self.store.take(&id);
-                self.sent_to.remove(&id);
-                ev.push(RelayEvent::Removed(id));
-            }
-            self.store.set_budget(cfg.budget);
+        for id in self.store.set_budget(b) {
+            self.items.remove(&id);
+            self.sent_to.remove(&id);
+            ev.push(RelayEvent::Removed(id));
         }
         ev
     }
 
-    fn meta(it: &CarryItem) -> StoredEnvelope {
+    /// Public news channel tags (RL2: news is dropped first and offered
+    /// last). News items are otherwise relayed like any envelope.
+    pub fn set_news_tags(&mut self, tags: BTreeSet<MailboxTag>) {
+        self.news = tags;
+    }
+
+    /// RL2 class of an envelope handed over by a neighbour of class `from`.
+    fn classify(&self, tags: &[MailboxTag], from: RelayClass) -> RelayClass {
+        if tags.iter().any(|t| self.news.contains(t)) {
+            RelayClass::News
+        } else {
+            from
+        }
+    }
+
+    fn meta(it: &CarryItem, now_ms: u64) -> StoredEnvelope {
         StoredEnvelope {
             id: it.envelope.envelope_id,
             size: it
@@ -314,16 +360,35 @@ impl RelayEngine {
                 .encode()
                 .map(|b| b.len() as u64)
                 .unwrap_or(u64::MAX),
-            priority: false,
+            class: it.class,
+            created_ms: it.envelope.created_ms.min(now_ms),
             expires_at: it.expires_at,
             hop_count: it.hop_count,
+        }
+    }
+
+    /// Put `item` in the capped store; evicted items are dropped (events).
+    /// `false` if the store refused it (RL2: it would be the first victim).
+    fn admit(&mut self, item: &CarryItem, now_ms: u64, ev: &mut Vec<RelayEvent>) -> bool {
+        match self.store.insert(Self::meta(item, now_ms), now_ms) {
+            InsertOutcome::Rejected => false,
+            InsertOutcome::Stored { evicted } => {
+                for e in evicted {
+                    self.items.remove(&e);
+                    self.sent_to.remove(&e);
+                    ev.push(RelayEvent::Removed(e));
+                }
+                true
+            }
         }
     }
 
     pub fn stats(&self) -> RelayStats {
         RelayStats {
             carried: self.items.values().filter(|i| !i.own).count() as u32,
-            carried_bytes: self.store.used(),
+            carried_bytes: self.store.used() - self.store.used_by(RelayClass::OwnChat),
+            storage_used_bytes: self.store.used(),
+            storage_cap_bytes: self.storage_cap(),
             own_pending: self.items.values().filter(|i| i.own).count() as u32,
             neighbours: self.neighbours.len() as u32,
             forwarded_today_bytes: self.store.forwarded_today(),
@@ -357,16 +422,9 @@ impl RelayEngine {
             return;
         }
         let id = item.envelope.envelope_id;
-        if !item.own {
-            if !self.cfg.enabled {
-                return;
-            }
-            if !matches!(
-                self.store.insert(Self::meta(&item), now_ms),
-                InsertOutcome::Stored { .. }
-            ) {
-                return;
-            }
+        let mut dropped = Vec::new();
+        if !self.admit(&item, now_ms, &mut dropped) {
+            return;
         }
         self.mark_seen(id, item.expires_at);
         self.items.insert(id, item);
@@ -386,6 +444,7 @@ impl RelayEngine {
         match self.items.get(id) {
             Some(it) if it.own => {
                 self.items.remove(id);
+                self.store.take(id);
                 self.sent_to.remove(id);
                 vec![RelayEvent::Removed(*id)]
             }
@@ -419,13 +478,27 @@ impl RelayEngine {
             .unwrap_or_else(|| self.hll.estimate().round() as usize + 1)
     }
 
-    /// A new authenticated neighbour session.
-    pub fn link_up(&mut self, link: u64, peer: &[u8], now_ms: u64) -> Vec<RelayEvent> {
+    /// A new authenticated neighbour session. `is_contact` only sets the
+    /// RL2 class of what this neighbour hands us (contacts' envelopes rank
+    /// above everything else); envelopes from any neighbour are carried
+    /// (RL1).
+    pub fn link_up(
+        &mut self,
+        link: u64,
+        peer: &[u8],
+        is_contact: bool,
+        now_ms: u64,
+    ) -> Vec<RelayEvent> {
         self.hll.insert(peer);
         self.neighbours.insert(
             link,
             Neighbour {
                 peer: peer.to_vec(),
+                class: if is_contact {
+                    RelayClass::Contact
+                } else {
+                    RelayClass::Other
+                },
                 digest: None,
                 bucket: TokenBucket::default_neighbour(now_ms),
             },
@@ -505,11 +578,18 @@ impl RelayEngine {
             expires_at,
             hop_count: 0,
             own: true,
+            class: RelayClass::OwnChat,
             ack_of,
         };
+        let mut ev = Vec::new();
+        if !self.admit(&item, now_ms, &mut ev) {
+            // Store full of newer own envelopes (or expired): the message
+            // stays in the local queue only.
+            return Ok(ev);
+        }
         self.mark_seen(id, expires_at);
         self.items.insert(id, item.clone());
-        let mut ev = vec![RelayEvent::Stored(item)];
+        ev.push(RelayEvent::Stored(item));
         self.forward(&id, None, now_ms, &mut ev);
         Ok(ev)
     }
@@ -524,10 +604,8 @@ impl RelayEngine {
             .map(|(k, _)| *k)
             .collect();
         for id in expired {
-            if let Some(it) = self.items.remove(&id) {
-                if !it.own {
-                    self.store.take(&id);
-                }
+            if self.items.remove(&id).is_some() {
+                self.store.take(&id);
             }
             self.sent_to.remove(&id);
             ev.push(RelayEvent::Removed(id));
@@ -693,8 +771,13 @@ impl RelayEngine {
     fn after_digest(&mut self, link: u64, now_ms: u64, ev: &mut Vec<RelayEvent>) {
         ev.extend(self.refresh_digest(now_ms));
         // Store-and-forward: offer what we hold to the (re)described neighbour.
+        // RL2 priority: own chats, contacts, everything else, news; oldest
+        // first within a class.
         let mut ids: Vec<[u8; 16]> = self.items.keys().copied().collect();
-        ids.sort_by_key(|id| self.items[id].envelope.created_ms);
+        ids.sort_by_key(|id| {
+            let it = &self.items[id];
+            (std::cmp::Reverse(it.class), it.envelope.created_ms, *id)
+        });
         for id in ids {
             self.forward_to_one(&id, link, now_ms, ev);
         }
@@ -781,32 +864,29 @@ impl RelayEngine {
             ev.extend(self.refresh_digest(now_ms));
             return Ok(());
         }
-        if !self.cfg.enabled || env.ttl_hops == 0 || tags.is_empty() {
+        if env.ttl_hops == 0 || tags.is_empty() {
             return Ok(());
         }
         if ack_of.is_none() && self.acked.contains_key(&msg_hash(&env.ciphertext)) {
             self.mark_seen(id, expires_at);
             return Ok(()); // already delivered: do not carry
         }
+        let from = self
+            .neighbours
+            .get(&link)
+            .map(|n| n.class)
+            .unwrap_or(RelayClass::Other);
         let item = CarryItem {
             hop_count: MAX_CARRY_DISTANCE.saturating_sub(env.ttl_hops),
+            class: self.classify(&tags, from),
             envelope: env,
             expires_at,
             own: false,
             ack_of,
         };
-        match self.store.insert(Self::meta(&item), now_ms) {
-            InsertOutcome::Rejected => {
-                self.mark_seen(id, expires_at);
-                return Ok(());
-            }
-            InsertOutcome::Stored { evicted } => {
-                for e in evicted {
-                    self.items.remove(&e);
-                    self.sent_to.remove(&e);
-                    ev.push(RelayEvent::Removed(e));
-                }
-            }
+        if !self.admit(&item, now_ms, ev) {
+            self.mark_seen(id, expires_at);
+            return Ok(());
         }
         self.mark_seen(id, expires_at);
         self.items.insert(id, item.clone());
@@ -1001,13 +1081,13 @@ mod tests {
         let mut p: Vec<(usize, RelayEvent)> = Vec::new();
         p.extend(
             nodes[a]
-                .link_up(link, &[b as u8], now)
+                .link_up(link, &[b as u8], true, now)
                 .into_iter()
                 .map(|e| (a, e)),
         );
         p.extend(
             nodes[b]
-                .link_up(link, &[a as u8], now)
+                .link_up(link, &[a as u8], true, now)
                 .into_iter()
                 .map(|e| (b, e)),
         );
@@ -1059,38 +1139,210 @@ mod tests {
         assert!(connect(&mut nodes, &mut wires, 1, 2, 3, now + 120_000).is_empty());
     }
 
+    fn data(e: &EnvelopeV1) -> Vec<u8> {
+        frame_with(FRAME_DATA, &e.encode().unwrap())
+    }
+
+    /// Ids of `DATA` frames sent on `link`, in order.
+    fn data_ids(ev: &[RelayEvent], link: u64) -> Vec<u8> {
+        ev.iter()
+            .filter_map(|e| match e {
+                RelayEvent::Send { link: l, frame } if *l == link && frame[0] == FRAME_DATA => {
+                    Some(EnvelopeV1::decode(&frame[1..]).unwrap().envelope_id[0])
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
     #[test]
-    fn relay_off_does_not_carry_but_still_delivers_own() {
+    fn rl1_relay_always_on_carries_from_contacts_and_strangers() {
+        // No switch exists (RelayConfig has only the automatic budget), and
+        // the default engine carries for everyone: envelopes handed over by a
+        // contact and by a non-contact are both stored and passed on.
         let now = 5;
-        let sub_b = [0xB0; 8];
-        let mut nodes: Vec<RelayEngine> = (0..2)
+        let sub_c = [0xC0; 8];
+        let mut nodes: Vec<RelayEngine> = (0..3)
             .map(|i| RelayEngine::new(RelayConfig::default(), now, i))
             .collect();
-        nodes[1].set_config(RelayConfig {
-            enabled: false,
-            ..RelayConfig::default()
-        });
-        nodes[1].set_wants([sub_b].into(), now);
+        assert_eq!(RelayConfig::default().budget, RelayBudget::automatic());
+        nodes[2].set_wants([sub_c].into(), now);
         let mut wires = HashMap::new();
-        connect(&mut nodes, &mut wires, 0, 1, 1, now);
+        // Link 1: A–B as strangers.
+        wires.insert((0, 1), (1, 1));
+        wires.insert((1, 1), (0, 1));
         let mut p: Vec<(usize, RelayEvent)> = Vec::new();
         p.extend(
             nodes[0]
-                .submit_own(env(1, sub_b, 8, now), now)
-                .unwrap()
+                .link_up(1, &[1], false, now)
                 .into_iter()
                 .map(|e| (0, e)),
         );
         p.extend(
-            nodes[0]
-                .submit_own(env(2, [0xEE; 8], 8, now), now)
-                .unwrap()
+            nodes[1]
+                .link_up(1, &[0], false, now)
                 .into_iter()
-                .map(|e| (0, e)),
+                .map(|e| (1, e)),
         );
-        let got = pump(&mut nodes, &wires, p, now);
-        assert_eq!(got.len(), 1);
-        assert_eq!(nodes[1].stats().carried, 0);
+        pump(&mut nodes, &wires, p, now);
+        let ev = nodes[0].submit_own(env(1, sub_c, 8, now), now).unwrap();
+        pump(
+            &mut nodes,
+            &wires,
+            ev.into_iter().map(|e| (0, e)).collect(),
+            now,
+        );
+        assert_eq!(nodes[1].stats().carried, 1, "stranger's envelope carried");
+        assert_eq!(nodes[1].item(&[1; 16]).unwrap().class, RelayClass::Other);
+        // A contact's envelope (link 2, D→B) is carried too.
+        nodes[1].link_up(2, &[3], true, now);
+        nodes[1]
+            .on_frame(2, &data(&env(2, sub_c, 8, now)), now)
+            .unwrap();
+        assert_eq!(nodes[1].stats().carried, 2);
+        assert_eq!(nodes[1].item(&[2; 16]).unwrap().class, RelayClass::Contact);
+        nodes[1].link_down(2, now);
+        disconnect(&mut nodes, &mut wires, 0, 1, 1);
+        // Both reach C.
+        let got = connect(&mut nodes, &mut wires, 1, 2, 3, now + 1);
+        let mut ids: Vec<u8> = got.iter().map(|(_, e)| e.envelope_id[0]).collect();
+        ids.sort_unstable();
+        assert_eq!(ids, vec![1, 2]);
+    }
+
+    #[test]
+    fn rl2_automatic_cap_drops_news_then_other_then_contacts_keeps_own() {
+        let now = 1_000_000;
+        let news = [0x4E; 8];
+        // One ~330 B envelope ≈ `size`; room for four.
+        let size = env(0, [1; 8], 8, now).encode().unwrap().len() as u64;
+        let mut b = RelayEngine::new(RelayConfig::default(), now, 1);
+        assert_eq!(b.stats().storage_cap_bytes, 500 * crate::sync::budget::MB);
+        b.set_config(RelayConfig {
+            budget: RelayBudget {
+                storage_bytes: 4 * size,
+                daily_forward_bytes: None,
+            },
+        });
+        b.set_news_tags([news].into());
+        b.link_up(1, &[1], true, now); // contact
+        b.link_up(2, &[2], false, now); // stranger
+        b.submit_own(env(10, [0xAA; 8], 8, now - 50), now).unwrap();
+        b.on_frame(2, &data(&env(20, [0xBB; 8], 8, now - 10)), now)
+            .unwrap();
+        b.on_frame(1, &data(&env(30, [0xCC; 8], 8, now - 40)), now)
+            .unwrap();
+        b.on_frame(1, &data(&env(40, news, 8, now)), now).unwrap();
+        assert_eq!(b.item(&[40; 16]).unwrap().class, RelayClass::News);
+        assert_eq!(b.item(&[10; 16]).unwrap().class, RelayClass::OwnChat);
+        let removed = |ev: &[RelayEvent]| -> Vec<u8> {
+            ev.iter()
+                .filter_map(|e| match e {
+                    RelayEvent::Removed(id) => Some(id[0]),
+                    _ => None,
+                })
+                .collect()
+        };
+        // Full: each new contact envelope drops news, then other, then the
+        // oldest contact envelope. Own chats are never pushed out by others.
+        let mut order = Vec::new();
+        for (i, t) in [(31u8, now - 30), (32, now - 20), (33, now - 5)] {
+            let ev = b.on_frame(1, &data(&env(i, [0xCC; 8], 8, t)), now).unwrap();
+            order.extend(removed(&ev));
+        }
+        assert_eq!(order, vec![40, 20, 30]);
+        assert!(b.item(&[10; 16]).is_some(), "own chat kept");
+        assert!(b.stats().storage_used_bytes <= 4 * size);
+        // A news item cannot displace contacts or own chats.
+        let ev = b.on_frame(1, &data(&env(41, news, 8, now)), now).unwrap();
+        assert!(!ev.iter().any(|e| matches!(e, RelayEvent::Stored(_))));
+        assert!(b.item(&[41; 16]).is_none());
+    }
+
+    #[test]
+    fn rl2_cap_lowered_when_free_storage_under_10_percent() {
+        let now = 1_000_000;
+        let gb = 1_000 * crate::sync::budget::MB;
+        let mut b = RelayEngine::new(RelayConfig::default(), now, 1);
+        b.link_up(1, &[1], true, now);
+        b.on_frame(1, &data(&env(1, [0xCC; 8], 8, now)), now)
+            .unwrap();
+        b.submit_own(env(2, [0xAA; 8], 8, now), now).unwrap();
+        assert_eq!(b.stats().carried, 1);
+        // Plenty of space: full 500 MB.
+        assert!(b.set_free_storage(50 * gb, 100 * gb).is_empty());
+        assert_eq!(b.stats().storage_cap_bytes, 500 * crate::sync::budget::MB);
+        // 5 % free: halved.
+        b.set_free_storage(5 * gb, 100 * gb);
+        assert_eq!(b.stats().storage_cap_bytes, 250 * crate::sync::budget::MB);
+        // Disk full: cap 0, everything is dropped, contacts before own chats.
+        let ev = b.set_free_storage(0, 100 * gb);
+        assert_eq!(
+            ev,
+            vec![RelayEvent::Removed([1; 16]), RelayEvent::Removed([2; 16])]
+        );
+        assert_eq!(b.stats().storage_used_bytes, 0);
+        // Space comes back: the cap goes back up.
+        b.set_free_storage(20 * gb, 100 * gb);
+        assert_eq!(b.stats().storage_cap_bytes, 500 * crate::sync::budget::MB);
+    }
+
+    #[test]
+    fn rl2_forwarding_priority_own_then_contacts_then_other_then_news() {
+        let now = 1_000_000;
+        let news = [0x4E; 8];
+        let mut b = RelayEngine::new(RelayConfig::default(), now, 1);
+        b.set_news_tags([news].into());
+        b.link_up(1, &[1], true, now);
+        b.link_up(2, &[2], false, now);
+        // Arrival (and age) order deliberately opposite to the priority.
+        b.on_frame(1, &data(&env(4, news, 8, now - 40)), now)
+            .unwrap();
+        b.on_frame(2, &data(&env(3, [0x33; 8], 8, now - 30)), now)
+            .unwrap();
+        b.on_frame(1, &data(&env(2, [0x22; 8], 8, now - 20)), now)
+            .unwrap();
+        b.on_frame(1, &data(&env(5, [0x22; 8], 8, now - 25)), now)
+            .unwrap();
+        b.submit_own(env(1, [0x11; 8], 8, now - 10), now).unwrap();
+        // A new neighbour describes itself: offers follow the RL2 order
+        // (own chat, contacts oldest first, other, news).
+        b.link_up(9, &[9], true, now);
+        let mut rng = SplitMix64(3);
+        let none = CuckooFilter::build_digest(&[], 32, &mut rng).unwrap();
+        let ev = b.on_frame(9, &full_digest_frame(&none), now).unwrap();
+        assert_eq!(data_ids(&ev, 9), vec![1, 5, 2, 3, 4]);
+    }
+
+    #[test]
+    fn rl3_envelopes_deleted_at_outer_expiry_max_7_days() {
+        let now = 1_000_000_000;
+        let mut b = RelayEngine::new(RelayConfig::default(), now, 1);
+        b.link_up(1, &[1], true, now);
+        // Outer expiry in 1 h: deleted then.
+        let mut e1 = env(1, [0xCC; 8], 8, now);
+        put_expires_in_aad(&mut e1.header_aad, now + 3_600_000);
+        // Outer expiry in 30 d: clamped to 7 d.
+        let mut e2 = env(2, [0xCC; 8], 8, now);
+        put_expires_in_aad(&mut e2.header_aad, now + 30 * 86_400_000);
+        // Already expired: never stored.
+        let mut e3 = env(3, [0xCC; 8], 8, now);
+        put_expires_in_aad(&mut e3.header_aad, now - 1_000);
+        for e in [&e1, &e2, &e3] {
+            b.on_frame(1, &data(e), now).unwrap();
+        }
+        assert!(b.item(&[3; 16]).is_none());
+        assert_eq!(b.item(&[2; 16]).unwrap().expires_at, now + MAX_EXPIRY_MS);
+        b.tick(now + 3_599_000);
+        assert!(b.item(&[1; 16]).is_some());
+        assert!(b
+            .tick(now + 3_600_000)
+            .contains(&RelayEvent::Removed([1; 16])));
+        assert!(b.item(&[2; 16]).is_some());
+        assert!(b
+            .tick(now + MAX_EXPIRY_MS)
+            .contains(&RelayEvent::Removed([2; 16])));
+        assert_eq!(b.stats().storage_used_bytes, 0);
     }
 
     #[test]
@@ -1101,7 +1353,7 @@ mod tests {
         let mut b = RelayEngine::new(RelayConfig::default(), now, 1);
         b.set_visible_peers_override(Some(100));
         for l in [1u64, 2, 3, 4] {
-            b.link_up(l, &[l as u8], now);
+            b.link_up(l, &[l as u8], true, now);
         }
         let mut rng = SplitMix64(3);
         let want = CuckooFilter::build_digest(&[t], 32, &mut rng).unwrap();
@@ -1155,7 +1407,6 @@ mod tests {
         let now = 1_000_000;
         let mut a = RelayEngine::new(
             RelayConfig {
-                enabled: true,
                 budget: RelayBudget {
                     storage_bytes: 700,
                     daily_forward_bytes: None,
@@ -1164,7 +1415,7 @@ mod tests {
             now,
             1,
         );
-        a.link_up(1, &[1], now);
+        a.link_up(1, &[1], true, now);
         let mut e = env(1, [1; 8], 8, now);
         put_expires_in_aad(&mut e.header_aad, now + 10_000);
         assert_eq!(&e.header_aad[e.header_aad.len() - 6..][..2], &[0x58, 4]);
@@ -1175,7 +1426,7 @@ mod tests {
         let ev = a.tick(now + 11_000);
         assert!(ev.contains(&RelayEvent::Removed([1; 16])));
         assert_eq!(a.stats().carried, 0);
-        // cap: two ~330 B envelopes fit in 700 B, the third evicts the oldest-expiring
+        // cap: two ~330 B envelopes fit in 700 B, the third evicts the oldest (RL2)
         for i in 2..5u8 {
             let e = env(i, [1; 8], 8, now + i as u64);
             a.on_frame(1, &frame_with(FRAME_DATA, &e.encode().unwrap()), now)
@@ -1194,7 +1445,7 @@ mod tests {
     }
 
     #[test]
-    fn delivery_ack_deletes_relay_copies_and_reaches_sender() {
+    fn rl3_delivery_ack_deletes_relay_copies_and_reaches_sender() {
         let now = 1_000_000;
         let (sub_a, sub_c) = ([0xA0; 8], [0xC0; 8]);
         let mut nodes: Vec<RelayEngine> = (0..4)
@@ -1245,13 +1496,13 @@ mod tests {
         wires.insert((0, 6), (1, 6));
         p.extend(
             nodes[1]
-                .link_up(6, &[0], now + 30)
+                .link_up(6, &[0], true, now + 30)
                 .into_iter()
                 .map(|e| (1, e)),
         );
         p.extend(
             nodes[0]
-                .link_up(6, &[1], now + 30)
+                .link_up(6, &[1], true, now + 30)
                 .into_iter()
                 .map(|e| (0, e)),
         );

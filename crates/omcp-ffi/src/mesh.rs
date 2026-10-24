@@ -3,8 +3,17 @@
 //!
 //! The relay logic lives in [`omcp_core::sync::relay::RelayEngine`]; this
 //! module is the glue: end-to-end sealing for envelopes that travel through
-//! other phones, the encrypted carry store, settings, and per-link frame
-//! queues.
+//! other phones, the encrypted carry store, storage reporting, and per-link
+//! frame queues.
+//!
+//! # Relay (apps/REQUIREMENTS.md RL1–RL4)
+//!
+//! The relay is always on: there is no setting to turn it off (RL1). Its
+//! storage cap is automatic, 500 MB, lowered when the apps report less than
+//! 10 % free storage through [`OmcpNode::mesh_set_free_storage`] (RL2).
+//! Envelopes are deleted on a delivery ack or at outer expiry, max 7 d (RL3).
+//! The apps show only [`MeshStats::storage_used_bytes`] ("Storage used for
+//! relaying: X MB", RL4).
 //!
 //! # Link PDU
 //!
@@ -52,7 +61,7 @@ use omcp_core::framing::flags;
 use omcp_core::mls::group::{MlsMemberState, OmcpMlsMember};
 use omcp_core::store::{self as st, CarryRec};
 use omcp_core::suite::{ENVELOPE_VERSION_V1, SUITE_OMCP_2026_A};
-use omcp_core::sync::budget::{RelayBudget, DEFAULT_EXPIRY_MS, MAX_EXPIRY_MS, MB};
+use omcp_core::sync::budget::{RelayClass, DEFAULT_EXPIRY_MS, MAX_EXPIRY_MS, RELAY_CAP_BYTES};
 use omcp_core::sync::relay::{
     effective_expiry, msg_hash, put_expires_in_aad, CarryItem, RelayConfig, RelayEngine,
     RelayEvent, FRAME_DELIVERY_ACK, MSG_HASH_LEN,
@@ -79,26 +88,24 @@ const SETUP_JOINED: u8 = 0x03;
 pub(crate) const MESH_FRAMES_PER_FLUSH: usize = 32;
 /// Simultaneous mesh links the apps should keep (central + peripheral roles).
 pub const MAX_MESH_LINKS: u32 = 4;
-const SETTINGS_KEY: &[u8] = b"mesh-settings";
 const MLS_KEY: &[u8] = b"mesh-mls:";
 const AAD_PREFIX: &[u8] = b"OMCP-mesh-v1";
 
-/// Relay settings shown in Settings → Mesh relay.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Record)]
-pub struct MeshSettings {
-    /// Carry and forward other people's encrypted messages.
-    pub relay_enabled: bool,
-    /// Carry-store cap in bytes (§22.4 relay storage budget).
-    pub carry_cap_bytes: u64,
-}
-
-/// Relay counters for Settings / diagnostics.
+/// Relay counters. Settings shows only `storage_used_bytes` (RL4); the
+/// rest is for diagnostics and tests.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Record)]
 pub struct MeshStats {
+    /// Envelopes carried for others.
     pub carried: u32,
+    /// Bytes carried for others.
     pub carried_bytes: u64,
     pub own_pending: u32,
     pub neighbours: u32,
+    /// RL4 "Storage used for relaying": the whole carry store (own chats
+    /// included), i.e. what the automatic cap limits.
+    pub storage_used_bytes: u64,
+    /// RL2 automatic cap currently in force (500 MB unless storage is low).
+    pub storage_cap_bytes: u64,
 }
 
 /// A message status change caused by the mesh (handed to a relay, acked).
@@ -109,16 +116,11 @@ pub struct MessageStatusUpdate {
     pub status: MessageStatus,
 }
 
-/// §22.4 default relay storage budget (battery / cellular): 50 MB.
+/// RL2 automatic relay storage cap (500 MB) before any low-storage
+/// reduction. Informational: it is not a setting.
 #[uniffi::export]
-pub fn mesh_default_carry_cap_bytes() -> u64 {
-    RelayConfig::default().budget.storage_bytes
-}
-
-/// Upper bound accepted for the carry cap (§22.4 generous budget: 500 MB).
-#[uniffi::export]
-pub fn mesh_max_carry_cap_bytes() -> u64 {
-    500 * MB
+pub fn mesh_relay_cap_bytes() -> u64 {
+    RELAY_CAP_BYTES
 }
 
 /// Recommended simultaneous mesh links per device.
@@ -301,10 +303,9 @@ fn open_from(
 impl NodeState {
     /// Load settings, MLS groups, carry store and dedup set (node start).
     pub(crate) fn load_mesh(&mut self, now: u64) -> Result<(), FfiError> {
+        // Rows from the removed relay switch / cap setting ("mesh-settings")
+        // are ignored: the relay is always on with an automatic cap (RL1, RL2).
         let mut mesh = MeshState::new(now);
-        if let Some((enabled, cap)) = self.db.get_meta::<(bool, u64)>(SETTINGS_KEY)? {
-            mesh.engine.set_config(config(enabled, cap));
-        }
         for id in self.contacts.keys() {
             let Some(r) = self.db.get_meta::<ContactMlsRec>(&mls_key(id))? else {
                 continue;
@@ -321,6 +322,7 @@ impl NodeState {
                         expires_at: r.expires_at,
                         hop_count: r.hop_count,
                         own: r.own,
+                        class: carry_class(&r),
                         ack_of: r.ack_of,
                     },
                     now,
@@ -343,24 +345,10 @@ impl NodeState {
         Ok(())
     }
 
-    pub(crate) fn mesh_settings(&self) -> MeshSettings {
-        let c = self.mesh.engine.config();
-        MeshSettings {
-            relay_enabled: c.enabled,
-            carry_cap_bytes: c.budget.storage_bytes,
-        }
-    }
-
-    pub(crate) fn set_mesh_settings(&mut self, s: MeshSettings) -> Result<(), FfiError> {
-        if s.carry_cap_bytes > mesh_max_carry_cap_bytes() {
-            return Err(invalid("carry cap above maximum"));
-        }
-        self.db
-            .put_meta(SETTINGS_KEY, &(s.relay_enabled, s.carry_cap_bytes))?;
-        let ev = self
-            .mesh
-            .engine
-            .set_config(config(s.relay_enabled, s.carry_cap_bytes));
+    /// RL2: free / total device storage from the app; under 10 % free the
+    /// automatic cap is lowered and the carry store evicts in RL2 order.
+    pub(crate) fn mesh_set_free_storage(&mut self, free: u64, total: u64) -> Result<(), FfiError> {
+        let ev = self.mesh.engine.set_free_storage(free, total);
         self.route(ev)?;
         Ok(())
     }
@@ -372,6 +360,8 @@ impl NodeState {
             carried_bytes: s.carried_bytes,
             own_pending: s.own_pending,
             neighbours: s.neighbours,
+            storage_used_bytes: s.storage_used_bytes,
+            storage_cap_bytes: s.storage_cap_bytes,
         }
     }
 
@@ -424,6 +414,7 @@ impl NodeState {
                     hop_count: it.hop_count,
                     own: it.own,
                     ack_of: it.ack_of,
+                    class: Some(it.class.to_u8()),
                 })?,
                 RelayEvent::Removed(id) => self.db.delete_carry(&id)?,
                 RelayEvent::Deliver {
@@ -483,14 +474,12 @@ fn mls_key(peer: &[u8; 32]) -> Vec<u8> {
     k
 }
 
-fn config(enabled: bool, cap: u64) -> RelayConfig {
-    let d = RelayConfig::default();
-    RelayConfig {
-        enabled,
-        budget: RelayBudget {
-            storage_bytes: cap,
-            daily_forward_bytes: d.budget.daily_forward_bytes,
-        },
+/// RL2 class of a persisted carry row (rows from before RL2 have none).
+pub(crate) fn carry_class(r: &CarryRec) -> RelayClass {
+    match r.class.and_then(RelayClass::from_u8) {
+        _ if r.own => RelayClass::OwnChat,
+        Some(c) if c != RelayClass::OwnChat => c,
+        _ => RelayClass::Contact,
     }
 }
 
@@ -652,7 +641,10 @@ impl MeshLink {
             self.start_mls_setup(&mut node, peer)?;
         }
         refresh_wants(&mut node, now)?;
-        let ev = node.mesh.engine.link_up(self.handle, peer, now);
+        // Links are only made to contacts today; the flag only ranks what
+        // the neighbour hands us (RL2), everything is carried (RL1).
+        let is_contact = node.contacts.contains_key(peer);
+        let ev = node.mesh.engine.link_up(self.handle, peer, is_contact, now);
         node.route(ev)?;
         Ok(())
     }
@@ -896,12 +888,14 @@ impl OmcpNode {
         st.mesh.engine.beacon().to_vec()
     }
 
-    pub fn mesh_settings(&self) -> MeshSettings {
-        self.inner.lock().mesh_settings()
-    }
-
-    pub fn set_mesh_settings(&self, settings: MeshSettings) -> Result<(), FfiError> {
-        self.inner.lock().set_mesh_settings(settings)
+    /// RL2: report free and total device storage (bytes), e.g. on every
+    /// mesh tick. Under 10 % free the automatic 500 MB cap is lowered in
+    /// proportion and the oldest, lowest-priority envelopes are dropped.
+    /// There is no relay on/off or cap setting (RL1, RL4).
+    pub fn mesh_set_free_storage(&self, free_bytes: u64, total_bytes: u64) -> Result<(), FfiError> {
+        self.inner
+            .lock()
+            .mesh_set_free_storage(free_bytes, total_bytes)
     }
 
     pub fn mesh_stats(&self) -> MeshStats {
