@@ -303,4 +303,10 @@
     <string name="storage_keep_size">Jusqu’à</string>
     <string name="storage_days">%1$d jours</string>
     <string name="storage_usage">%1$d éléments · %2$s utilisés</string>
+    <string name="relay_title">Relais maillé</string>
+    <string name="relay_toggle">Relayer les messages des autres</string>
+    <string name="relay_toggle_desc">Transporter des messages chiffrés entre des amis proches qui sont hors de portée l’un de l’autre.</string>
+    <string name="relay_cap_title">Utiliser jusqu’à</string>
+    <string name="relay_privacy">Les messages relayés restent chiffrés de bout en bout : ce téléphone ne peut ni les lire ni voir qui les a envoyés. Ils sont supprimés à leur expiration (72 heures au plus par défaut) ou quand l’espace manque.</string>
+    <string name="relay_usage">%1$d messages transportés · %2$s · %3$d à proximité</string>
 </resources>

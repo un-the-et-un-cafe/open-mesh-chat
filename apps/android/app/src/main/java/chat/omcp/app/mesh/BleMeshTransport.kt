@@ -19,7 +19,11 @@ import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.os.BatteryManager
 import android.os.Build
+import android.os.PowerManager
 import android.os.ParcelUuid
 import android.util.Log
 import chat.omcp.app.core.CoreLink
@@ -29,6 +33,8 @@ import chat.omcp.app.data.MeshRepository
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.TimeUnit
 
 /**
  * Android BLE GATT transport (PROTOCOL §8.1). Every phone is both:
@@ -41,12 +47,21 @@ import java.util.concurrent.Executors
  * Opaque PDUs go straight into [CoreLink] (omcp-ffi): all crypto/fragmentation is Rust.
  * GATT ops are serialised per connection (Android allows one outstanding op).
  *
+ * **Multi-hop relay (PROTOCOL §22, v0.2 beta).** Rust's relay engine rides on every
+ * established link (PDU `0x03`); [LinkResult.relayLinks] names *other* links that now
+ * have frames to send (a message carried from A to C through us), which we flush.
+ * A periodic tick ([MeshDutyCycle]) sends HELLO beacons, expires the carry store and
+ * duty-cycles the scanner by battery state; the 6-byte HELLO also rides in the scan
+ * response after the 13-byte ad ([MeshBeacon]). Links are capped at
+ * [OmcpCore.meshMaxLinks] (fewer on low battery). The foreground [MeshService] keeps
+ * relaying with the screen off.
+ *
  * Experimental: untested on real hardware in this environment.
  */
 @SuppressLint("MissingPermission") // callers check runtime permissions first (MeshService)
 class BleMeshTransport(private val context: Context, private val repo: MeshRepository) {
     private val tag = "OmcpBle"
-    private val io = Executors.newSingleThreadExecutor()
+    private val io = Executors.newSingleThreadScheduledExecutor()
     private val bt = context.getSystemService(BluetoothManager::class.java)
     private val service = UUID.fromString(OmcpGatt.SERVICE)
     private val inbox = UUID.fromString(OmcpGatt.INBOX)
@@ -80,6 +95,15 @@ class BleMeshTransport(private val context: Context, private val repo: MeshRepos
     @Volatile var running = false
         private set
 
+    private var ticker: ScheduledFuture<*>? = null
+    private var profile: MeshDutyCycle.Profile? = null
+    private var scanOn = false
+    private var advertisedBeacon: ByteArray? = null
+    private var lastAdvertiseMs = 0L
+    /** Link handles with relay frames waiting (drained iteratively, never recursively). */
+    private val relayPending = LinkedHashSet<Long>()
+    private var draining = false
+
     fun start() {
         if (running) return
         val adapter = bt?.adapter ?: return
@@ -89,11 +113,15 @@ class BleMeshTransport(private val context: Context, private val repo: MeshRepos
         startAdvertising()
         startScanning()
         repo.kick = chat.omcp.app.data.MeshKick { id -> io.execute { kick(id) } }
+        io.execute { tick() }
     }
 
     fun stop() {
         running = false
         repo.kick = null
+        ticker?.cancel(false)
+        ticker = null
+        scanOn = false
         runCatching { bt.adapter.bluetoothLeScanner?.stopScan(scanCb) }
         runCatching { bt.adapter.bluetoothLeAdvertiser?.stopAdvertising(advCb) }
         clients.values.forEach { c -> c.link?.close(); runCatching { c.gatt?.close() } }
@@ -242,8 +270,11 @@ class BleMeshTransport(private val context: Context, private val repo: MeshRepos
             .build()
         val data = AdvertiseData.Builder().addServiceUuid(ParcelUuid(service)).build()
         // Manufacturer data (13-byte ad) for Android centrals; iOS centrals read it from Control.
+        val beacon = runCatching { repo.core.meshBeacon() }.getOrDefault(ByteArray(0))
+        advertisedBeacon = beacon
+        lastAdvertiseMs = System.currentTimeMillis()
         val scanResp = AdvertiseData.Builder()
-            .addManufacturerData(OmcpGatt.MANUFACTURER_ID, repo.core.advertisement())
+            .addManufacturerData(OmcpGatt.MANUFACTURER_ID, MeshBeacon.join(repo.core.advertisement(), beacon))
             .build()
         adv.startAdvertising(settings, data, scanResp, advCb)
     }
@@ -270,8 +301,87 @@ class BleMeshTransport(private val context: Context, private val repo: MeshRepos
                 .setManufacturerData(ScanClassifier.APPLE_COMPANY_ID, byteArrayOf(ScanClassifier.APPLE_OVERFLOW_TYPE), byteArrayOf(0xFF.toByte()))
                 .build(),
         )
-        val settings = ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_BALANCED).build()
+        val mode = when (profile?.scanMode) {
+            MeshDutyCycle.ScanMode.LowPower -> ScanSettings.SCAN_MODE_LOW_POWER
+            else -> ScanSettings.SCAN_MODE_BALANCED
+        }
+        val settings = ScanSettings.Builder().setScanMode(mode).build()
         scanner.startScan(filters, settings, scanCb)
+        scanOn = true
+    }
+
+    private fun stopScanning() {
+        runCatching { bt.adapter.bluetoothLeScanner?.stopScan(scanCb) }
+        scanOn = false
+    }
+
+    // ---------------- relay duty cycle ----------------
+
+    private fun currentProfile(): MeshDutyCycle.Profile {
+        val batt = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+        val level = batt?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
+        val scale = batt?.getIntExtra(BatteryManager.EXTRA_SCALE, 100) ?: 100
+        val pct = if (level >= 0 && scale > 0) level * 100 / scale else 100
+        val plugged = (batt?.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) ?: 0) != 0
+        val saver = context.getSystemService(PowerManager::class.java)?.isPowerSaveMode == true
+        return MeshDutyCycle.profile(pct, plugged, saver, repo.core.meshMaxLinks())
+    }
+
+    /** Periodic: duty-cycle the scanner, run Rust's relay tick, refresh the beacon. */
+    private fun tick() {
+        if (!running) return
+        val p = currentProfile()
+        val now = System.currentTimeMillis()
+        val modeChanged = profile?.scanMode != p.scanMode
+        profile = p
+        val want = p.scanning(now)
+        if (want && (!scanOn || modeChanged)) {
+            if (scanOn) stopScanning()
+            startScanning()
+        } else if (!want && scanOn) {
+            stopScanning()
+        }
+        queueRelay(runCatching { repo.core.meshTick(now) }.getOrDefault(emptyList()))
+        val beacon = runCatching { repo.core.meshBeacon() }.getOrNull()
+        if (beacon != null && !beacon.contentEquals(advertisedBeacon) && now - lastAdvertiseMs >= 60_000) {
+            runCatching { bt.adapter.bluetoothLeAdvertiser?.stopAdvertising(advCb) }
+            startAdvertising()
+        }
+        ticker = io.schedule({ tick() }, p.tickMs, TimeUnit.MILLISECONDS)
+    }
+
+    private fun linkCount(): Int = clients.size + serverLinks.size
+
+    private fun underLinkLimit(): Boolean = linkCount() < (profile?.maxLinks ?: repo.core.meshMaxLinks())
+
+    private fun queueRelay(handles: List<Long>) {
+        relayPending.addAll(handles)
+        if (draining) return
+        draining = true
+        try {
+            while (relayPending.isNotEmpty()) {
+                val h = relayPending.first()
+                relayPending.remove(h)
+                flushHandle(h)
+            }
+        } finally {
+            draining = false
+        }
+    }
+
+    /** Flush the link with Rust handle [h] (client or server side). */
+    private fun flushHandle(h: Long) {
+        clients.values.firstOrNull { it.link?.handle() == h }?.let { c ->
+            val link = c.link ?: return
+            if (link.isEstablished()) runCatching { link.flush() }.getOrNull()?.let { onClientResult(c, it) }
+            return
+        }
+        for ((addr, link) in serverLinks) {
+            if (link.handle() != h || !link.isEstablished()) continue
+            val d = subscribed[addr] ?: return
+            runCatching { link.flush() }.getOrNull()?.let { onServerResult(d, it) }
+            return
+        }
     }
 
     private val probes = ProbeLimiter()
@@ -301,6 +411,7 @@ class BleMeshTransport(private val context: Context, private val repo: MeshRepos
         if (!running) return
         val contactId = repo.core.contactForAdvertisement(adv) ?: return
         if (clients.containsKey(contactId) || clients.containsKey(device.address)) return
+        if (!underLinkLimit()) return
         val me = repo.core.identity()?.peerIdHex ?: return
         if (me >= contactId) return // tie-break: lower PeerID dials
         val c = Client(device.address, contactId)
@@ -312,6 +423,7 @@ class BleMeshTransport(private val context: Context, private val repo: MeshRepos
     private fun maybeProbe(device: BluetoothDevice) {
         if (!running || clients.containsKey(device.address)) return
         if (clients.values.any { it.address == device.address }) return
+        if (!underLinkLimit()) return
         if (!probes.tryBegin(device.address)) return
         val c = Client(device.address, null, probing = true)
         clients[device.address] = c
@@ -487,10 +599,13 @@ class BleMeshTransport(private val context: Context, private val repo: MeshRepos
         r.resendAsks.forEach(repo::onResendAsk)
         r.mediaUpdates.forEach(repo::onMediaUpdate)
         r.peerContactId?.let { repo.markFlushed(it, r.flushed) } ?: repo.refresh()
+        if (r.relayLinks.isNotEmpty()) queueRelay(r.relayLinks)
     }
 
     /** New text queued for [contactId]: flush on whichever link to them is up. */
     private fun kick(contactId: String) {
+        // A copy also went to the mesh relay (multi-hop): push it onto every link that has frames.
+        queueRelay(runCatching { repo.core.meshPendingLinks() }.getOrDefault(emptyList()))
         clients[contactId]?.let { c ->
             val link = c.link ?: return@let
             if (!link.isEstablished()) return@let

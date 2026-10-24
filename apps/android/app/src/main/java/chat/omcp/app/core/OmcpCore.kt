@@ -114,7 +114,14 @@ data class LinkResult(
     val mediaRequests: List<MediaRequestInfo> = emptyList(),
     val resendAsks: List<MediaRequestInfo> = emptyList(),
     val mediaUpdates: List<MediaUpdateInfo> = emptyList(),
+    /** Other links (by [CoreLink.handle]) with mesh frames waiting: flush them (multi-hop relay). */
+    val relayLinks: List<Long> = emptyList(),
 )
+
+/** Settings > Mesh relay (PROTOCOL §22.4 relay budget). Defaults come from Rust. */
+data class MeshRelayPrefs(val enabled: Boolean = true, val capBytes: Long = 50_000_000L)
+
+data class MeshRelayStats(val carried: Int = 0, val carriedBytes: Long = 0, val ownPending: Int = 0, val neighbours: Int = 0)
 
 enum class NetworkType { Offline, Wifi, Cellular }
 
@@ -172,6 +179,8 @@ interface CoreLink {
     fun flush(): LinkResult
     fun isEstablished(): Boolean
     fun close()
+    /** Opaque Rust link handle, matched against [LinkResult.relayLinks]. */
+    fun handle(): Long = 0L
 }
 
 /**
@@ -280,6 +289,18 @@ interface OmcpCore {
     fun requestMedia(msgId: String) {}
     /** User-confirmed "Ask to resend": ONE message with the optional [note] (≤ 280 bytes). */
     fun askToResend(msgId: String, note: String?) {}
+    // ---- multi-hop mesh relay (PROTOCOL §22) ----
+    fun meshSettings(): MeshRelayPrefs = MeshRelayPrefs()
+    fun setMeshSettings(p: MeshRelayPrefs) {}
+    fun meshStats(): MeshRelayStats = MeshRelayStats()
+    /** Periodic relay work; returns link handles with frames waiting. */
+    fun meshTick(nowMs: Long): List<Long> = emptyList()
+    fun meshPendingLinks(): List<Long> = emptyList()
+    /** 6-byte HELLO beacon (§22.7(12)) for advertisement data. */
+    fun meshBeacon(): ByteArray = ByteArray(0)
+    fun meshMaxLinks(): Int = 4
+    fun meshMaxCapBytes(): Long = 500_000_000L
+
     fun keptMediaSettings(): KeptMediaPrefs = KeptMediaPrefs()
     /** Applies at once; returns how many kept copies were evicted (oldest first). */
     fun setKeptMediaSettings(p: KeptMediaPrefs, nowMs: Long): Int = 0

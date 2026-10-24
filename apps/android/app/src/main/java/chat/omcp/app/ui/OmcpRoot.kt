@@ -71,6 +71,7 @@ private object Routes {
     const val MyQr = "my-qr"
     const val Backup = "backup"
     const val Storage = "storage"
+    const val Relay = "relay"
 
     fun thread(id: String) = "thread/$id"
     fun security(id: String) = "security/$id"
@@ -173,6 +174,7 @@ fun OmcpRoot(
                     onSecurity = { contacts.firstOrNull()?.let { nav.navigate(Routes.security(it.id)) } },
                     onBackup = { nav.navigate(Routes.Backup) },
                     onStorage = { nav.navigate(Routes.Storage) },
+                    onRelay = { nav.navigate(Routes.Relay) },
                     onMyQr = { nav.navigate(Routes.MyQr) },
                 )
             }
@@ -217,6 +219,12 @@ fun OmcpRoot(
                     vm = vm { ContactAddViewModel(repo) },
                     onBack = { nav.popBackStack() },
                     onScanTheirs = { nav.navigate(Routes.ContactAdd) { popUpTo(Routes.Chats) } },
+                )
+            }
+            composable(Routes.Relay) {
+                chat.omcp.app.ui.screens.MeshRelaySettingsScreen(
+                    vm = vm { chat.omcp.app.ui.vm.MeshRelayViewModel(repo.core) },
+                    onBack = { nav.popBackStack() },
                 )
             }
             composable(Routes.Storage) {

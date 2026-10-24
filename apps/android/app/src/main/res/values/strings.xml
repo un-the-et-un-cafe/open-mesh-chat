@@ -302,4 +302,10 @@
     <string name="storage_keep_size">Up to</string>
     <string name="storage_days">%1$d days</string>
     <string name="storage_usage">%1$d items · %2$s used</string>
+    <string name="relay_title">Mesh relay</string>
+    <string name="relay_toggle">Relay messages for others</string>
+    <string name="relay_toggle_desc">Carry encrypted messages between nearby friends who are out of each other’s range.</string>
+    <string name="relay_cap_title">Use up to</string>
+    <string name="relay_privacy">Relayed messages stay end-to-end encrypted: this phone can’t read them or see who sent them. They’re deleted when they expire (72 hours at most by default) or when space runs out.</string>
+    <string name="relay_usage">Carrying %1$d messages · %2$s · %3$d nearby</string>
 </resources>

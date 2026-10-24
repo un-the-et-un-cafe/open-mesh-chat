@@ -164,6 +164,17 @@ class RustOmcpCore : OmcpCore {
     override fun restoreMediaFromBackup(msgId: String, blob: ByteArray): ByteArray = n().restoreMediaFromBackup(msgId, blob)
     override fun requestMedia(msgId: String) = n().requestMedia(msgId)
     override fun askToResend(msgId: String, note: String?) = n().askToResend(msgId, note)
+    override fun meshSettings() = n().meshSettings().let { MeshRelayPrefs(it.relayEnabled, it.carryCapBytes.toLong()) }
+    override fun setMeshSettings(p: MeshRelayPrefs) =
+        n().setMeshSettings(chat.omcp.ffi.MeshSettings(p.enabled, p.capBytes.toULong()))
+    override fun meshStats() = n().meshStats().let {
+        MeshRelayStats(it.carried.toInt(), it.carriedBytes.toLong(), it.ownPending.toInt(), it.neighbours.toInt())
+    }
+    override fun meshTick(nowMs: Long) = node?.meshTick(nowMs.toULong())?.map { it.toLong() } ?: emptyList()
+    override fun meshPendingLinks() = node?.meshPendingLinks()?.map { it.toLong() } ?: emptyList()
+    override fun meshBeacon() = node?.meshBeacon() ?: ByteArray(0)
+    override fun meshMaxLinks() = chat.omcp.ffi.meshMaxLinks().toInt()
+    override fun meshMaxCapBytes() = chat.omcp.ffi.meshMaxCarryCapBytes().toLong()
     override fun keptMediaSettings() = n().keptMediaSettings().let { KeptMediaPrefs(it.maxDays.toInt(), it.maxBytes.toLong()) }
     override fun setKeptMediaSettings(p: KeptMediaPrefs, nowMs: Long) =
         n().setKeptMediaSettings(chat.omcp.ffi.KeptMediaSettings(p.maxDays.toUInt(), p.maxBytes.toULong()), nowMs.toULong()).toInt()
@@ -289,6 +300,7 @@ private fun LinkOutput.toResult() = LinkResult(
     mediaRequests = mediaRequests.map { it.toApp() },
     resendAsks = resendAsks.map { it.toApp() },
     mediaUpdates = mediaUpdates.map { MediaUpdateInfo(it.contactId, it.msgIdHex, it.state.label()) },
+    relayLinks = relayLinks.map { it.toLong() },
 )
 
 private class RustLink(private val link: MeshLink) : CoreLink {
@@ -297,6 +309,7 @@ private class RustLink(private val link: MeshLink) : CoreLink {
     override fun sendText(text: String) = link.sendText(text).toResult()
     override fun flush() = link.flush().toResult()
     override fun isEstablished() = link.isEstablished()
+    override fun handle() = link.handle().toLong()
     override fun close() {
         link.shutdown()
         link.destroy()
