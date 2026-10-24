@@ -272,3 +272,24 @@ macro_rules! fixed {
 }
 fixed!(b16, 16);
 fixed!(b32, 32);
+
+/// One mesh carry-store item (v0.2): the encoded opaque `EnvelopeV1`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CarryRec {
+    #[serde(with = "b16")]
+    pub id: [u8; 16],
+    #[serde(with = "bytes")]
+    pub envelope: Vec<u8>,
+    pub expires_at: u64,
+    pub hop_count: u8,
+    /// Our own outbound mesh copy (not relayed for someone else).
+    pub own: bool,
+}
+
+/// A mesh envelope id already delivered to us (dedup across restarts).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MeshSeenRec {
+    #[serde(with = "b16")]
+    pub id: [u8; 16],
+    pub until_ms: u64,
+}

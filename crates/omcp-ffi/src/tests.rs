@@ -602,7 +602,7 @@ fn wrong_storage_key_and_other_identity_are_refused() {
         OmcpNode::open(other, "B".into(), path, SKEY.to_vec()),
         Err(FfiError::Storage { .. })
     ));
-    assert_eq!(storage_schema_version(), 2);
+    assert_eq!(storage_schema_version(), 3);
     assert_eq!(generate_storage_key().unwrap().len(), 32);
 }
 
@@ -766,14 +766,15 @@ fn outgoing_file_and_received_file_reference_survive_restart() {
 /// Pump in both directions until quiet, collecting every output.
 fn pump_out(la: &MeshLink, lb: &MeshLink, out: LinkOutput) -> Vec<LinkOutput> {
     let mut outs = Vec::new();
-    let mut queue = vec![(false, out.outgoing.clone())];
+    // FIFO: a BLE link delivers each direction in order (link AEAD counters).
+    let mut queue = std::collections::VecDeque::from([(false, out.outgoing.clone())]);
     outs.push(out);
-    while let Some((back, pdus)) = queue.pop() {
+    while let Some((back, pdus)) = queue.pop_front() {
         for p in pdus {
             let dst = if back { la } else { lb };
             let o = dst.on_pdu(p).unwrap();
             if !o.outgoing.is_empty() {
-                queue.push((!back, o.outgoing.clone()));
+                queue.push_back((!back, o.outgoing.clone()));
             }
             outs.push(o);
         }
@@ -1582,4 +1583,226 @@ fn d_old_identity_backup_restores_legacy_contacts() {
     .unwrap();
     // A legacy contact: dialled by its id (the X25519 key) until re-keyed.
     assert_eq!(n.inner.lock().contacts[&[9; 32]].dh, [9; 32]);
+}
+
+// ---- multi-hop mesh relay (PROTOCOL §22 on BLE gossip) ----
+
+/// Flush every link in both directions until no PDUs move.
+fn settle(links: &[(Arc<MeshLink>, Arc<MeshLink>)]) -> Vec<LinkOutput> {
+    let mut outs = Vec::new();
+    for _ in 0..64 {
+        let mut moved = false;
+        for (x, y) in links {
+            for (from, to) in [(x, y), (y, x)] {
+                let o = from.flush().unwrap();
+                moved |= !o.outgoing.is_empty();
+                outs.extend(pump_out(from, to, o));
+            }
+        }
+        if !moved {
+            return outs;
+        }
+    }
+    panic!("mesh did not settle");
+}
+
+fn texts(outs: &[LinkOutput]) -> Vec<ReceivedText> {
+    outs.iter().flat_map(|o| o.received.clone()).collect()
+}
+
+fn befriend(x: &Arc<OmcpNode>, y: &Arc<OmcpNode>) {
+    x.add_contact_from_qr(y.qr_payload()).unwrap();
+    y.add_contact_from_qr(x.qr_payload()).unwrap();
+}
+
+fn up(a: &Arc<OmcpNode>, b: &Arc<OmcpNode>) -> (Arc<MeshLink>, Arc<MeshLink>, Vec<LinkOutput>) {
+    let (la, lb, mut outs) = link(a, b);
+    outs.extend(settle(&[(la.clone(), lb.clone())]));
+    (la, lb, outs)
+}
+
+fn down(l: &(Arc<MeshLink>, Arc<MeshLink>, Vec<LinkOutput>)) {
+    l.0.shutdown();
+    l.1.shutdown();
+}
+
+#[test]
+fn mesh_chain_a_b_c_store_and_forward_end_to_end() {
+    // A and C know each other (QR) but are never in range; B is a friend of both.
+    let dir = tempfile::tempdir().unwrap();
+    let pb = generate_recovery_phrase().unwrap();
+    let a = node("Alice");
+    let mut b = open_node(&pb, "Bob", dir.path());
+    let c = node("Carol");
+    befriend(&a, &b);
+    befriend(&b, &c);
+    befriend(&a, &c);
+    let aid = a.identity().peer_id_hex;
+    let cid = c.identity().peer_id_hex;
+    assert!(b.mesh_settings().relay_enabled, "relay defaults to on");
+    assert_eq!(
+        b.mesh_settings().carry_cap_bytes,
+        mesh_default_carry_cap_bytes()
+    );
+
+    // A meets B and sends to C: B carries an opaque envelope.
+    let secret = "meet at the north gate 7pm";
+    a.queue_text(cid.clone(), secret.into()).unwrap();
+    assert_eq!(a.mesh_stats().own_pending, 1);
+    let ab = up(&a, &b);
+    assert!(texts(&ab.2).is_empty(), "B must not receive A→C");
+    assert_eq!(b.mesh_stats().carried, 1);
+    assert_eq!(c.queued_for(aid.clone()), 0);
+    down(&ab);
+
+    // B restarts: the carry store survives, sealed at rest, without plaintext.
+    drop(ab);
+    drop(b);
+    let disk = disk_bytes(dir.path());
+    assert!(
+        !has(&disk, secret.as_bytes()),
+        "relay store holds no plaintext"
+    );
+    b = open_node(&pb, "Bob", dir.path());
+    assert_eq!(b.mesh_stats().carried, 1);
+    assert!(b.stored_messages(cid.clone()).unwrap().is_empty());
+
+    // Later B meets C: delivered once, attributed to A.
+    let bc = up(&b, &c);
+    let got = texts(&bc.2);
+    assert_eq!(got.len(), 1);
+    assert_eq!(got[0].text, secret);
+    assert_eq!(got[0].contact_id, aid);
+    let stored = c.stored_messages(aid.clone()).unwrap();
+    assert_eq!(stored.len(), 1);
+    down(&bc);
+    // Meeting again does not deliver twice.
+    let bc2 = up(&b, &c);
+    assert!(texts(&bc2.2).is_empty());
+    down(&bc2);
+
+    // C replies the same way (C→B, then B→A).
+    c.queue_text(aid.clone(), "ok".into()).unwrap();
+    let cb = up(&c, &b);
+    assert!(texts(&cb.2).is_empty());
+    down(&cb);
+    let ba = up(&b, &a);
+    let got = texts(&ba.2);
+    assert_eq!(got.len(), 1);
+    assert_eq!(
+        (got[0].text.as_str(), got[0].contact_id.as_str()),
+        ("ok", cid.as_str())
+    );
+    down(&ba);
+}
+
+#[test]
+fn mesh_live_three_hop_line_and_relay_toggle() {
+    // A — B — D — C, all links up at once; A and C are not neighbours.
+    let (a, b, d, c) = (node("A"), node("B"), node("D"), node("C"));
+    befriend(&a, &b);
+    befriend(&b, &d);
+    befriend(&d, &c);
+    befriend(&a, &c);
+    let cid = c.identity().peer_id_hex;
+    let aid = a.identity().peer_id_hex;
+    let ab = up(&a, &b);
+    let bd = up(&b, &d);
+    let dc = up(&d, &c);
+    let links = [
+        (ab.0.clone(), ab.1.clone()),
+        (bd.0.clone(), bd.1.clone()),
+        (dc.0.clone(), dc.1.clone()),
+    ];
+    a.queue_text(cid.clone(), "three hops".into()).unwrap();
+    assert!(!a.mesh_pending_links().is_empty());
+    let outs = settle(&links);
+    let got = texts(&outs);
+    assert_eq!(got.len(), 1, "{got:?}");
+    assert_eq!(
+        (got[0].text.as_str(), got[0].contact_id.as_str()),
+        ("three hops", aid.as_str())
+    );
+    // Relay off on D: B still carries, but nothing crosses D.
+    d.set_mesh_settings(MeshSettings {
+        relay_enabled: false,
+        carry_cap_bytes: mesh_default_carry_cap_bytes(),
+    })
+    .unwrap();
+    assert!(!d.mesh_settings().relay_enabled);
+    a.queue_text(cid.clone(), "blocked".into()).unwrap();
+    let outs = settle(&links);
+    assert!(texts(&outs).is_empty());
+    assert_eq!(d.mesh_stats().carried, 0);
+    assert!(b.mesh_stats().carried >= 1);
+    // Cap validation.
+    assert!(d
+        .set_mesh_settings(MeshSettings {
+            relay_enabled: true,
+            carry_cap_bytes: mesh_max_carry_cap_bytes() + 1,
+        })
+        .is_err());
+    let _ = mesh_max_links();
+    // Beacon is a 6-byte HELLO.
+    let beacon = a.mesh_beacon();
+    assert_eq!(beacon.len(), 6);
+    assert_eq!(beacon[0], 0x48);
+    assert!(a.mesh_tick(now_ms()).is_ok());
+}
+
+#[test]
+fn mesh_burn_after_read_crosses_relay_and_opened_returns() {
+    let (a, b, c) = (node("A"), node("B"), node("C"));
+    befriend(&a, &b);
+    befriend(&b, &c);
+    befriend(&a, &c);
+    let aid = a.identity().peer_id_hex;
+    let cid = c.identity().peer_id_hex;
+    let id = a
+        .queue_message(
+            cid.clone(),
+            "self-destruct".into(),
+            Some(spec(BurnMode::OnOpen, 0, 3600)),
+        )
+        .unwrap();
+    let ab = up(&a, &b);
+    down(&ab);
+    let bc = up(&b, &c);
+    let got = texts(&bc.2);
+    assert_eq!(got.len(), 1);
+    assert!(got[0].burn.is_some());
+    assert!(got[0].text.is_empty(), "burn content is not in the event");
+    down(&bc);
+    let content = c.open_burn(id.clone(), now_ms()).unwrap().unwrap();
+    assert_eq!(content.text, "self-destruct");
+    c.close_burn(id.clone()).unwrap();
+    // OPENED travels back C → B → A.
+    let cb = up(&c, &b);
+    down(&cb);
+    let ba = up(&b, &a);
+    let opened: Vec<OpenedEvent> = ba.2.iter().flat_map(|o| o.opened.clone()).collect();
+    assert_eq!(opened.len(), 1);
+    assert_eq!(opened[0].contact_id, cid);
+    assert_eq!(opened[0].msg_id_hex, id);
+    assert!(!a.burn_is_live(id.clone()));
+    down(&ba);
+    let _ = aid;
+}
+
+#[test]
+fn mesh_direct_delivery_and_mesh_copy_do_not_duplicate() {
+    let (a, b, c) = (node("A"), node("B"), node("C"));
+    befriend(&a, &b);
+    befriend(&b, &c);
+    befriend(&a, &c);
+    let cid = c.identity().peer_id_hex;
+    a.queue_text(cid.clone(), "once".into()).unwrap();
+    let ab = up(&a, &b); // B carries a copy
+    down(&ab);
+    let ac = up(&a, &c); // direct delivery
+    assert_eq!(texts(&ac.2).len(), 1);
+    assert_eq!(a.mesh_stats().own_pending, 0, "own mesh copy withdrawn");
+    down(&ac);
+    let bc = up(&b, &c); // the relayed copy is dropped as a duplicate
+    assert!(texts(&bc.2).is_empty());
 }

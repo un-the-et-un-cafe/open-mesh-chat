@@ -57,12 +57,17 @@ uniffi::setup_scaffolding!();
 
 mod chatbackup;
 mod files;
+mod mesh;
 mod persist;
 pub use chatbackup::{
     ChatBackupBlob, ChatBackupSummary, DeviceInfo, KeptMediaSettings, KeptMediaUsage,
     MediaBackupItem, MediaBackupSettings, MediaRequestEvent, MediaUpdate, RestoreNotice,
 };
 pub use files::{FileFailure, FileOffer, FileProgress, ReceivedFile, FILE_CHUNK_BYTES};
+pub use mesh::{
+    mesh_default_carry_cap_bytes, mesh_max_carry_cap_bytes, mesh_max_links, MeshSettings,
+    MeshStats, MAX_MESH_LINKS,
+};
 pub use persist::{
     ChatSummary, MessageStatus, StoredBurnState, StoredFile, StoredFileState, StoredMessage,
 };
@@ -126,7 +131,7 @@ impl From<omcp_core::OmcpError> for FfiError {
     }
 }
 
-fn invalid(msg: &str) -> FfiError {
+pub(crate) fn invalid(msg: &str) -> FfiError {
     FfiError::Invalid { msg: msg.into() }
 }
 
@@ -287,6 +292,9 @@ pub struct LinkOutput {
     pub resend_asks: Vec<MediaRequestEvent>,
     /// Placeholder state changes (requested / unavailable).
     pub media_updates: Vec<MediaUpdate>,
+    /// Other links (by [`MeshLink::handle`]) that now have mesh frames to
+    /// send: call `flush()` on each (multi-hop relaying, PROTOCOL §22).
+    pub relay_links: Vec<u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
@@ -507,7 +515,7 @@ pub fn parse_advertisement(bytes: Vec<u8>) -> Option<String> {
         .map(|a| hex::encode(a.peer_id_trunc))
 }
 
-struct Contact {
+pub(crate) struct Contact {
     name: String,
     verified: bool,
     device: ContactDevice,
@@ -522,7 +530,7 @@ impl Contact {
     }
 }
 
-struct NodeState {
+pub(crate) struct NodeState {
     contacts: HashMap<[u8; 32], Contact>,
     queues: HashMap<[u8; 32], VecDeque<Queued>>,
     /// Received burn content (crypto-shredding store).
@@ -538,10 +546,12 @@ struct NodeState {
     db: Store,
     /// Chat-backup state to save once the planned upload succeeded.
     pending_backup: Option<omcp_core::chat_backup::BackupState>,
+    /// Multi-hop relay (PROTOCOL §22): engine, wanted tags, frame queues.
+    mesh: mesh::MeshState,
 }
 
 /// One queued outbound message: envelope id fixed at queue time so `OPENED` can match.
-struct Queued {
+pub(crate) struct Queued {
     envelope_id: [u8; 16],
     created_ms: u64,
     inner: Zeroizing<Vec<u8>>,
@@ -571,7 +581,7 @@ pub(crate) fn parse_msg_id(h: &str) -> Result<[u8; 16], FfiError> {
     v.try_into().map_err(|_| invalid("msg id length"))
 }
 
-struct NodeInner {
+pub(crate) struct NodeInner {
     seed: Zeroizing<[u8; 32]>,
     /// PeerID = BLAKE2b-256(identity public key) (v0.1.4a).
     peer_id: [u8; 32],
@@ -638,7 +648,7 @@ pub(crate) fn contact_info(node: &NodeInner, id: &[u8; 32], c: &Contact) -> Cont
     }
 }
 
-fn now_ms() -> u64 {
+pub(crate) fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
@@ -747,6 +757,7 @@ impl OmcpNode {
                     files: files::FileState::default(),
                     db,
                     pending_backup: None,
+                    mesh: mesh::MeshState::new(now_ms()),
                 }),
             }),
         });
@@ -1101,6 +1112,7 @@ impl OmcpNode {
             control: true,
         };
         st.persist_queued(&peer, &q)?;
+        mesh::submit_own(&self.inner, &mut st, &peer, &q, None)?;
         st.queues.entry(peer).or_default().push_back(q);
         st.persist_burn(&id)?;
         st.update_message(&id, |m| {
@@ -1425,6 +1437,7 @@ impl OmcpNode {
             control: false,
         };
         st.persist_queued(&id, &q)?;
+        mesh::submit_own(&self.inner, &mut st, &id, &q, header.as_ref())?;
         st.queues.entry(id).or_default().push_back(q);
         Ok(hex::encode(envelope_id))
     }
@@ -1457,11 +1470,12 @@ enum Role {
     Closed,
 }
 
-struct Established {
+pub(crate) struct Established {
     link: LinkSession,
     keys: HybridSessionKeys,
     initiator: bool,
     reasm: FragmentReassembler,
+    mesh_reasm: FragmentReassembler,
     app_send: u64,
     app_recv: u64,
 }
@@ -1561,7 +1575,10 @@ impl MeshLink {
                     let (ct, plain) = open_app_envelope(&key, &peer, &env, &mut up.app_recv)?;
                     let plain = Zeroizing::new(plain);
                     let mut node = self.node.lock();
-                    if !node.seen.check_and_insert(env.envelope_id, Instant::now()) {
+                    if !node.seen.check_and_insert(env.envelope_id, Instant::now())
+                        && !node.mesh_seen(&env.envelope_id)
+                    {
+                        node.mesh_note_direct(env.envelope_id)?;
                         let from = (
                             out.file_progress.len(),
                             out.files.len(),
@@ -1578,9 +1595,27 @@ impl MeshLink {
                     }
                 }
             }
+            mesh::PDU_MESH => {
+                let Role::Up(up) = &mut st.role else {
+                    return Err(FfiError::State {
+                        msg: "mesh fragment before handshake".into(),
+                    });
+                };
+                if let Some(frame) = up
+                    .mesh_reasm
+                    .push_frame(&mut up.link, body, Instant::now())?
+                {
+                    // A malformed frame from a neighbour is dropped, not fatal.
+                    let _ = self.mesh_frame(&frame, &mut out);
+                }
+                if let Role::Up(up) = &mut st.role {
+                    self.drain_mesh(up, &mut out)?;
+                }
+            }
             _ => return Err(invalid("unknown pdu kind")),
         }
         Self::fill(&st, &mut out);
+        self.relay_links(&mut out);
         Ok(out)
     }
 
@@ -1637,6 +1672,7 @@ impl MeshLink {
         let mut out = LinkOutput::default();
         self.flush_locked(&mut st, &mut out)?;
         Self::fill(&st, &mut out);
+        self.relay_links(&mut out);
         Ok(out)
     }
 
@@ -1644,10 +1680,16 @@ impl MeshLink {
         matches!(self.lock().role, Role::Up(_))
     }
 
+    /// Opaque handle of this link (see [`LinkOutput::relay_links`]).
+    pub fn handle(&self) -> u64 {
+        self.handle
+    }
+
     /// Tear down; the peer no longer counts as nearby.
     pub fn shutdown(&self) {
         let mut st = self.lock();
         st.role = Role::Closed;
+        self.mesh_link_down();
         let mut node = self.node.lock();
         node.links_up.remove(&self.handle);
         if let Some(peer) = st.peer {
@@ -1669,7 +1711,7 @@ impl MeshLink {
     }
 
     /// Route one decrypted message: text, burn content into the shredding store, or `OPENED`.
-    fn deliver(
+    pub(crate) fn deliver(
         node: &mut NodeState,
         peer: [u8; 32],
         env: &EnvelopeV1,
@@ -1837,8 +1879,9 @@ impl MeshLink {
             if !q.control {
                 out.flushed += 1;
             }
-            let node = self.node.lock();
+            let mut node = self.node.lock();
             node.db().delete_outbox(&q.envelope_id)?;
+            node.mesh_cancel_own(&q.envelope_id)?;
             if !q.control {
                 node.update_message(&q.envelope_id, |m| m.status = st::STATUS_SENT)?;
             }
@@ -1846,7 +1889,8 @@ impl MeshLink {
         // Then the active file transfer, a few chunks per call.
         let mut node = self.node.lock();
         let Some(q) = node.files.out.get_mut(&peer) else {
-            return Ok(());
+            drop(node);
+            return self.drain_mesh(up, out);
         };
         let mut batch: Vec<Queued> = Vec::new();
         let from = out.file_progress.len();
@@ -1890,7 +1934,7 @@ impl MeshLink {
         for m in &batch {
             Self::seal_into(&self.node, up, m, out)?;
         }
-        Ok(())
+        self.drain_mesh(up, out)
     }
 
     fn complete_handshake(
@@ -1923,6 +1967,7 @@ impl MeshLink {
                     keys,
                     initiator: true,
                     reasm: FragmentReassembler::default(),
+                    mesh_reasm: FragmentReassembler::default(),
                     app_send: 0,
                     app_recv: 0,
                 }
@@ -1959,6 +2004,7 @@ impl MeshLink {
                     keys,
                     initiator: false,
                     reasm: FragmentReassembler::default(),
+                    mesh_reasm: FragmentReassembler::default(),
                     app_send: 0,
                     app_recv: 0,
                 }
@@ -1982,6 +2028,8 @@ impl MeshLink {
             node.links_up.insert(self.handle, p);
             // CB3: ask the partner again for every missing-media placeholder.
             node.request_missing_media(&p, out)?;
+            drop(node);
+            self.mesh_link_up(&p)?;
         }
         self.flush_locked(st, out)
     }

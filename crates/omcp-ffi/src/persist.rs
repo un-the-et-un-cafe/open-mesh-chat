@@ -445,6 +445,6 @@ impl NodeState {
                 self.pause_transfers(&m.peer)?;
             }
         }
-        Ok(())
+        self.load_mesh(now_ms)
     }
 }

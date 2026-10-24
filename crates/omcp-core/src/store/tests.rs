@@ -163,12 +163,12 @@ fn migrations_are_versioned_and_newer_schema_is_refused() {
     let path = dir.path().join("omcp.db");
     {
         let s = Store::open(&path, &KEY).unwrap();
-        assert_eq!(s.schema_version().unwrap(), 2);
+        assert_eq!(s.schema_version().unwrap(), 3);
     }
     // Re-opening is idempotent.
     assert_eq!(
         Store::open(&path, &KEY).unwrap().schema_version().unwrap(),
-        2
+        3
     );
     {
         let c = Connection::open(&path).unwrap();
@@ -363,8 +363,44 @@ fn v1_store_migrates_to_kept_media_schema() {
         c.execute_batch("PRAGMA user_version = 1").unwrap();
     }
     let s = Store::open(&path, &KEY).unwrap();
-    assert_eq!(s.schema_version().unwrap(), 2);
+    assert_eq!(s.schema_version().unwrap(), 3);
     assert!(s.kept_media_index().unwrap().is_empty());
+    assert!(s.carry_items().unwrap().is_empty());
+}
+
+#[test]
+fn v2_store_migrates_to_relay_table_and_carry_rows_are_sealed() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("omcp.db");
+    {
+        let c = Connection::open(&path).unwrap();
+        c.execute_batch(MIGRATIONS[0]).unwrap();
+        c.execute_batch(MIGRATIONS[1]).unwrap();
+        c.execute_batch("PRAGMA user_version = 2").unwrap();
+    }
+    let env = b"OPAQUE-ENVELOPE-BYTES-0123456789".to_vec();
+    {
+        let s = Store::open(&path, &KEY).unwrap();
+        assert_eq!(s.schema_version().unwrap(), 3);
+        let r = CarryRec {
+            id: [7; 16],
+            envelope: env.clone(),
+            expires_at: 99,
+            hop_count: 2,
+            own: false,
+        };
+        s.put_carry(&r).unwrap();
+        s.put_mesh_seen(&[8; 16], 50).unwrap();
+        assert_eq!(s.carry_items().unwrap(), vec![r]);
+        assert_eq!(s.mesh_seen(10).unwrap().len(), 1);
+        assert!(s.mesh_seen(60).unwrap().is_empty());
+        assert!(s.mesh_seen(0).unwrap().is_empty(), "expired row deleted");
+    }
+    let raw = std::fs::read(&path).unwrap();
+    assert!(!raw.windows(env.len()).any(|w| w == env.as_slice()));
+    let s = Store::open(&path, &KEY).unwrap();
+    s.delete_carry(&[7; 16]).unwrap();
+    assert!(s.carry_items().unwrap().is_empty());
 }
 
 #[test]
