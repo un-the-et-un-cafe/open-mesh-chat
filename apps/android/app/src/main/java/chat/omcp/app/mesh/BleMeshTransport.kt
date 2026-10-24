@@ -342,6 +342,7 @@ class BleMeshTransport(private val context: Context, private val repo: MeshRepos
             stopScanning()
         }
         queueRelay(runCatching { repo.core.meshTick(now) }.getOrDefault(emptyList()))
+        repo.onStatusUpdates(runCatching { repo.core.meshTakeStatusUpdates() }.getOrDefault(emptyList()))
         val beacon = runCatching { repo.core.meshBeacon() }.getOrNull()
         if (beacon != null && !beacon.contentEquals(advertisedBeacon) && now - lastAdvertiseMs >= 60_000) {
             runCatching { bt.adapter.bluetoothLeAdvertiser?.stopAdvertising(advCb) }
@@ -600,6 +601,7 @@ class BleMeshTransport(private val context: Context, private val repo: MeshRepos
         r.mediaUpdates.forEach(repo::onMediaUpdate)
         r.peerContactId?.let { repo.markFlushed(it, r.flushed) } ?: repo.refresh()
         if (r.relayLinks.isNotEmpty()) queueRelay(r.relayLinks)
+        repo.onStatusUpdates(runCatching { repo.core.meshTakeStatusUpdates() }.getOrDefault(emptyList()))
     }
 
     /** New text queued for [contactId]: flush on whichever link to them is up. */

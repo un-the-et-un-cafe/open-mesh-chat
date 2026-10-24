@@ -172,6 +172,9 @@ class RustOmcpCore : OmcpCore {
     }
     override fun meshTick(nowMs: Long) = node?.meshTick(nowMs.toULong())?.map { it.toLong() } ?: emptyList()
     override fun meshPendingLinks() = node?.meshPendingLinks()?.map { it.toLong() } ?: emptyList()
+    override fun meshTakeStatusUpdates() = node?.meshTakeStatusUpdates()?.map {
+        MeshStatusUpdate(it.idHex, it.contactId, if (it.status == chat.omcp.ffi.MessageStatus.DELIVERED) "Delivered" else "Sent")
+    } ?: emptyList()
     override fun meshBeacon() = node?.meshBeacon() ?: ByteArray(0)
     override fun meshMaxLinks() = chat.omcp.ffi.meshMaxLinks().toInt()
     override fun meshMaxCapBytes() = chat.omcp.ffi.meshMaxCarryCapBytes().toLong()
@@ -227,6 +230,7 @@ private fun chat.omcp.ffi.StoredMessage.toApp() = StoredMessageInfo(
     status = when (status) {
         chat.omcp.ffi.MessageStatus.QUEUED -> "Queued"
         chat.omcp.ffi.MessageStatus.SENT -> "Sent"
+        chat.omcp.ffi.MessageStatus.DELIVERED -> "Delivered"
         chat.omcp.ffi.MessageStatus.RECEIVED -> "Received"
         chat.omcp.ffi.MessageStatus.SYSTEM -> "System"
     },

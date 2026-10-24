@@ -123,6 +123,9 @@ data class MeshRelayPrefs(val enabled: Boolean = true, val capBytes: Long = 50_0
 
 data class MeshRelayStats(val carried: Int = 0, val carriedBytes: Long = 0, val ownPending: Int = 0, val neighbours: Int = 0)
 
+/** Mesh-caused status change (PROTOCOL §22.8(3)): [status] is "Sent" (handed to a relay) or "Delivered" (end-to-end ack). */
+data class MeshStatusUpdate(val msgId: String, val contactId: String, val status: String)
+
 enum class NetworkType { Offline, Wifi, Cellular }
 
 data class GatewayDecision(val bridge: Boolean, val meteredWarning: Boolean)
@@ -296,6 +299,8 @@ interface OmcpCore {
     /** Periodic relay work; returns link handles with frames waiting. */
     fun meshTick(nowMs: Long): List<Long> = emptyList()
     fun meshPendingLinks(): List<Long> = emptyList()
+    /** Status changes caused by the mesh since the last call (Queued → Sent → Delivered). */
+    fun meshTakeStatusUpdates(): List<MeshStatusUpdate> = emptyList()
     /** 6-byte HELLO beacon (§22.7(12)) for advertisement data. */
     fun meshBeacon(): ByteArray = ByteArray(0)
     fun meshMaxLinks(): Int = 4

@@ -303,6 +303,10 @@
     <string name="storage_days">%1$d days</string>
     <string name="storage_usage">%1$d items · %2$s used</string>
     <string name="relay_title">Mesh relay</string>
+    <string name="msg_status_queued">Queued</string>
+    <string name="msg_status_sent">Sent · Mesh</string>
+    <string name="msg_status_delivered">Delivered · Mesh</string>
+    <string name="msg_status_received">Mesh</string>
     <string name="relay_toggle">Relay messages for others</string>
     <string name="relay_toggle_desc">Carry encrypted messages between nearby friends who are out of each other’s range.</string>
     <string name="relay_cap_title">Use up to</string>

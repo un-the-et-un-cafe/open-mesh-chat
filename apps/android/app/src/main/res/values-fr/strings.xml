@@ -303,6 +303,10 @@
     <string name="storage_keep_size">Jusqu’à</string>
     <string name="storage_days">%1$d jours</string>
     <string name="storage_usage">%1$d éléments · %2$s utilisés</string>
+    <string name="msg_status_queued">En attente</string>
+    <string name="msg_status_sent">Envoyé · Mesh</string>
+    <string name="msg_status_delivered">Distribué · Mesh</string>
+    <string name="msg_status_received">Mesh</string>
     <string name="relay_title">Relais maillé</string>
     <string name="relay_toggle">Relayer les messages des autres</string>
     <string name="relay_toggle_desc">Transporter des messages chiffrés entre des amis proches qui sont hors de portée l’un de l’autre.</string>

@@ -66,18 +66,34 @@ class MeshRelayTest {
         friends(a, b); friends(b, c); friends(a, c)
         val cid = c.identity()!!.peerIdHex
         val aid = a.identity()!!.peerIdHex
+        // No 1:1 MLS group yet: nothing goes on the mesh (PROTOCOL §22.8(1)).
+        a.queueText(cid, "direct only")
+        assertEquals(0, a.meshStats().ownPending)
+        // First handshake creates the group (and delivers the queue directly).
+        val (ac, ca, gotDirect) = connect(a, c)
+        assertEquals(listOf("direct only"), gotDirect.map { it.text })
+        ac.close(); ca.close()
+
+        // From now on A and C are never in range.
         a.queueText(cid, "via B")
         assertEquals(1, a.meshStats().ownPending)
 
         val (ab, ba, gotB) = connect(a, b)
         assertTrue("relay never delivers to itself", gotB.isEmpty())
         assertEquals(1, b.meshStats().carried)
+        assertEquals(listOf("Sent"), a.meshTakeStatusUpdates().filter { it.contactId == cid }.map { it.status }.distinct())
         ab.close(); ba.close()
 
         val (bc, cb, gotC) = connect(b, c)
         assertEquals(listOf("via B"), gotC.map { it.text })
         assertEquals(aid, gotC.single().contactId)
         bc.close(); cb.close()
+
+        // C's end-to-end DELIVERY_ACK travels back through B.
+        val (ba2, ab2, _) = connect(b, a)
+        assertTrue(a.meshTakeStatusUpdates().any { it.contactId == cid && it.status == "Delivered" })
+        assertEquals("Delivered", a.storedMessages(cid).last().status)
+        ba2.close(); ab2.close()
     }
 
     @Test

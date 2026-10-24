@@ -408,9 +408,10 @@ fun ChatThreadScreen(
                         )
                     } else {
                         val meta = time(m.timeMs) + " · " + when (m.status) {
-                            ChatMessage.Status.Queued -> "Queued"
-                            ChatMessage.Status.Sent -> "Sent · Mesh"
-                            ChatMessage.Status.Received -> "Mesh"
+                            ChatMessage.Status.Queued -> stringResource(R.string.msg_status_queued)
+                            ChatMessage.Status.Sent -> stringResource(R.string.msg_status_sent)
+                            ChatMessage.Status.Delivered -> stringResource(R.string.msg_status_delivered)
+                            ChatMessage.Status.Received -> stringResource(R.string.msg_status_received)
                             ChatMessage.Status.System -> ""
                         }
                         Bubble(mine = m.mine, text = m.text, meta = meta)
