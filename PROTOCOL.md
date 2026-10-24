@@ -780,13 +780,21 @@ Computed per community, and per stream host, from **participant attestations**:
 
 12. **Compact beacon frames (normative).** Hello beacons and digest requests are 6-byte link-control frames: `type (u8) | flags (u8) | digest_id (u32, big-endian)`. `HELLO` = `0x48`; `DIGEST_REQ` = `0x52`, where `digest_id` is the digest being requested (0 = full). `flags` bit0 = `HAS_DELTA` (a delta digest follows), and bits 1–7 are reserved (0). `digest_id` = BLAKE2b with a 4-byte output (digest length parameter `nn = 4`, unkeyed, no salt or personalization) over the canonical encoding of the current want-digest, read as a big-endian u32. This is *not* a truncation of BLAKE2b-512. If the result is 0 (reserved for "full" in `DIGEST_REQ`), use 1. With these frames the idle budget is met with 32 neighbours (≈ 0.83 MB/day in simulation).
 
+### 22.8 Mesh relay over BLE (v0.2.2)
+1. **1:1 end-to-end key.** There is no pairwise static-DH stand-in. 1:1 chats are 2-member MLS groups (§22.7(5)), so implementations MUST create the MLS group on first contact (KeyPackage exchanged with the contact QR or first handshake) and use the MLS exporter for tags and the MLS application keys for content. A static-DH key with no forward secrecy is non-conformant. If the MLS group isn't established yet, messages wait in the local queue and are not mesh-relayed.
+2. **Registry.** TLV `0x58` = `outer_expiry` (u32, unix seconds; relays drop expired envelopes, max now + 7 d). `0x80` stays experimental. Link PDU `0x03` = `MESH_FRAME` (carries one mesh frame). Mesh frame types: `0x44` = `DATA` (envelope), `0x45` = `DELIVERY_ACK`, `0x64` = `DIGEST_DELTA`.
+3. **Delivery ack.** The recipient sends a `DELIVERY_ACK` (frame `0x45`) of 16 B: `msg_hash[0..16]`, i.e. the first 16 bytes of BLAKE2b-256 over the ciphertext. It is end-to-end MACed inside an MLS application message and addressed to the sender's sub-tag, and relays forward it like DATA. Relays that see an ack for an envelope they hold delete it. The sender's UI goes from Queued to Sent (handed to a relay) to Delivered (ack received).
+4. **Media over mesh.** Media chunks (64 KiB, §7) can be relayed over the mesh for 1:1 and small groups (≤ 8) only. Each chunk is ≤ 4 hops and counts toward the relay's storage cap. Larger groups and communities fetch media directly or over a gateway. Until this is implemented, direct-only is an allowed interim.
+5. **Device-key rotation.** Rotation does not invalidate in-flight envelopes. The recipient keeps the previous device key for a 7-day overlap (matching the max `outer_expiry`) and accepts envelopes encrypted to either key. Envelopes are bound to the MLS epoch, not to the device key, and the device key only signs the link handshake (§23 RS binding).
+
 ### 21.8 `header_aad` TLV registry
 | Type | Name | Length | Section |
 |---|---|---|---|
 | `0x01`–`0x3F` | reserved for core | — | §21 |
 | `0x54` | `mailbox_tag` | 8 | §22.1 |
 | `0x56` | `recipient_subtags` | 8·n | §22.7(9) |
-| `0x55`, `0x57`–`0x7F` | unassigned (extension process §16) | — | — |
+| `0x58` | `outer_expiry` | 4 | §22.8(2) |
+| `0x55`, `0x57`, `0x59`–`0x7F` | unassigned (extension process §16) | — | — |
 | `0x80`–`0xFF` | experimental / private use | — | — |
 
 
@@ -795,6 +803,7 @@ Computed per community, and per stream host, from **participant attestations**:
 |---|---|---|---|
 | `0x48` | `HELLO` | 6 B | §22.7(12) |
 | `0x52` | `DIGEST_REQ` | 6 B | §22.7(12) |
+| `0x03` | `MESH_FRAME` (link PDU; inner frame `0x44` DATA, `0x45` DELIVERY_ACK, `0x64` DIGEST_DELTA) | var | §22.8(2) |
 | other | unassigned (extension process §16) | — | — |
 
 ### 23.8 Clarifications (v0.2.1)
