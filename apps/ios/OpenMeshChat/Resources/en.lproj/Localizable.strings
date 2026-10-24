@@ -77,6 +77,7 @@
 "burn_toggle_off" = "Don’t burn";
 "msg_queued" = "Queued";
 "msg_sent" = "Sent";
+"msg_delivered" = "Delivered";
 "msg_received" = "Received";
 "burn_title" = "Burn after read";
 "burn_preview" = "🔥 Message";

@@ -77,6 +77,7 @@
 "burn_toggle_off" = "Ne pas détruire";
 "msg_queued" = "En attente";
 "msg_sent" = "Envoyé";
+"msg_delivered" = "Distribué";
 "msg_received" = "Reçu";
 "burn_title" = "Autodestruction après lecture";
 "burn_preview" = "🔥 Message";

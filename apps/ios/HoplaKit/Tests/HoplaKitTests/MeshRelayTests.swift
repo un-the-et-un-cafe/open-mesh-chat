@@ -48,4 +48,19 @@ final class MeshRelayTests: XCTestCase {
         XCTAssertTrue(src.contains("LOW_BATTERY_PCT = \(MeshDutyCycle.lowBatteryPercent)"))
         XCTAssertTrue(src.contains("Profile(ScanMode.LowPower, 30_000, 300_000, 60_000, minOf(2, coreMaxLinks))"))
     }
+
+    func testMeshStatusQueuedSentDeliveredNeverBackwards() throws {
+        let (repo, _) = makeRepo()
+        let c1 = try repo.addContact(qr: "omcp:1:b0b:Bob", action: .chatWithoutVerifying).id
+        try repo.send(c1, text: "hi")
+        let id = try XCTUnwrap(repo.messages[c1]?.last?.id)
+        XCTAssertEqual(repo.messages[c1]?.last?.status, .queued)
+        repo.applyStatusUpdates([MeshStatusUpdate(msgId: id, contactId: c1, status: .sent)])
+        XCTAssertEqual(repo.messages[c1]?.last?.status, .sent)
+        repo.applyStatusUpdates([MeshStatusUpdate(msgId: id, contactId: c1, status: .delivered)])
+        XCTAssertEqual(repo.messages[c1]?.last?.status, .delivered)
+        repo.applyStatusUpdates([MeshStatusUpdate(msgId: id, contactId: c1, status: .sent)])
+        XCTAssertEqual(repo.messages[c1]?.last?.status, .delivered, "never goes backwards")
+        XCTAssertTrue(FakeOmcpCore().meshTakeStatusUpdates().isEmpty)
+    }
 }

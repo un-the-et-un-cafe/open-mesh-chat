@@ -59,7 +59,7 @@ S = {
  "send_burn": ("Send, burn after read", "Envoyer, autodestruction après lecture"),
  "burn_long_press_hint": ("Long-press to toggle burn after read", "Appui long pour l’autodestruction après lecture"),
  "burn_toggle_on": ("Burn after read", "Autodestruction après lecture"), "burn_toggle_off": ("Don’t burn", "Ne pas détruire"),
- "msg_queued": ("Queued", "En attente"), "msg_sent": ("Sent", "Envoyé"), "msg_received": ("Received", "Reçu"),
+ "msg_queued": ("Queued", "En attente"), "msg_sent": ("Sent", "Envoyé"), "msg_delivered": ("Delivered", "Distribué"), "msg_received": ("Received", "Reçu"),
  "burn_title": ("Burn after read", "Autodestruction après lecture"), "burn_preview": ("🔥 Message", "🔥 Message"),
  "burn_sent": ("Burn after read", "Autodestruction après lecture"), "burn_open": ("Open", "Ouvert"),
  "burn_tap_to_read": ("Tap to read", "Touchez pour lire"), "burn_tap_view_once": ("Tap to view once", "Touchez pour voir une fois"),

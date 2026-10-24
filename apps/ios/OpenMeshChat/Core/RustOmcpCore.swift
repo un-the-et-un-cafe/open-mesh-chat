@@ -195,6 +195,11 @@ public final class RustOmcpCore: HoplaKit.OmcpCore {
     }
     public func meshTick(nowMs: Int64) -> [UInt64] { (try? node?.meshTick(nowMs: UInt64(max(0, nowMs)))).flatMap { $0 } ?? [] }
     public func meshPendingLinks() -> [UInt64] { node?.meshPendingLinks() ?? [] }
+    public func meshTakeStatusUpdates() -> [MeshStatusUpdate] {
+        (node?.meshTakeStatusUpdates() ?? []).map {
+            MeshStatusUpdate(msgId: $0.idHex, contactId: $0.contactId, status: $0.status == .delivered ? .delivered : .sent)
+        }
+    }
     public func meshBeacon() -> Data { node?.meshBeacon() ?? Data() }
     public func meshMaxLinks() -> Int { Int(OmcpFFI.meshMaxLinks()) }
     public func meshMaxCapBytes() -> Int64 { Int64(OmcpFFI.meshMaxCarryCapBytes()) }
@@ -225,6 +230,7 @@ public final class RustOmcpCore: HoplaKit.OmcpCore {
         switch m.status {
         case .queued: status = .queued
         case .sent: status = .sent
+        case .delivered: status = .delivered
         case .received: status = .received
         case .system: status = .system
         }

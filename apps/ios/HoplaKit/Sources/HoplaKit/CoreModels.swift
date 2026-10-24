@@ -513,6 +513,19 @@ public struct MeshRelayStats: Equatable, Sendable {
     }
 }
 
+/// Mesh-caused status change (PROTOCOL §22.8(3)): `.sent` = handed to a relay,
+/// `.delivered` = end-to-end ack received.
+public struct MeshStatusUpdate: Equatable, Sendable {
+    public var msgId: String
+    public var contactId: String
+    public var status: ChatMessage.Status
+    public init(msgId: String, contactId: String, status: ChatMessage.Status) {
+        self.msgId = msgId
+        self.contactId = contactId
+        self.status = status
+    }
+}
+
 /// App-facing protocol core. Production: `RustOmcpCore` (omcp-ffi via UniFFI, in the app
 /// target). Previews/tests: `FakeOmcpCore`. The UI layer never invents crypto results.
 public protocol OmcpCore: AnyObject {
@@ -561,6 +574,8 @@ public protocol OmcpCore: AnyObject {
     /// Periodic relay work; returns link handles with frames waiting.
     func meshTick(nowMs: Int64) -> [UInt64]
     func meshPendingLinks() -> [UInt64]
+    /// Status changes caused by the mesh since the last call (Queued → Sent → Delivered).
+    func meshTakeStatusUpdates() -> [MeshStatusUpdate]
     /// 6-byte HELLO beacon (§22.7(12)).
     func meshBeacon() -> Data
     func meshMaxLinks() -> Int
@@ -652,6 +667,7 @@ public extension OmcpCore {
     func meshStats() -> MeshRelayStats { MeshRelayStats() }
     func meshTick(nowMs: Int64) -> [UInt64] { [] }
     func meshPendingLinks() -> [UInt64] { [] }
+    func meshTakeStatusUpdates() -> [MeshStatusUpdate] { [] }
     func meshBeacon() -> Data { Data() }
     func meshMaxLinks() -> Int { 4 }
     func meshMaxCapBytes() -> Int64 { 500_000_000 }

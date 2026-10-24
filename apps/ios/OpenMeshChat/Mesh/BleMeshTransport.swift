@@ -116,6 +116,7 @@ final class BleMeshTransport: NSObject, MeshKick {
             }
         }
         queueRelay(repo.core.meshTick(nowMs: now))
+        applyMeshStatus()
         let t = DispatchSource.makeTimerSource(queue: q)
         t.schedule(deadline: .now() + .milliseconds(Int(p.tickMs)))
         t.setEventHandler { [weak self] in self?.tick() }
@@ -168,6 +169,14 @@ final class BleMeshTransport: NSObject, MeshKick {
             if let cid { repo.markFlushed(cid, count: r.flushed) }
         }
         if !r.relayLinks.isEmpty { queueRelay(r.relayLinks) }
+        applyMeshStatus()
+    }
+
+    /// Queued → Sent (handed to a relay) → Delivered (end-to-end ack), PROTOCOL §22.8(3).
+    private func applyMeshStatus() {
+        let ups = repo.core.meshTakeStatusUpdates()
+        guard !ups.isEmpty else { return }
+        onMain { [repo] in repo.applyStatusUpdates(ups) }
     }
 
     // MARK: MeshKick

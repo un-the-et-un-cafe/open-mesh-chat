@@ -322,16 +322,25 @@ final class RustBridgeTests: XCTestCase {
             _ = try y.addContactFromQr(try x.qrPayload())
         }
         let cid = c.identity()!.peerIdHex, aid = a.identity()!.peerIdHex
-        _ = try a.queueMessage(cid, text: "via B", burn: nil)
+        // First handshake creates the 1:1 MLS group (PROTOCOL §22.8(1)); then A and C
+        // are never in range again.
+        let (ac, ca, _) = try linkUp(a, c)
+        ac.close(); ca.close()
+        let mid = try a.queueMessage(cid, text: "via B", burn: nil)
         XCTAssertEqual(a.meshStats().ownPending, 1)
         let (ab, ba, gotB) = try linkUp(a, b)
         XCTAssertTrue(gotB.isEmpty)
         XCTAssertEqual(b.meshStats().carried, 1)
+        XCTAssertTrue(a.meshTakeStatusUpdates().contains { $0.msgId == mid && $0.status == .sent })
         ab.close(); ba.close()
         let (bc, cb, gotC) = try linkUp(b, c)
         XCTAssertEqual(gotC.map { $0.text }, ["via B"])
         XCTAssertEqual(gotC.first?.contactId, aid)
         bc.close(); cb.close()
+        // C's end-to-end DELIVERY_ACK travels back through B.
+        let (ba2, ab2, _) = try linkUp(b, a)
+        XCTAssertTrue(a.meshTakeStatusUpdates().contains { $0.msgId == mid && $0.status == .delivered })
+        ba2.close(); ab2.close()
         XCTAssertEqual(b.meshSettings(), MeshRelayPrefs(enabled: true, capBytes: 50_000_000))
         try b.setMeshSettings(MeshRelayPrefs(enabled: false, capBytes: 10_000_000))
         XCTAssertEqual(b.meshStats().carried, 0)
