@@ -56,6 +56,15 @@
 //! - **Deletion (RL3)**: an envelope is deleted once its delivery is
 //!   acknowledged (`DELIVERY_ACK`, §22.8(3)) or at its `outer_expiry`
 //!   (TLV `0x58`, §22.8(2)), else `created + 72 h`, never later than 7 days.
+//! - **News (Hopla News)**: an envelope carrying the news channel TLV
+//!   (`0x8E`), or on a registered news tag ([`RelayEngine::set_news_tags`]),
+//!   is classified [`RelayClass::News`]: dropped first and offered last
+//!   (RL2). It must pass [`crate::news::open_news`] (the RSS ingest-path
+//!   rule: users can't publish), else it is dropped and never passed on.
+//!   News is a public channel: a subscriber both delivers and carries it.
+//!   News stays within [`NEWS_STORAGE_CAP_BYTES`] (20 MB, oldest first;
+//!   [`RelayEngine::set_news_cap`]).
+//!   Local ingest enters through [`RelayEngine::submit_news`].
 //! - **Dedup**: a seen set keyed by `envelope_id` that lives as long as the
 //!   longest possible envelope lifetime (7 days, capped in size).
 //! - **Rate limit**: one token bucket per neighbour (64 envelopes/s, §22.4).
@@ -79,6 +88,7 @@ use super::tag::{parse_routing_aad, MailboxTag, MAX_CARRY_DISTANCE};
 use super::SplitMix64;
 use crate::error::{OmcpError, Result};
 use crate::framing::EnvelopeV1;
+use crate::news::{self, NEWS_STORAGE_CAP_BYTES};
 
 /// `DATA` mesh frame (one envelope).
 pub const FRAME_DATA: u8 = 0x44;
@@ -173,6 +183,10 @@ pub struct RelayStats {
     pub own_pending: u32,
     pub neighbours: u32,
     pub forwarded_today_bytes: u64,
+    /// Bytes of news held (≤ [`NEWS_STORAGE_CAP_BYTES`]).
+    pub news_bytes: u64,
+    /// News envelopes dropped because they failed the ingest-path rule.
+    pub news_rejected: u32,
 }
 
 /// The per-device mesh relay.
@@ -183,6 +197,9 @@ pub struct RelayEngine {
     free_storage: Option<(u64, u64)>,
     /// Public news channel tags (RL2 lowest class).
     news: BTreeSet<MailboxTag>,
+    news_rejected: u32,
+    /// News share of the store (REQUIREMENTS: ≤ 20 MB, configurable).
+    news_cap: u64,
     rng: SplitMix64,
     wants: BTreeSet<MailboxTag>,
     carry: CarryTable,
@@ -272,6 +289,8 @@ impl RelayEngine {
             cfg,
             free_storage: None,
             news: BTreeSet::new(),
+            news_rejected: 0,
+            news_cap: NEWS_STORAGE_CAP_BYTES,
             rng,
             wants: BTreeSet::new(),
             carry: CarryTable::default(),
@@ -343,9 +362,32 @@ impl RelayEngine {
         self.news = tags;
     }
 
+    /// News storage cap (default [`NEWS_STORAGE_CAP_BYTES`], 20 MB). A
+    /// lower cap drops the oldest news first.
+    pub fn set_news_cap(&mut self, bytes: u64) -> Vec<RelayEvent> {
+        self.news_cap = bytes;
+        let mut ev = Vec::new();
+        for id in self.store.evict_class_over(RelayClass::News, bytes) {
+            self.items.remove(&id);
+            self.sent_to.remove(&id);
+            ev.push(RelayEvent::Removed(id));
+        }
+        ev
+    }
+
+    pub fn news_cap(&self) -> u64 {
+        self.news_cap
+    }
+
+    /// RL2 news hook: the envelope is news if it carries the news channel
+    /// TLV or travels on a registered news tag.
+    pub fn is_news(&self, env: &EnvelopeV1, tags: &[MailboxTag]) -> bool {
+        news::is_news_envelope(env) || tags.iter().any(|t| self.news.contains(t))
+    }
+
     /// RL2 class of an envelope handed over by a neighbour of class `from`.
-    fn classify(&self, tags: &[MailboxTag], from: RelayClass) -> RelayClass {
-        if tags.iter().any(|t| self.news.contains(t)) {
+    fn classify(&self, env: &EnvelopeV1, tags: &[MailboxTag], from: RelayClass) -> RelayClass {
+        if self.is_news(env, tags) {
             RelayClass::News
         } else {
             from
@@ -372,13 +414,21 @@ impl RelayEngine {
     fn admit(&mut self, item: &CarryItem, now_ms: u64, ev: &mut Vec<RelayEvent>) -> bool {
         match self.store.insert(Self::meta(item, now_ms), now_ms) {
             InsertOutcome::Rejected => false,
-            InsertOutcome::Stored { evicted } => {
+            InsertOutcome::Stored { mut evicted } => {
+                let id = item.envelope.envelope_id;
+                let mut kept = true;
+                if item.class == RelayClass::News {
+                    // News has its own 20 MB cap inside the relay store.
+                    let over = self.store.evict_class_over(RelayClass::News, self.news_cap);
+                    kept = !over.contains(&id);
+                    evicted.extend(over.into_iter().filter(|e| *e != id));
+                }
                 for e in evicted {
                     self.items.remove(&e);
                     self.sent_to.remove(&e);
                     ev.push(RelayEvent::Removed(e));
                 }
-                true
+                kept
             }
         }
     }
@@ -392,6 +442,8 @@ impl RelayEngine {
             own_pending: self.items.values().filter(|i| i.own).count() as u32,
             neighbours: self.neighbours.len() as u32,
             forwarded_today_bytes: self.store.forwarded_today(),
+            news_bytes: self.store.used_by(RelayClass::News),
+            news_rejected: self.news_rejected,
         }
     }
 
@@ -548,6 +600,41 @@ impl RelayEngine {
     /// Hand our own sealed envelope to the mesh.
     pub fn submit_own(&mut self, envelope: EnvelopeV1, now_ms: u64) -> Result<Vec<RelayEvent>> {
         self.submit(envelope, None, now_ms)
+    }
+
+    /// Hand a news envelope made by the local RSS ingest
+    /// ([`crate::news::seal_news`]) to the mesh. It must pass the same
+    /// receive rule as relayed news. A story already seen (fetched by another
+    /// phone first, same source + link) is not stored or sent again (NW2).
+    /// Returns the events and whether the item is new.
+    pub fn submit_news(
+        &mut self,
+        envelope: EnvelopeV1,
+        now_ms: u64,
+    ) -> Result<(Vec<RelayEvent>, bool)> {
+        news::open_news(&envelope, now_ms)?;
+        let id = envelope.envelope_id;
+        if self.seen(&id) {
+            return Ok((Vec::new(), false));
+        }
+        let expires_at = effective_expiry(&envelope, now_ms)?;
+        let item = CarryItem {
+            envelope,
+            expires_at,
+            hop_count: 0,
+            own: false,
+            class: RelayClass::News,
+            ack_of: None,
+        };
+        let mut ev = Vec::new();
+        self.mark_seen(id, expires_at);
+        if !self.admit(&item, now_ms, &mut ev) {
+            return Ok((ev, true));
+        }
+        self.items.insert(id, item.clone());
+        ev.push(RelayEvent::Stored(item));
+        self.forward(&id, None, now_ms, &mut ev);
+        Ok((ev, true))
     }
 
     /// Send our `DELIVERY_ACK` for `msg_hash` (the envelope carries the
@@ -850,7 +937,25 @@ impl RelayEngine {
             return Ok(());
         }
         let tags = routing.route_tags();
-        if let Some(t) = tags.iter().find(|t| self.wants.contains(*t)) {
+        let is_news = self.is_news(&env, &tags);
+        if is_news && (ack_of.is_some() || news::open_news(&env, now_ms).is_err()) {
+            // Not from the RSS ingest path (or a forged ack on a news tag):
+            // users can't publish into News. Drop, never pass on.
+            self.mark_seen(id, expires_at);
+            self.news_rejected = self.news_rejected.saturating_add(1);
+            return Ok(());
+        }
+        if is_news {
+            // Public channel: deliver if subscribed, and carry it on either way.
+            if let Some(t) = tags.iter().find(|t| self.wants.contains(*t)) {
+                ev.push(RelayEvent::Deliver {
+                    link,
+                    tag: *t,
+                    envelope: env.clone(),
+                    ack_of: None,
+                });
+            }
+        } else if let Some(t) = tags.iter().find(|t| self.wants.contains(*t)) {
             self.mark_seen(id, expires_at);
             for t in &tags {
                 self.carry.note_activity(*t, now_ms);
@@ -878,7 +983,7 @@ impl RelayEngine {
             .unwrap_or(RelayClass::Other);
         let item = CarryItem {
             hop_count: MAX_CARRY_DISTANCE.saturating_sub(env.ttl_hops),
-            class: self.classify(&tags, from),
+            class: self.classify(&env, &tags, from),
             envelope: env,
             expires_at,
             own: false,
@@ -1139,6 +1244,39 @@ mod tests {
         assert!(connect(&mut nodes, &mut wires, 1, 2, 3, now + 120_000).is_empty());
     }
 
+    /// A real news envelope (RSS ingest path, channel en/world) published
+    /// at `created`, whose envelope id starts with byte `n` (ids are
+    /// hash(source, link), so the link is searched for that).
+    fn news_env(n: u8, created: u64) -> EnvelopeV1 {
+        news_item(n, created, "world")
+            .map(|i| news::seal_news(&i, 8).unwrap())
+            .unwrap()
+    }
+
+    fn news_item(n: u8, created: u64, topic: &str) -> Option<news::NewsItem> {
+        (0u32..).find_map(|k| {
+            let link = format!("https://news.google.com/rss/articles/T{n}-{k}?oc=5");
+            (news::news_envelope_id("gn", &link)[0] == n).then(|| news::NewsItem {
+                v: news::NEWS_ITEM_VERSION,
+                src: "gn".into(),
+                link,
+                title: format!("Fixture story {n}"),
+                summary: String::new(),
+                publisher: "Fixture Wire".into(),
+                ts: created,
+                lang: "en".into(),
+                topic: topic.into(),
+                city: None,
+            })
+        })
+    }
+
+    fn news_tag() -> MailboxTag {
+        news::NewsChannel::topic(news::NewsLang::En, news::NewsTopic::World)
+            .unwrap()
+            .tag()
+    }
+
     fn data(e: &EnvelopeV1) -> Vec<u8> {
         frame_with(FRAME_DATA, &e.encode().unwrap())
     }
@@ -1213,18 +1351,19 @@ mod tests {
     #[test]
     fn rl2_automatic_cap_drops_news_then_other_then_contacts_keeps_own() {
         let now = 1_000_000;
-        let news = [0x4E; 8];
-        // One ~330 B envelope ≈ `size`; room for four.
+        // One ~330 B chat envelope ≈ `size`; room for three plus one news item.
         let size = env(0, [1; 8], 8, now).encode().unwrap().len() as u64;
+        let n40 = news_env(40, now);
+        let nsize = n40.encode().unwrap().len() as u64;
         let mut b = RelayEngine::new(RelayConfig::default(), now, 1);
         assert_eq!(b.stats().storage_cap_bytes, 500 * crate::sync::budget::MB);
         b.set_config(RelayConfig {
             budget: RelayBudget {
-                storage_bytes: 4 * size,
+                storage_bytes: 3 * size + nsize,
                 daily_forward_bytes: None,
             },
         });
-        b.set_news_tags([news].into());
+        b.set_news_tags([news_tag()].into());
         b.link_up(1, &[1], true, now); // contact
         b.link_up(2, &[2], false, now); // stranger
         b.submit_own(env(10, [0xAA; 8], 8, now - 50), now).unwrap();
@@ -1232,8 +1371,9 @@ mod tests {
             .unwrap();
         b.on_frame(1, &data(&env(30, [0xCC; 8], 8, now - 40)), now)
             .unwrap();
-        b.on_frame(1, &data(&env(40, news, 8, now)), now).unwrap();
-        assert_eq!(b.item(&[40; 16]).unwrap().class, RelayClass::News);
+        // News from a contact is still news (lowest class).
+        b.on_frame(1, &data(&n40), now).unwrap();
+        assert_eq!(b.item(&n40.envelope_id).unwrap().class, RelayClass::News);
         assert_eq!(b.item(&[10; 16]).unwrap().class, RelayClass::OwnChat);
         let removed = |ev: &[RelayEvent]| -> Vec<u8> {
             ev.iter()
@@ -1252,11 +1392,12 @@ mod tests {
         }
         assert_eq!(order, vec![40, 20, 30]);
         assert!(b.item(&[10; 16]).is_some(), "own chat kept");
-        assert!(b.stats().storage_used_bytes <= 4 * size);
+        assert!(b.stats().storage_used_bytes <= 3 * size + nsize);
         // A news item cannot displace contacts or own chats.
-        let ev = b.on_frame(1, &data(&env(41, news, 8, now)), now).unwrap();
+        let n41 = news_env(41, now);
+        let ev = b.on_frame(1, &data(&n41), now).unwrap();
         assert!(!ev.iter().any(|e| matches!(e, RelayEvent::Stored(_))));
-        assert!(b.item(&[41; 16]).is_none());
+        assert!(b.item(&n41.envelope_id).is_none());
     }
 
     #[test]
@@ -1290,14 +1431,12 @@ mod tests {
     #[test]
     fn rl2_forwarding_priority_own_then_contacts_then_other_then_news() {
         let now = 1_000_000;
-        let news = [0x4E; 8];
         let mut b = RelayEngine::new(RelayConfig::default(), now, 1);
-        b.set_news_tags([news].into());
+        b.set_news_tags([news_tag()].into());
         b.link_up(1, &[1], true, now);
         b.link_up(2, &[2], false, now);
         // Arrival (and age) order deliberately opposite to the priority.
-        b.on_frame(1, &data(&env(4, news, 8, now - 40)), now)
-            .unwrap();
+        b.on_frame(1, &data(&news_env(4, now - 40)), now).unwrap();
         b.on_frame(2, &data(&env(3, [0x33; 8], 8, now - 30)), now)
             .unwrap();
         b.on_frame(1, &data(&env(2, [0x22; 8], 8, now - 20)), now)
@@ -1530,5 +1669,272 @@ mod tests {
         assert_eq!(nodes[0].own_by_hash(&h), Some([1; 16]));
         nodes[0].cancel_own(&[1; 16]);
         assert_eq!(nodes[0].own_by_hash(&h), None);
+    }
+
+    fn delivered_ids(got: &[(usize, EnvelopeV1)], node: usize) -> Vec<[u8; 16]> {
+        got.iter()
+            .filter(|(n, _)| *n == node)
+            .map(|(_, e)| e.envelope_id)
+            .collect()
+    }
+
+    #[test]
+    fn nw1_offline_phone_catches_up_from_one_up_to_date_neighbour() {
+        let now = 1_000_000_000;
+        let mut nodes = [
+            RelayEngine::new(RelayConfig::default(), now, 1),
+            RelayEngine::new(RelayConfig::default(), now, 2),
+        ];
+        // A fetched 120 stories over the last day; B was offline (no links).
+        let mut ids = BTreeSet::new();
+        for k in 0..120u64 {
+            let it = news_item((k % 256) as u8, now - k * 600_000, "world").unwrap();
+            let it = news::NewsItem {
+                link: format!("{}&k={k}", it.link),
+                ..it
+            };
+            let (_, new) = nodes[0]
+                .submit_news(news::seal_news(&it, 8).unwrap(), now)
+                .unwrap();
+            assert!(new);
+            ids.insert(it.envelope_id());
+        }
+        nodes[1].set_wants([news_tag()].into(), now);
+        // Link up, then frames at a BLE-like pace: 50 ms each.
+        let mut p: Vec<(usize, RelayEvent)> = Vec::new();
+        p.extend(
+            nodes[0]
+                .link_up(7, &[1], true, now)
+                .into_iter()
+                .map(|e| (0, e)),
+        );
+        p.extend(
+            nodes[1]
+                .link_up(7, &[0], true, now)
+                .into_iter()
+                .map(|e| (1, e)),
+        );
+        let mut q: std::collections::VecDeque<(usize, RelayEvent)> = p.into();
+        let mut t = now;
+        let mut got = Vec::new();
+        while let Some((n, e)) = q.pop_front() {
+            match e {
+                RelayEvent::Send { frame, .. } => {
+                    t += 50;
+                    for e2 in nodes[1 - n].on_frame(7, &frame, t).unwrap() {
+                        q.push_back((1 - n, e2));
+                    }
+                }
+                RelayEvent::Deliver { envelope, .. } => got.push((n, envelope)),
+                _ => {}
+            }
+        }
+        let at_b: BTreeSet<[u8; 16]> = delivered_ids(&got, 1).into_iter().collect();
+        assert_eq!(
+            at_b, ids,
+            "every current story reaches B from one neighbour"
+        );
+        assert!(
+            t - now < 60_000,
+            "within 60 s at 20 frames/s: {} ms",
+            t - now
+        );
+        assert_eq!(delivered_ids(&got, 1).len(), 120, "each exactly once");
+        // B now carries them too (public channel), as news.
+        assert_eq!(nodes[1].stats().carried, 120);
+        assert!(nodes[1].stats().news_bytes > 0);
+    }
+
+    #[test]
+    fn nw2_same_story_from_many_phones_is_stored_and_relayed_once() {
+        let now = 1_000_000_000;
+        let mut nodes: Vec<RelayEngine> = (0..4)
+            .map(|i| RelayEngine::new(RelayConfig::default(), now, 10 + i))
+            .collect();
+        nodes[3].set_wants([news_tag()].into(), now);
+        let mut wires = HashMap::new();
+        // 0, 1, 2 all fetched the same story (same source + link); 3 meets all.
+        for i in 0..3 {
+            connect(&mut nodes, &mut wires, i, 3, 100 + i as u64, now);
+        }
+        let base = news_item(7, now - 60_000, "world").unwrap();
+        let mut got = Vec::new();
+        for i in 0..3usize {
+            let mut it = base.clone();
+            it.summary = format!("Summary as fetched by phone {i}, slightly different.");
+            let env = news::seal_news(&it, 8).unwrap();
+            assert_eq!(env.envelope_id, base.envelope_id());
+            let (ev, new) = nodes[i].submit_news(env.clone(), now).unwrap();
+            // Only the first phone's copy is new: 3 already passed it to 1 and 2.
+            assert_eq!(new, i == 0, "phone {i}");
+            got.extend(pump(
+                &mut nodes,
+                &wires,
+                ev.into_iter().map(|e| (i, e)).collect(),
+                now,
+            ));
+            // The same phone ingesting it again is a no-op.
+            let (ev2, again) = nodes[i].submit_news(env, now).unwrap();
+            assert!(!again && ev2.is_empty());
+        }
+        assert_eq!(
+            delivered_ids(&got, 3),
+            vec![base.envelope_id()],
+            "appears once"
+        );
+        assert_eq!(nodes[3].item_ids(), vec![base.envelope_id()], "stored once");
+        // Phones 0–2 never pass a copy they already have back and forth.
+        for n in &nodes[..3] {
+            assert_eq!(n.item_ids().len(), 1);
+        }
+    }
+
+    #[test]
+    fn nw3_news_is_classified_news_dropped_first_and_offered_after_chats() {
+        let now = 1_000_000;
+        let mut b = RelayEngine::new(RelayConfig::default(), now, 1);
+        // Local ingest and relayed news both land in the News class, even
+        // when handed over by a contact and on a tag nobody registered.
+        let (ev, _) = b.submit_news(news_env(1, now - 90), now).unwrap();
+        assert!(ev
+            .iter()
+            .any(|e| matches!(e, RelayEvent::Stored(i) if i.class == RelayClass::News)));
+        b.link_up(1, &[1], true, now);
+        let relayed = news_env(2, now - 80);
+        b.on_frame(1, &data(&relayed), now).unwrap();
+        assert_eq!(
+            b.item(&relayed.envelope_id).unwrap().class,
+            RelayClass::News
+        );
+        b.on_frame(1, &data(&env(3, [0x22; 8], 8, now - 10)), now)
+            .unwrap();
+        b.submit_own(env(4, [0x11; 8], 8, now - 5), now).unwrap();
+        // Offers to a new neighbour: own chat, contact chat, then news (oldest first).
+        b.link_up(9, &[9], true, now);
+        let mut rng = SplitMix64(3);
+        let none = CuckooFilter::build_digest(&[], 32, &mut rng).unwrap();
+        let ev = b.on_frame(9, &full_digest_frame(&none), now).unwrap();
+        assert_eq!(data_ids(&ev, 9), vec![4, 3, 1, 2]);
+    }
+
+    #[test]
+    fn nw4_news_storage_stays_within_its_cap_oldest_first() {
+        let now = 1_000_000_000;
+        let mut b = RelayEngine::new(RelayConfig::default(), now, 1);
+        assert_eq!(b.news_cap(), 20_000_000, "20 MB default");
+        let one = news_env(0, now).encode().unwrap().len() as u64;
+        b.set_news_cap(10 * one);
+        b.submit_own(env(200, [0x11; 8], 8, now - 999_000), now)
+            .unwrap();
+        let mut order = Vec::new();
+        for k in 0..25u8 {
+            let (ev, _) = b
+                .submit_news(news_env(k, now - 900_000 + u64::from(k) * 1000), now)
+                .unwrap();
+            order.extend(ev.iter().filter_map(|e| match e {
+                RelayEvent::Removed(id) => Some(id[0]),
+                _ => None,
+            }));
+        }
+        let s = b.stats();
+        assert!(s.news_bytes <= 10 * one, "{} > cap", s.news_bytes);
+        assert_eq!(
+            order,
+            (0..15).collect::<Vec<u8>>(),
+            "oldest news dropped first"
+        );
+        assert!(
+            b.item(&[200; 16]).is_some(),
+            "chats are not touched by the news cap"
+        );
+        // Lowering the cap drops more, oldest first.
+        let ev = b.set_news_cap(5 * one);
+        assert_eq!(ev.len(), 5);
+        assert!(b.stats().news_bytes <= 5 * one);
+    }
+
+    #[test]
+    fn nw5_city_channel_delivers_only_that_city() {
+        let now = 1_000_000_000;
+        let riverside = news::NewsChannel::local(news::NewsLang::En, "Riverside").unwrap();
+        let lakeport = news::NewsChannel::local(news::NewsLang::En, "Lakeport").unwrap();
+        let mut nodes = vec![
+            RelayEngine::new(RelayConfig::default(), now, 1),
+            RelayEngine::new(RelayConfig::default(), now, 2),
+        ];
+        let mut want = BTreeSet::new();
+        for (k, ch) in [(1u8, &riverside), (2, &lakeport), (3, &riverside)] {
+            let mut it = news_item(k, now - 1000, "local").unwrap();
+            it.city = ch.city.clone();
+            if ch == &riverside {
+                want.insert(it.envelope_id());
+            }
+            nodes[0]
+                .submit_news(news::seal_news(&it, 8).unwrap(), now)
+                .unwrap();
+        }
+        nodes[1].set_wants([riverside.tag()].into(), now);
+        assert!(!nodes[1].wants(&lakeport.tag()));
+        let mut wires = HashMap::new();
+        let got = connect(&mut nodes, &mut wires, 0, 1, 1, now);
+        let at_b: BTreeSet<[u8; 16]> = delivered_ids(&got, 1).into_iter().collect();
+        assert_eq!(at_b, want);
+    }
+
+    #[test]
+    fn news_publish_ban_relays_drop_news_not_from_the_rss_ingest_path() {
+        let now = 1_000_000_000;
+        let mut nodes = vec![
+            RelayEngine::new(RelayConfig::default(), now, 1),
+            RelayEngine::new(RelayConfig::default(), now, 2),
+            RelayEngine::new(RelayConfig::default(), now, 3),
+        ];
+        for n in nodes.iter_mut() {
+            n.set_news_tags([news_tag()].into());
+        }
+        nodes[2].set_wants([news_tag()].into(), now);
+        let mut wires = HashMap::new();
+        connect(&mut nodes, &mut wires, 0, 1, 1, now);
+        connect(&mut nodes, &mut wires, 1, 2, 2, now);
+
+        // 1. A "citizen report": a user-written item with an off-source link.
+        let mut it = news_item(9, now - 1000, "world").unwrap();
+        let good = news::seal_news(&it, 8).unwrap();
+        it.link = "https://rumours.example/they-dont-want-you-to-know".into();
+        let mut forged = good.clone();
+        forged.envelope_id = news::news_envelope_id("gn", &it.link);
+        // (AEAD now fails too; either way it is not an ingest-path item.)
+        // 2. A chat-style envelope sent on the news tag (no news TLV).
+        let mut chat = env(5, [0; 8], 8, now);
+        chat.header_aad.clear();
+        put_tag_in_aad(&mut chat.header_aad, &news_tag());
+        // 3. News sent as a DELIVERY_ACK.
+        let mut ack = frame_with(FRAME_DELIVERY_ACK, &[0u8; MSG_HASH_LEN]);
+        ack.extend_from_slice(&news_env(6, now).encode().unwrap());
+
+        for f in [data(&forged), data(&chat), ack] {
+            let ev = nodes[1].on_frame(1, &f, now).unwrap();
+            assert!(
+                !ev.iter().any(|e| matches!(
+                    e,
+                    RelayEvent::Stored(_) | RelayEvent::Send { .. } | RelayEvent::Deliver { .. }
+                )),
+                "not stored, not passed on, not shown"
+            );
+        }
+        assert_eq!(nodes[1].stats().news_rejected, 3);
+        assert_eq!(nodes[1].stats().carried, 0);
+        // Local ingest refuses forged items as well.
+        assert!(nodes[0].submit_news(forged, now).is_err());
+        assert!(nodes[0].submit_news(chat, now).is_err());
+        // Control: the genuine item travels 0 → 1 → 2.
+        let (ev, _) = nodes[0].submit_news(good.clone(), now).unwrap();
+        let got = pump(
+            &mut nodes,
+            &wires,
+            ev.into_iter().map(|e| (0, e)).collect(),
+            now,
+        );
+        assert_eq!(delivered_ids(&got, 2), vec![good.envelope_id]);
     }
 }

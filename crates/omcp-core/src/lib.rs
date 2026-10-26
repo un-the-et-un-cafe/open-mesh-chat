@@ -39,6 +39,7 @@ pub mod gateway;
 pub mod handshake;
 pub mod mls;
 pub mod negotiate;
+pub mod news;
 pub mod recovery;
 pub mod rendezvous;
 pub mod safety;

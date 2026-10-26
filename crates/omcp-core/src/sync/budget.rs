@@ -264,6 +264,29 @@ impl RelayStore {
         InsertOutcome::Stored { evicted }
     }
 
+    /// Evict the lowest-ranked envelopes of `class` (oldest first) until the
+    /// class uses at most `cap` bytes, e.g. the 20 MB news cap.
+    pub fn evict_class_over(&mut self, class: RelayClass, cap: u64) -> Vec<[u8; 16]> {
+        let mut out = Vec::new();
+        let mut used = self.used_by(class);
+        while used > cap {
+            let Some(id) = self
+                .items
+                .values()
+                .filter(|e| e.class == class)
+                .min_by_key(|e| e.evict_key())
+                .map(|e| e.id)
+            else {
+                break;
+            };
+            if let Some(e) = self.take(&id) {
+                used -= e.size;
+                out.push(id);
+            }
+        }
+        out
+    }
+
     pub fn take(&mut self, id: &[u8; 16]) -> Option<StoredEnvelope> {
         let e = self.items.remove(id)?;
         self.used -= e.size;
