@@ -309,4 +309,25 @@
     <string name="msg_status_sent">Sent · Mesh</string>
     <string name="msg_status_delivered">Delivered · Mesh</string>
     <string name="msg_status_received">Mesh</string>
+    <string name="tab_news">News</string>
+    <string name="news_tab_top">Top</string>
+    <string name="news_tab_local">Local</string>
+    <string name="news_tab_world">World</string>
+    <string name="news_tab_politics">Politics</string>
+    <string name="news_tab_tech">Tech</string>
+    <string name="news_tab_sport">Sport</string>
+    <string name="news_tab_health">Health</string>
+    <string name="news_tab_emergencies">Emergencies</string>
+    <string name="news_source_cd">Source: %1$s</string>
+    <string name="news_via">via %1$s</string>
+    <string name="news_emergency_pinned">EMERGENCY · Pinned</string>
+    <string name="news_metered_warning">Metered connection: fetching news uses your data plan.</string>
+    <string name="news_empty_title">No news yet</string>
+    <string name="news_empty_body">News spreads phone to phone. Stories appear when a phone with internet is nearby.</string>
+    <string name="news_summary">Summary</string>
+    <string name="news_read_gn">Read on Google News</string>
+    <string name="news_read_gn_note">Opens your browser and leaves Hopla. Needs Internet.</string>
+    <string name="news_share">Share to chat</string>
+    <string name="news_share_note">Sends a news card. A discussion thread starts under it.</string>
+    <string name="news_live_soon">Live · Coming in v0.2</string>
 </resources>

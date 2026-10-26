@@ -8,6 +8,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.LiveTv
+import androidx.compose.material.icons.filled.Newspaper
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
@@ -46,6 +47,9 @@ import chat.omcp.app.ui.screens.CommunitiesHomeScreen
 import chat.omcp.app.ui.screens.ContactAddScreen
 import chat.omcp.app.ui.screens.GatewaySettingsScreen
 import chat.omcp.app.ui.screens.LiveTabScreen
+import chat.omcp.app.ui.screens.NewsHomeScreen
+import chat.omcp.app.ui.screens.NewsReaderScreen
+import chat.omcp.app.ui.vm.NewsViewModel
 import chat.omcp.app.ui.screens.MyQrBlock
 import chat.omcp.app.ui.screens.MyQrScreen
 import chat.omcp.app.ui.screens.OnboardingFlow
@@ -63,6 +67,9 @@ private object Routes {
     const val Chats = "chats"
     const val Communities = "communities"
     const val Live = "live"
+    const val News = "news"
+    const val NewsStory = "news/{id}"
+    fun newsStory(id: String) = "news/$id"
     const val You = "you"
     const val Thread = "thread/{chatId}"
     const val Security = "security/{chatId}"
@@ -134,17 +141,34 @@ fun OmcpRoot(
     }
 
     val nav = rememberNavController()
+    val newsVm = vm { NewsViewModel(repo) }
+    val newsCtx = androidx.compose.ui.platform.LocalContext.current
+    LaunchedEffect(Unit) {
+        // Gateway phones fetch Google News RSS when the gateway rules allow it.
+        while (true) {
+            val cm = newsCtx.getSystemService(android.net.ConnectivityManager::class.java)
+            val caps = cm?.getNetworkCapabilities(cm.activeNetwork)
+            val type = when {
+                caps == null -> chat.omcp.app.core.NetworkType.Offline
+                caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) || caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET) -> chat.omcp.app.core.NetworkType.Wifi
+                else -> chat.omcp.app.core.NetworkType.Cellular
+            }
+            val metered = caps != null && !caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_NOT_METERED)
+            newsVm.fetchNow(type, metered)
+            kotlinx.coroutines.delay(5 * 60_000L)
+        }
+    }
     val backStack by nav.currentBackStackEntryAsState()
     val route = backStack?.destination?.route
-    val showBar = route in setOf(Routes.Chats, Routes.Communities, Routes.Live, Routes.You)
+    val showBar = route in setOf(Routes.Chats, Routes.News, Routes.Communities, Routes.You)
 
     Scaffold(
         bottomBar = {
             if (showBar) {
                 NavigationBar {
                     NavigationBarItem(route == Routes.Chats, { nav.tab(Routes.Chats) }, { Icon(Icons.Default.Chat, null) }, label = { Text(stringResource(R.string.tab_chats)) })
+                    NavigationBarItem(route == Routes.News, { nav.tab(Routes.News) }, { Icon(Icons.Default.Newspaper, null) }, label = { Text(stringResource(R.string.tab_news)) })
                     NavigationBarItem(route == Routes.Communities, { nav.tab(Routes.Communities) }, { Icon(Icons.Default.Groups, null) }, label = { Text(stringResource(R.string.tab_communities)) })
-                    NavigationBarItem(route == Routes.Live, { nav.tab(Routes.Live) }, { Icon(Icons.Default.LiveTv, null) }, label = { Text(stringResource(R.string.tab_live)) })
                     NavigationBarItem(route == Routes.You, { nav.tab(Routes.You) }, { Icon(Icons.Default.Person, null) }, label = { Text(stringResource(R.string.tab_you)) })
                 }
             }
@@ -160,7 +184,13 @@ fun OmcpRoot(
                     onBackup = { nav.navigate(Routes.Backup) },
                 )
             }
-            composable(Routes.Communities) { CommunitiesHomeScreen() }
+            composable(Routes.Communities) { CommunitiesHomeScreen(onOpenLive = { nav.navigate(Routes.Live) }) }
+            composable(Routes.News) { entry ->
+                NewsHomeScreen(vm = newsVm, onOpen = { nav.navigate(Routes.newsStory(it)) })
+            }
+            composable(Routes.NewsStory) { entry ->
+                NewsReaderScreen(newsVm, entry.arguments?.getString("id").orEmpty(), repo.core.contacts(), onBack = { nav.popBackStack() })
+            }
             composable(Routes.Live) { LiveTabScreen() }
             composable(Routes.You) {
                 YouScreen(

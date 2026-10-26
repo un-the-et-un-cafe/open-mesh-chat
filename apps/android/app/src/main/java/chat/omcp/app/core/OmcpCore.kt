@@ -138,6 +138,21 @@ enum class NetworkType { Offline, Wifi, Cellular }
 
 data class GatewayDecision(val bridge: Boolean, val meteredWarning: Boolean)
 
+/** Hopla News story (REQUIREMENTS "Hopla News", v0.4). */
+data class NewsStoryUi(
+    val idHex: String, val topic: String, val title: String, val summary: String,
+    val publisher: String, val sourceName: String, val link: String, val publishedMs: Long,
+    val via: String?, val fetchedHere: Boolean, val emergency: Boolean,
+)
+
+/** What a gateway phone may fetch now (gateway rules: Wi-Fi-only default, metered warns, 500 MB/day). */
+data class NewsFetchPlanUi(
+    val feeds: List<String> = emptyList(), val meteredWarning: Boolean = false,
+    val blocked: String? = "offline", val usedTodayBytes: Long = 0, val dailyCapBytes: Long = 500_000_000,
+)
+
+data class NewsCardUi(val idHex: String, val publisher: String, val link: String, val title: String)
+
 data class PasswordCheck(val ok: Boolean, val score: Int, val tooShort: Boolean)
 
 data class BackupMeta(val createdAtMs: Long, val deviceHint: String, val needsPassword: Boolean)
@@ -302,6 +317,13 @@ interface OmcpCore {
     fun askToResend(msgId: String, note: String?) {}
     // ---- multi-hop mesh relay (PROTOCOL §22) ----
     fun meshStats(): MeshRelayStats = MeshRelayStats()
+    // ---- Hopla News (v0.4): read-only, users cannot publish ----
+    fun newsFeed(tab: String): List<NewsStoryUi> = emptyList()
+    fun newsFetchPlan(wifiOnly: Boolean, network: NetworkType, metered: Boolean, nowMs: Long): NewsFetchPlanUi = NewsFetchPlanUi()
+    fun newsIngestRss(feedUrl: String, body: String, nowMs: Long): Int = 0
+    fun newsTakeAlerts(): List<NewsStoryUi> = emptyList()
+    fun newsCardText(story: NewsStoryUi): String = "hopla-news/1\n${story.idHex}\ngn\n${story.publisher}\n${story.link}\n${story.title}"
+    fun parseNewsCard(text: String): NewsCardUi? = null
     /** RL2: report free/total storage; under 10 % free Rust lowers the relay cap. */
     fun meshSetFreeStorage(freeBytes: Long, totalBytes: Long) {}
     /** Periodic relay work; returns link handles with frames waiting. */

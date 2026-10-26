@@ -170,6 +170,30 @@ class RustOmcpCore : OmcpCore {
             it.storageUsedBytes.toLong(), it.storageCapBytes.toLong(),
         )
     }
+    private fun story(s: chat.omcp.ffi.NewsStory) = NewsStoryUi(
+        s.idHex, s.topic, s.title, s.summary, s.publisher, s.sourceName, s.link,
+        s.publishedMs.toLong(), s.via, s.fetchedHere, s.emergency,
+    )
+    override fun newsFeed(tab: String) = node?.newsFeed(tab)?.map(::story) ?: emptyList()
+    override fun newsFetchPlan(wifiOnly: Boolean, network: NetworkType, metered: Boolean, nowMs: Long): NewsFetchPlanUi {
+        val nd = node ?: return NewsFetchPlanUi()
+        val net = when (network) {
+            NetworkType.Offline -> chat.omcp.ffi.Network.Offline
+            NetworkType.Wifi -> chat.omcp.ffi.Network.Wifi(metered)
+            NetworkType.Cellular -> chat.omcp.ffi.Network.Cellular(metered)
+        }
+        val p = nd.newsFetchPlan(net, wifiOnly, nowMs.toULong())
+        return NewsFetchPlanUi(p.feeds, p.meteredWarning, p.blocked, p.usedTodayBytes.toLong(), p.dailyCapBytes.toLong())
+    }
+    override fun newsIngestRss(feedUrl: String, body: String, nowMs: Long) =
+        node?.newsIngestRss(feedUrl, body, nowMs.toULong())?.toInt() ?: 0
+    override fun newsTakeAlerts() = node?.newsTakeAlerts()?.map(::story) ?: emptyList()
+    override fun newsCardText(story: NewsStoryUi): String {
+        val s = node?.newsStory(story.idHex) ?: return super.newsCardText(story)
+        return chat.omcp.ffi.newsCardText(s)
+    }
+    override fun parseNewsCard(text: String) =
+        chat.omcp.ffi.parseNewsCard(text)?.let { NewsCardUi(it.idHex, it.publisher, it.link, it.title) }
     override fun meshSetFreeStorage(freeBytes: Long, totalBytes: Long) {
         node?.meshSetFreeStorage(freeBytes.coerceAtLeast(0).toULong(), totalBytes.coerceAtLeast(0).toULong())
     }

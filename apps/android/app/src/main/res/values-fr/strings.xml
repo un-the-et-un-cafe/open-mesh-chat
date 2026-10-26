@@ -310,4 +310,25 @@
     <string name="relay_title">Relais maillé</string>
     <string name="relay_row_desc">Toujours actif · stockage utilisé pour le relais</string>
     <string name="relay_storage_used">Stockage utilisé pour le relais : %1$s Mo</string>
+    <string name="tab_news">Actus</string>
+    <string name="news_tab_top">À la une</string>
+    <string name="news_tab_local">Local</string>
+    <string name="news_tab_world">Monde</string>
+    <string name="news_tab_politics">Politique</string>
+    <string name="news_tab_tech">Tech</string>
+    <string name="news_tab_sport">Sport</string>
+    <string name="news_tab_health">Santé</string>
+    <string name="news_tab_emergencies">Urgences</string>
+    <string name="news_source_cd">Source : %1$s</string>
+    <string name="news_via">via %1$s</string>
+    <string name="news_emergency_pinned">URGENCE · Épinglé</string>
+    <string name="news_metered_warning">Connexion limitée : la récupération des actus utilise votre forfait.</string>
+    <string name="news_empty_title">Pas encore d’actus</string>
+    <string name="news_empty_body">Les actus passent de téléphone en téléphone. Elles arrivent quand un téléphone connecté est à proximité.</string>
+    <string name="news_summary">Résumé</string>
+    <string name="news_read_gn">Lire sur Google News</string>
+    <string name="news_read_gn_note">Ouvre votre navigateur et quitte Hopla. Internet requis.</string>
+    <string name="news_share">Partager dans un chat</string>
+    <string name="news_share_note">Envoie une carte d’actu. Un fil de discussion démarre dessous.</string>
+    <string name="news_live_soon">Live · Bientôt en v0.2</string>
 </resources>
