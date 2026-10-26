@@ -246,3 +246,26 @@
 "restored_self_banner" = "You restored this account. Your contacts were notified and need to verify you again in person (QR).";
 "qr_stale" = "This QR code doesn’t match. It must be the one from their new device.";
 "cancel_action" = "Cancel";
+
+/* Hopla News (v0.4) */
+"tab_news" = "News";
+"news_tab_top" = "Top";
+"news_tab_local" = "Local";
+"news_tab_world" = "World";
+"news_tab_politics" = "Politics";
+"news_tab_tech" = "Tech";
+"news_tab_sport" = "Sport";
+"news_tab_health" = "Health";
+"news_tab_emergencies" = "Emergencies";
+"news_source_cd" = "Source: %@";
+"news_via" = "via %@";
+"news_emergency_pinned" = "EMERGENCY · Pinned";
+"news_metered_warning" = "Metered connection: fetching news uses your data plan.";
+"news_empty_title" = "No news yet";
+"news_empty_body" = "News spreads phone to phone. Stories appear when a phone with internet is nearby.";
+"news_summary" = "Summary";
+"news_read_gn" = "Read on Google News";
+"news_read_gn_note" = "Opens your browser and leaves Hopla. Needs Internet.";
+"news_share" = "Share to chat";
+"news_share_note" = "Sends a news card. A discussion thread starts under it.";
+"news_live_soon" = "Live · Coming in v0.2";

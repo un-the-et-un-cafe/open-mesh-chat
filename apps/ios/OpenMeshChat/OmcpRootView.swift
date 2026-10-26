@@ -17,10 +17,10 @@ struct OmcpRootView: View {
         TabView {
             ChatsListView()
                 .tabItem { Label(L("tab_chats"), systemImage: "bubble.left.and.bubble.right") }
+            NewsHomeView()
+                .tabItem { Label(L("tab_news"), systemImage: "newspaper") }
             CommunitiesHomeView()
                 .tabItem { Label(L("tab_communities"), systemImage: "person.3") }
-            LiveTabView()
-                .tabItem { Label(L("tab_live"), systemImage: "video") }
             YouView()
                 .tabItem { Label(L("tab_you"), systemImage: "person.crop.circle") }
         }

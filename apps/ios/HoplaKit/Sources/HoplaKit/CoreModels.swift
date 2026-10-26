@@ -527,6 +527,26 @@ public struct MeshStatusUpdate: Equatable, Sendable {
 
 /// App-facing protocol core. Production: `RustOmcpCore` (omcp-ffi via UniFFI, in the app
 /// target). Previews/tests: `FakeOmcpCore`. The UI layer never invents crypto results.
+/// Hopla News story (REQUIREMENTS "Hopla News", v0.4). Read-only: users cannot publish.
+public struct NewsStory: Equatable, Sendable, Identifiable {
+    public var id: String
+    public var topic: String
+    public var title: String
+    public var summary: String
+    public var publisher: String
+    public var sourceName: String
+    public var link: String
+    public var via: String?
+    public var emergency: Bool
+    public init(id: String, topic: String, title: String, summary: String, publisher: String, sourceName: String, link: String, via: String?, emergency: Bool) {
+        self.id = id; self.topic = topic; self.title = title; self.summary = summary
+        self.publisher = publisher; self.sourceName = sourceName; self.link = link; self.via = via; self.emergency = emergency
+    }
+}
+
+/// News tab chips (design §5.108).
+public let newsTabs = ["top", "local", "world", "politics", "tech", "sport", "health", "emergencies"]
+
 public protocol OmcpCore: AnyObject {
     var linked: Bool { get }
     var suiteLabel: String { get }
@@ -568,6 +588,8 @@ public protocol OmcpCore: AnyObject {
     func askToResend(_ msgId: String, note: String?) throws
     // Multi-hop mesh relay (PROTOCOL §22).
     func meshStats() -> MeshRelayStats
+    func newsFeed(tab: String) -> [NewsStory]
+    func newsCardText(id: String) -> String?
     /// RL2: report free/total storage; under 10 % free Rust lowers the relay cap.
     func meshSetFreeStorage(freeBytes: Int64, totalBytes: Int64)
     /// Periodic relay work; returns link handles with frames waiting.
@@ -661,6 +683,8 @@ public extension OmcpCore {
     func requestMedia(_ msgId: String) throws {}
     func askToResend(_ msgId: String, note: String?) throws {}
     func meshStats() -> MeshRelayStats { MeshRelayStats() }
+    func newsFeed(tab: String) -> [NewsStory] { [] }
+    func newsCardText(id: String) -> String? { nil }
     func meshSetFreeStorage(freeBytes: Int64, totalBytes: Int64) {}
     func meshTick(nowMs: Int64) -> [UInt64] { [] }
     func meshPendingLinks() -> [UInt64] { [] }

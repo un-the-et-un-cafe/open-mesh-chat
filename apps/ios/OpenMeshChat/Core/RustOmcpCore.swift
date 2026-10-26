@@ -187,6 +187,16 @@ public final class RustOmcpCore: HoplaKit.OmcpCore {
         return MeshRelayStats(carried: Int(s.carried), carriedBytes: Int64(s.carriedBytes), ownPending: Int(s.ownPending), neighbours: Int(s.neighbours),
                               storageUsedBytes: Int64(s.storageUsedBytes), storageCapBytes: Int64(s.storageCapBytes))
     }
+    // Hopla News (v0.4). Gateway fetching on iOS is not wired yet (see docs/NEWS.md); stories arrive over the mesh.
+    public func newsFeed(tab: String) -> [HoplaKit.NewsStory] {
+        guard let list = try? node?.newsFeed(tab: tab) else { return [] }
+        return list.map { HoplaKit.NewsStory(id: $0.idHex, topic: $0.topic, title: $0.title, summary: $0.summary, publisher: $0.publisher,
+                                             sourceName: $0.sourceName, link: $0.link, via: $0.via, emergency: $0.emergency) }
+    }
+    public func newsCardText(id: String) -> String? {
+        guard let s = node?.newsStory(idHex: id) else { return nil }
+        return OmcpFFI.newsCardText(story: s)
+    }
     public func meshSetFreeStorage(freeBytes: Int64, totalBytes: Int64) {
         try? node?.meshSetFreeStorage(freeBytes: UInt64(max(0, freeBytes)), totalBytes: UInt64(max(0, totalBytes)))
     }

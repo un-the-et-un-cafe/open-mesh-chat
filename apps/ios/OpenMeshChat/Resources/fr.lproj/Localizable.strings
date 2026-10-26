@@ -246,3 +246,26 @@
 "restored_self_banner" = "Vous avez restauré ce compte. Vos contacts ont été prévenus et doivent vous revérifier en personne (QR).";
 "qr_stale" = "Ce QR code ne correspond pas. Il doit venir de son nouvel appareil.";
 "cancel_action" = "Annuler";
+
+/* Hopla News (v0.4) */
+"tab_news" = "Actus";
+"news_tab_top" = "À la une";
+"news_tab_local" = "Local";
+"news_tab_world" = "Monde";
+"news_tab_politics" = "Politique";
+"news_tab_tech" = "Tech";
+"news_tab_sport" = "Sport";
+"news_tab_health" = "Santé";
+"news_tab_emergencies" = "Urgences";
+"news_source_cd" = "Source : %@";
+"news_via" = "via %@";
+"news_emergency_pinned" = "URGENCE · Épinglé";
+"news_metered_warning" = "Connexion limitée : la récupération des actus utilise votre forfait.";
+"news_empty_title" = "Pas encore d’actus";
+"news_empty_body" = "Les actus passent de téléphone en téléphone. Elles arrivent quand un téléphone connecté est à proximité.";
+"news_summary" = "Résumé";
+"news_read_gn" = "Lire sur Google News";
+"news_read_gn_note" = "Ouvre votre navigateur et quitte Hopla. Internet requis.";
+"news_share" = "Partager dans un chat";
+"news_share_note" = "Envoie une carte d’actu. Un fil de discussion démarre dessous.";
+"news_live_soon" = "Live · Bientôt en v0.2";
