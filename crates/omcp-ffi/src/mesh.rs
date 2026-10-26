@@ -169,6 +169,8 @@ pub(crate) struct MeshState {
     pub mls: HashMap<[u8; 32], ContactMls>,
     /// Status changes for the apps (`mesh_take_status_updates`).
     pub status: Vec<MessageStatusUpdate>,
+    /// Hopla News: interests, fetch times, story cache.
+    pub news: crate::news::NewsState,
 }
 
 impl MeshState {
@@ -181,6 +183,7 @@ impl MeshState {
             out: HashMap::new(),
             mls: HashMap::new(),
             status: Vec::new(),
+            news: Default::default(),
         }
     }
 
@@ -340,7 +343,7 @@ impl NodeState {
             mesh.engine.mark_seen(s.id, s.until_ms);
         }
         self.mesh = mesh;
-        Ok(())
+        self.load_news(now)
     }
 
     pub(crate) fn save_mls(&self, peer: &[u8; 32]) -> Result<(), FfiError> {
@@ -401,6 +404,7 @@ impl NodeState {
     /// Apply engine events: queue frames, persist carry changes, status
     /// changes. Returns deliveries for the caller to open.
     pub(crate) fn route(&mut self, ev: Vec<RelayEvent>) -> Result<Vec<MeshDelivery>, FfiError> {
+        self.mesh.news.on_events(&ev, now_ms());
         let mut got = Vec::new();
         let mut last_link = None;
         for e in ev {
@@ -505,6 +509,11 @@ fn mls_fp(st: &NodeState) -> [u8; 32] {
         h.update(&id);
         h.update(&e.to_be_bytes());
     }
+    // Subscribed news channels are wanted too.
+    for t in st.mesh.news.tags() {
+        h.update(b"news");
+        h.update(&t);
+    }
     *h.finalize().as_bytes()
 }
 
@@ -529,7 +538,9 @@ pub(crate) fn refresh_wants(st: &mut NodeState, now: u64) -> Result<(), FfiError
             tags.insert(subtag(&ts, leaf, e)?, *id);
         }
     }
-    let wants: BTreeSet<MailboxTag> = tags.keys().copied().collect();
+    let mut wants: BTreeSet<MailboxTag> = tags.keys().copied().collect();
+    // Hopla News: the phone subscribes only to its channels' public tags.
+    wants.extend(st.mesh.news.tags());
     st.mesh.tags = tags;
     st.mesh.tags_for = Some((epoch, fp));
     let ev = st.mesh.engine.set_wants(wants, now);
@@ -764,7 +775,26 @@ impl MeshLink {
         let mut node = self.node.lock();
         refresh_wants(&mut node, now)?;
         let ev = node.mesh.engine.on_frame(self.handle, frame, now)?;
+        let from = node.links_up.get(&self.handle).copied();
+        let mut news_via = false;
+        for e in &ev {
+            if let RelayEvent::Stored(it) = e {
+                if it.class == RelayClass::News {
+                    if let Some(p) = from {
+                        news_via |= node.mesh.news.relayed_by(it.envelope.envelope_id, p);
+                    }
+                }
+            }
+        }
         for (tag, env, ack_of) in node.route(ev)? {
+            if omcp_core::news::is_news_envelope(&env) {
+                // Public news (already checked by the engine): no ack, no chat.
+                node.mesh.news.note(&env, now);
+                if let Some(p) = from {
+                    news_via |= node.mesh.news.relayed_by(env.envelope_id, p);
+                }
+                continue;
+            }
             let Some(peer) = node.mesh.tags.get(&tag).copied() else {
                 continue;
             };
@@ -808,6 +838,9 @@ impl MeshLink {
             let until = env.created_ms.saturating_add(MAX_EXPIRY_MS);
             node.db().put_mesh_seen(&env.envelope_id, until)?;
             Self::deliver(&mut node, peer, &env, CONTENT_TYPE_INNER_V1, &plain, out)?;
+        }
+        if news_via {
+            node.save_news()?;
         }
         Ok(())
     }

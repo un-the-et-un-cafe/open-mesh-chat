@@ -2050,3 +2050,304 @@ fn mls_setup_is_link_pdu_0x04_per_registry() {
     let lb = b.open_responder_link().unwrap();
     assert!(lb.on_pdu(vec![0x05, 0, 0]).is_err());
 }
+
+// ---- Hopla News (REQUIREMENTS § Hopla News) ----
+
+const NEWS_FIXTURE: &str =
+    include_str!("../../omcp-core/src/news/fixtures/google_news_world_en.xml");
+
+/// RFC 822 date for unix ms (GMT).
+fn rfc822(ms: u64) -> String {
+    let secs = ms / 1000;
+    let (days, rem) = ((secs / 86_400) as i64, secs % 86_400);
+    // Civil from days (H. Hinnant).
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    const MON: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    format!(
+        "Mon, {d:02} {} {y} {:02}:{:02}:{:02} GMT",
+        MON[(m - 1) as usize],
+        rem / 3600,
+        rem % 3600 / 60,
+        rem % 60
+    )
+}
+
+/// The core fixture with its dates moved to "now": item k is k × 10 min old,
+/// except the fixture's week-old item, which stays expired.
+fn news_feed_now() -> String {
+    let now = now_ms();
+    let mut out = String::new();
+    let mut rest = NEWS_FIXTURE;
+    let mut k = 0u64;
+    while let Some(i) = rest.find("<pubDate>") {
+        let j = rest[i..].find("</pubDate>").unwrap() + i;
+        out.push_str(&rest[..i + 9]);
+        let old = &rest[i + 9..j];
+        let ms = if old.contains("17 Oct") {
+            now - 8 * 24 * 3_600_000
+        } else {
+            now - (k + 1) * 600_000
+        };
+        out.push_str(&rfc822(ms));
+        k += 1;
+        rest = &rest[j..];
+    }
+    out.push_str(rest);
+    out
+}
+
+fn world_en_url() -> String {
+    "https://news.google.com/rss/headlines/section/topic/WORLD?hl=en-US&gl=US&ceid=US:en".into()
+}
+
+#[test]
+fn news_prefs_default_world_headlines_and_due_feeds() {
+    let n = node("N");
+    let p = n.news_prefs();
+    assert_eq!(p.topics, vec!["world", "emergencies"]);
+    assert_eq!(p.langs, vec!["en"]);
+    assert!(p.alerts_notify, "emergency alerts notify by default");
+    let now = now_ms();
+    let due = n.news_due_feeds(now);
+    assert_eq!(due.len(), 2);
+    assert!(due.contains(&world_en_url()));
+    assert!(due
+        .iter()
+        .all(|u| u.starts_with("https://news.google.com/rss")));
+    // Asked for: not due again before the retry delay; after a successful
+    // ingest, not before 30 min.
+    assert!(n.news_due_feeds(now + 60_000).is_empty());
+    assert_eq!(n.news_due_feeds(now + news::FETCH_RETRY_MS).len(), 2);
+    n.news_ingest_rss(world_en_url(), news_feed_now(), now)
+        .unwrap();
+    let later = now + 2 * news::FETCH_RETRY_MS;
+    assert!(!n.news_due_feeds(later).contains(&world_en_url()));
+    assert!(n
+        .news_due_feeds(now + news_fetch_interval_ms())
+        .contains(&world_en_url()));
+    // City + French: local feed per language; bad input refused.
+    let p2 = n
+        .news_set_prefs(NewsPrefs {
+            city: Some("  Riverside ".into()),
+            langs: vec!["fr".into(), "en".into()],
+            ..p.clone()
+        })
+        .unwrap();
+    assert_eq!(p2.city.as_deref(), Some("Riverside"));
+    let due = n.news_due_feeds(now + 10 * news_fetch_interval_ms());
+    assert!(due.contains(
+        &"https://news.google.com/rss/search?q=riverside&hl=fr&gl=FR&ceid=FR:fr".to_string()
+    ));
+    assert_eq!(due.len(), 6);
+    for bad in [
+        NewsPrefs {
+            topics: vec!["reports".into()],
+            ..p.clone()
+        },
+        NewsPrefs {
+            topics: vec!["local".into()],
+            ..p.clone()
+        },
+        NewsPrefs {
+            langs: vec!["de".into()],
+            ..p.clone()
+        },
+        NewsPrefs {
+            city: Some("a/b".into()),
+            ..p.clone()
+        },
+    ] {
+        assert!(n.news_set_prefs(bad).is_err());
+    }
+}
+
+#[test]
+fn nw2_ingest_dedups_by_source_and_link_and_relays_to_neighbours_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let pb = generate_recovery_phrase().unwrap();
+    let a = node("Ana");
+    let b = open_node(&pb, "Ben", dir.path());
+    befriend(&a, &b);
+    let now = now_ms();
+    assert_eq!(
+        a.news_ingest_rss(world_en_url(), news_feed_now(), now)
+            .unwrap(),
+        3
+    );
+    // Same feed again (or another phone's copy): nothing new.
+    assert_eq!(
+        a.news_ingest_rss(world_en_url(), news_feed_now(), now)
+            .unwrap(),
+        0
+    );
+    let mine = a.news_feed("top".into()).unwrap();
+    assert_eq!(mine.len(), 3);
+    assert!(mine.iter().all(|s| s.fetched_here && s.via.is_none()));
+    assert_eq!(mine[0].source_name, "Google News");
+    assert_eq!(mine[0].title, "Riverside council opens new flood barrier");
+    // B (offline until now) meets A once and catches up.
+    let l = up(&a, &b);
+    assert!(
+        texts(&l.2).is_empty(),
+        "news never shows up as chat messages"
+    );
+    let got = b.news_feed("top".into()).unwrap();
+    assert_eq!(got.len(), 3, "each story once");
+    assert!(got
+        .iter()
+        .all(|s| s.via.as_deref() == Some("Ana") && !s.fetched_here));
+    assert_eq!(b.news_feed("world".into()).unwrap().len(), 3);
+    assert!(b.news_feed("sport".into()).unwrap().is_empty());
+    // B already holds A's stories: its own fetch of the same feed adds none.
+    assert_eq!(
+        b.news_ingest_rss(world_en_url(), news_feed_now(), now)
+            .unwrap(),
+        0
+    );
+    down(&l);
+    // Stories, their class and the "via" survive a restart.
+    let st = b.news_status();
+    assert_eq!(st.stories, 3);
+    assert!(st.storage_bytes > 0 && st.storage_cap_bytes == 20_000_000);
+    drop(b);
+    let b = open_node(&pb, "Ben", dir.path());
+    let again = b.news_feed("top".into()).unwrap();
+    assert_eq!(again, got);
+}
+
+#[test]
+fn nw3_news_rows_are_stored_in_the_news_class() {
+    let dir = tempfile::tempdir().unwrap();
+    let pa = generate_recovery_phrase().unwrap();
+    let a = open_node(&pa, "Ana", dir.path());
+    a.news_ingest_rss(world_en_url(), news_feed_now(), now_ms())
+        .unwrap();
+    let rows = a.inner.lock().db.carry_items().unwrap();
+    assert_eq!(rows.len(), 3);
+    assert!(rows
+        .iter()
+        .all(|r| !r.own && r.class == Some(omcp_core::sync::budget::RelayClass::News.to_u8())));
+    assert_eq!(a.mesh_stats().own_pending, 0, "news is not an own chat");
+}
+
+#[test]
+fn news_publish_ban_ingest_accepts_only_subscribed_google_news_feeds() {
+    let n = node("N");
+    let now = now_ms();
+    let feed = news_feed_now();
+    for url in [
+        "https://rumours.example/rss".to_string(),
+        "https://news.google.com/rss/headlines/section/topic/SPORTS?hl=en-US&gl=US&ceid=US:en"
+            .into(),
+        format!("{}&x=1", world_en_url()),
+    ] {
+        assert!(n.news_ingest_rss(url, feed.clone(), now).is_err());
+    }
+    assert!(n
+        .news_ingest_rss(world_en_url(), "<html>not rss</html>".into(), now)
+        .is_err());
+    assert_eq!(n.news_status().stories, 0);
+    // There is no other way to create news: the only producers are the
+    // ingest above and relayed envelopes, which the engine checks
+    // (core: news_publish_ban_relays_drop_news_not_from_the_rss_ingest_path).
+}
+
+#[test]
+fn news_emergency_alerts_notify_by_default_and_can_be_turned_off() {
+    let n = node("N");
+    let now = now_ms();
+    let url = "https://news.google.com/rss/search?q=%22emergency%20alert%22%20OR%20evacuation&hl=en-US&gl=US&ceid=US:en";
+    assert!(n.news_due_feeds(now).contains(&url.to_string()));
+    assert_eq!(
+        n.news_ingest_rss(url.into(), news_feed_now(), now).unwrap(),
+        3
+    );
+    let alerts = n.news_take_alerts();
+    assert_eq!(alerts.len(), 3);
+    assert!(alerts.iter().all(|s| s.emergency));
+    assert!(n.news_take_alerts().is_empty());
+    // Pinned first in Top.
+    n.news_ingest_rss(world_en_url(), news_feed_now(), now)
+        .unwrap();
+    let top = n.news_feed("top".into()).unwrap();
+    assert!(top.len() >= 3 && top[..3].iter().all(|s| s.emergency));
+    let p = n.news_prefs();
+    n.news_set_prefs(NewsPrefs {
+        alerts_notify: false,
+        ..p
+    })
+    .unwrap();
+    assert!(n.news_take_alerts().is_empty());
+}
+
+#[test]
+fn nw1_offline_phone_catches_up_from_one_neighbour_within_60s() {
+    let a = node("Ana");
+    let b = node("Ben");
+    befriend(&a, &b);
+    let now = now_ms();
+    a.news_ingest_rss(world_en_url(), news_feed_now(), now).unwrap();
+    // B was offline for 72 h (never fetched); one encounter catches it up.
+    let t0 = std::time::Instant::now();
+    let l = up(&a, &b);
+    let got = b.news_feed("top".into()).unwrap();
+    assert_eq!(got.len(), 3);
+    assert!(t0.elapsed().as_secs() < 60);
+    down(&l);
+}
+
+#[test]
+fn nw5_city_channel_subscribes_only_that_city() {
+    let n = node("N");
+    let p = n.news_prefs();
+    n.news_set_prefs(NewsPrefs { city: Some("Lyon".into()), ..p }).unwrap();
+    let due = n.news_due_feeds(now_ms());
+    let local: Vec<_> = due.iter().filter(|u| u.contains("Lyon") || u.contains("lyon")).collect();
+    assert!(!local.is_empty(), "the city's feed is subscribed: {due:?}");
+    assert!(!due.iter().any(|u| u.contains("Paris")), "no other city channels");
+    // Location is never sent: only the city name appears in the feed URL.
+    assert!(due.iter().all(|u| !u.contains("lat") && !u.contains("geo=")));
+}
+
+#[test]
+fn nw6_news_card_round_trips_through_a_chat_message() {
+    let n = node("N");
+    let now = now_ms();
+    n.news_ingest_rss(world_en_url(), news_feed_now(), now).unwrap();
+    let s = n.news_feed("top".into()).unwrap()[0].clone();
+    let text = news::news_card_text(s.clone());
+    let (_a, _b, la, lb) = paired();
+    pump(&la, &lb, la.start().unwrap());
+    let got = pump(&la, &lb, la.send_text(text).unwrap());
+    let card = news::parse_news_card(got[0].text.clone()).expect("card");
+    assert_eq!(card.id_hex, s.id_hex);
+    assert_eq!(card.link, s.link);
+    assert_eq!(card.title, s.title);
+    assert!(news::parse_news_card("hello".into()).is_none());
+    assert!(news::parse_news_card(format!("{}{}\ngn\nX\nhttp://x\nT", news::NEWS_CARD_PREFIX, s.id_hex)).is_none());
+}
+
+#[test]
+fn news_fetch_plan_applies_gateway_rules() {
+    let n = node("N");
+    let now = now_ms();
+    let p = n.news_fetch_plan(Network::Cellular { metered: true }, true, now);
+    assert!(p.feeds.is_empty() && p.blocked.as_deref() == Some("wifi_only"));
+    let p = n.news_fetch_plan(Network::Offline, true, now);
+    assert_eq!(p.blocked.as_deref(), Some("offline"));
+    let p = n.news_fetch_plan(Network::Cellular { metered: true }, false, now);
+    assert!(!p.feeds.is_empty() && p.metered_warning && p.blocked.is_none());
+    assert_eq!(p.daily_cap_bytes, 500_000_000);
+    n.news_ingest_rss(world_en_url(), news_feed_now(), now).unwrap();
+    assert!(n.news_fetch_plan(Network::Wifi { metered: false }, true, now).used_today_bytes > 0);
+}

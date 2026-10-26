@@ -58,6 +58,7 @@ uniffi::setup_scaffolding!();
 mod chatbackup;
 mod files;
 mod mesh;
+mod news;
 mod persist;
 pub use chatbackup::{
     ChatBackupBlob, ChatBackupSummary, DeviceInfo, KeptMediaSettings, KeptMediaUsage,
@@ -65,6 +66,9 @@ pub use chatbackup::{
 };
 pub use files::{FileFailure, FileOffer, FileProgress, ReceivedFile, FILE_CHUNK_BYTES};
 pub use mesh::{mesh_max_links, mesh_relay_cap_bytes, MeshStats, MAX_MESH_LINKS};
+pub use news::{
+    news_fetch_interval_ms, news_lang_codes, news_topic_codes, NewsPrefs, NewsStatus, NewsStory,
+};
 pub use persist::{
     ChatSummary, MessageStatus, StoredBurnState, StoredFile, StoredFileState, StoredMessage,
 };

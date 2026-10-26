@@ -27,6 +27,7 @@ hex = "=0.4.3"
 zeroize = "=1.9.1"
 getrandom = "=0.2.15"
 blake3 = "=1.5.5"
+serde = { version = "1", features = ["derive"] }
 
 [dev-dependencies]
 tempfile = "=3.14.0"
