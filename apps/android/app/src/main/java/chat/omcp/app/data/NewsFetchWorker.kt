@@ -33,10 +33,17 @@ class NewsFetchWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(
             val plan = core.newsFetchPlan(!repo.appStore.gatewayAllowMobile, net.first, net.second, now)
             if (plan.blocked != null) return 0
             var added = 0
+            var ok = 0
+            var err: String? = null
             for (url in plan.feeds) {
-                val r = http(url) as? FetchResult.Ok ?: continue
-                runCatching { core.newsIngestRss(url, r.body, now) }.onSuccess { added += it; repo.appStore.newsLastFetchMs = now }
+                when (val r = http(url)) {
+                    is FetchResult.Err -> err = r.reason
+                    is FetchResult.Ok -> runCatching { core.newsIngestRss(url, r.body, now) }
+                        .onSuccess { added += it; ok++; repo.appStore.newsLastFetchMs = now }.onFailure { err = "not_rss" }
+                }
             }
+            if (plan.feeds.isNotEmpty()) chat.omcp.app.diag.Diag.news = chat.omcp.app.diag.Diag.News(now,
+                "background " + net.first.name.lowercase(), if (ok > 0) "ok: $ok feeds, $added new" else "failed: ${err ?: "?"}")
             return added
         }
 

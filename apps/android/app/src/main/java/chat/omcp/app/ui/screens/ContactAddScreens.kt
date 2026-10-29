@@ -162,6 +162,8 @@ fun ContactAddScreen(
                     Text(stringResource(R.string.safety_number), style = MaterialTheme.typography.labelLarge)
                     SafetyNumberBlock(p.contact.safetyNumber)
                     BodyText(stringResource(R.string.safety_compare, p.contact.displayName))
+                    // The BLE responder only accepts contacts: both phones must add each other.
+                    Callout(stringResource(R.string.add_mutual_hint, p.contact.displayName), CalloutKind.Warn)
                     Button(onClick = { vm.verifyAndChat()?.let(onOpenChat) }, modifier = Modifier.fillMaxWidth()) {
                         Text(stringResource(R.string.verify_and_chat))
                     }
@@ -235,6 +237,7 @@ fun MyQrScreen(vm: ContactAddViewModel, onBack: () -> Unit, onScanTheirs: () -> 
             val id = vm.identity
             if (id != null) MyQrBlock(vm.qrPayload, id.displayName, id.peerIdHex)
             Callout(stringResource(R.string.my_qr_hint))
+            Callout(stringResource(R.string.my_qr_mutual), CalloutKind.Warn)
             BodyText(stringResource(R.string.my_qr_privacy))
             TextButton(onClick = onScanTheirs) { Text(stringResource(R.string.scan_theirs)) }
         }
