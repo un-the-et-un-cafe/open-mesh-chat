@@ -144,7 +144,11 @@ pub fn unescape(s: &str) -> String {
     while let Some(i) = rest.find('&') {
         out.push_str(&rest[..i]);
         let tail = &rest[i..];
-        let end = tail[..tail.len().min(12)].find(';');
+        // Byte search: `tail` may hold multi-byte UTF-8 (French accents) right
+        // after the `&`, so never slice it at a fixed byte offset.
+        let end = tail.as_bytes()[..tail.len().min(12)]
+            .iter()
+            .position(|&b| b == b';');
         let rep = end.and_then(|e| {
             let ent = &tail[1..e];
             let c = match ent {

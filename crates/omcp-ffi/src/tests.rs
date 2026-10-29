@@ -2737,3 +2737,23 @@ fn live_removed_listener_is_rotated_out() {
     assert_eq!(live_audio_bitrate(), 12_000);
     assert!(live_stun_servers().iter().all(|s| s.starts_with("stun:")));
 }
+
+#[test]
+fn news_ingests_real_google_news_fr_response() {
+    let xml = include_str!("../../omcp-core/src/news/fixtures/google_news_world_fr_live.xml");
+    let n = node("N");
+    let mut p = n.news_prefs();
+    p.langs = vec!["fr".into()];
+    n.news_set_prefs(p).unwrap();
+    let url = "https://news.google.com/rss/headlines/section/topic/WORLD?hl=fr&gl=FR&ceid=FR:fr";
+    let newest = omcp_core::news::rss::parse_rss(xml)
+        .unwrap()
+        .iter()
+        .filter_map(|i| i.published_ms)
+        .max()
+        .unwrap();
+    let added = n
+        .news_ingest_rss(url.into(), xml.into(), newest + 60_000)
+        .unwrap();
+    assert!(added > 0, "real FR feed yields stories");
+}
