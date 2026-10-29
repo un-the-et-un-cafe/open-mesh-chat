@@ -36,6 +36,16 @@ impl FetchGate {
         }
     }
 
+    /// Persisted form `(day, bytes)` so the daily cap survives app restarts.
+    pub fn snapshot(&self) -> (u64, u64) {
+        (self.day, self.used)
+    }
+
+    /// Restore from [`Self::snapshot`].
+    pub fn from_snapshot(day: u64, used: u64) -> Self {
+        Self { day, used }
+    }
+
     /// Bytes counted today.
     pub fn used_today(&mut self, now_ms: u64) -> u64 {
         self.roll(now_ms);

@@ -187,7 +187,35 @@ public final class RustOmcpCore: HoplaKit.OmcpCore {
         return MeshRelayStats(carried: Int(s.carried), carriedBytes: Int64(s.carriedBytes), ownPending: Int(s.ownPending), neighbours: Int(s.neighbours),
                               storageUsedBytes: Int64(s.storageUsedBytes), storageCapBytes: Int64(s.storageCapBytes))
     }
-    // Hopla News (v0.4). Gateway fetching on iOS is not wired yet (see docs/NEWS.md); stories arrive over the mesh.
+    // Hopla News (v0.4): gateway phones fetch Google News RSS (gateway rules in Rust); others get stories over the mesh.
+    public func newsFetchPlan(wifiOnly: Bool, network: NetworkType, metered: Bool, nowMs: Int64) -> HoplaKit.NewsFetchPlan {
+        guard let node else { return HoplaKit.NewsFetchPlan() }
+        let net: Network
+        switch network {
+        case .offline: net = .offline
+        case .wifi: net = .wifi(metered: metered)
+        case .cellular: net = .cellular(metered: metered)
+        }
+        let p = node.newsFetchPlan(network: net, wifiOnly: wifiOnly, nowMs: UInt64(max(0, nowMs)))
+        return HoplaKit.NewsFetchPlan(feeds: p.feeds, meteredWarning: p.meteredWarning, blocked: p.blocked,
+                                      usedTodayBytes: Int64(p.usedTodayBytes), dailyCapBytes: Int64(p.dailyCapBytes))
+    }
+    public func newsIngestRss(feedUrl: String, body: String, nowMs: Int64) throws -> Int {
+        guard let node else { return 0 }
+        return Int(try node.newsIngestRss(feedUrl: feedUrl, body: body, nowMs: UInt64(max(0, nowMs))))
+    }
+    public func newsMayFetch(gatewayEnabled: Bool) -> Bool { OmcpFFI.newsMayFetch(gatewayEnabled: gatewayEnabled) }
+    public func newsSetPrefs(topics: [String], langs: [String], city: String?, muted: [String], alertsNotify: Bool) {
+        guard let node else { return }
+        var p = node.newsPrefs()
+        p.topics = Array(Set(topics + ["emergencies"])).sorted()
+        p.langs = langs.isEmpty ? ["en"] : langs
+        p.city = (city?.isEmpty ?? true) ? nil : city
+        p.muted = muted
+        p.alertsNotify = alertsNotify
+        p.interestsChosen = true
+        _ = try? node.newsSetPrefs(prefs: p)
+    }
     public func newsFeed(tab: String) -> [HoplaKit.NewsStory] {
         guard let list = try? node?.newsFeed(tab: tab) else { return [] }
         return list.map { HoplaKit.NewsStory(id: $0.idHex, topic: $0.topic, title: $0.title, summary: $0.summary, publisher: $0.publisher,

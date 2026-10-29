@@ -245,6 +245,7 @@ S = {
  'theme_light': ('Light', 'Clair'),
  'theme_dark': ('Dark', 'Sombre'),
  'about_version': ('Version %@ · design v%@', 'Version %@ · design v%@'),
+ "news_metered_warning": ("Metered connection: fetching news uses your data plan.", "Connexion facturée : la récupération des actus utilise votre forfait."),
 }
 NSE = ["notif_new_message"]
 

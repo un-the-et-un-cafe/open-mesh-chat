@@ -175,6 +175,14 @@ class RustOmcpCore : OmcpCore {
         s.publishedMs.toLong(), s.via, s.fetchedHere, s.emergency,
     )
     override fun newsFeed(tab: String) = node?.newsFeed(tab)?.map(::story) ?: emptyList()
+    override fun newsPrefs(): NewsPrefsUi = node?.newsPrefs()?.let(::prefsUi) ?: NewsPrefsUi()
+    override fun newsSetPrefs(p: NewsPrefsUi): NewsPrefsUi {
+        val nd = node ?: return p
+        return prefsUi(nd.newsSetPrefs(chat.omcp.ffi.NewsPrefs(p.topics, p.langs, p.city?.takeIf { it.isNotBlank() }, p.cityFromLocation, p.muted, p.alertsNotify, p.interestsChosen)))
+    }
+    private fun prefsUi(p: chat.omcp.ffi.NewsPrefs) =
+        NewsPrefsUi(p.topics, p.langs, p.city, p.cityFromLocation, p.muted, p.alertsNotify, p.interestsChosen)
+    override fun newsMayFetch(gatewayEnabled: Boolean) = chat.omcp.ffi.newsMayFetch(gatewayEnabled)
     override fun newsFetchPlan(wifiOnly: Boolean, network: NetworkType, metered: Boolean, nowMs: Long): NewsFetchPlanUi {
         val nd = node ?: return NewsFetchPlanUi()
         val net = when (network) {

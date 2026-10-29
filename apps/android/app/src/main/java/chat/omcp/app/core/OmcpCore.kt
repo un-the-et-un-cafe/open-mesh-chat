@@ -151,6 +151,17 @@ data class NewsFetchPlanUi(
     val blocked: String? = "offline", val usedTodayBytes: Long = 0, val dailyCapBytes: Long = 500_000_000,
 )
 
+/** News settings (§5.115), persisted by the Rust core in the encrypted store. */
+data class NewsPrefsUi(
+    val topics: List<String> = listOf("world", "emergencies"),
+    val langs: List<String> = listOf("en"),
+    val city: String? = null,
+    val cityFromLocation: Boolean = false,
+    val muted: List<String> = emptyList(),
+    val alertsNotify: Boolean = true,
+    val interestsChosen: Boolean = false,
+)
+
 data class NewsCardUi(val idHex: String, val publisher: String, val link: String, val title: String)
 
 data class PasswordCheck(val ok: Boolean, val score: Int, val tooShort: Boolean)
@@ -319,6 +330,10 @@ interface OmcpCore {
     fun meshStats(): MeshRelayStats = MeshRelayStats()
     // ---- Hopla News (v0.4): read-only, users cannot publish ----
     fun newsFeed(tab: String): List<NewsStoryUi> = emptyList()
+    fun newsPrefs(): NewsPrefsUi = NewsPrefsUi()
+    fun newsSetPrefs(p: NewsPrefsUi): NewsPrefsUi = p
+    /** Gateway-only vs any phone with internet: one flag in Rust (`NEWS_FETCH_GATEWAY_ONLY`). */
+    fun newsMayFetch(gatewayEnabled: Boolean): Boolean = gatewayEnabled
     fun newsFetchPlan(wifiOnly: Boolean, network: NetworkType, metered: Boolean, nowMs: Long): NewsFetchPlanUi = NewsFetchPlanUi()
     fun newsIngestRss(feedUrl: String, body: String, nowMs: Long): Int = 0
     fun newsTakeAlerts(): List<NewsStoryUi> = emptyList()

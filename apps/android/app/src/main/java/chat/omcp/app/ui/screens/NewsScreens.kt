@@ -329,7 +329,7 @@ fun NewsSettingsScreen(vm: NewsViewModel, onBack: () -> Unit) {
             Text(stringResource(R.string.news_int_d), color = c.ink2, style = MaterialTheme.typography.bodyMedium)
             Section(stringResource(R.string.news_topics))
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                NEWS_TABS.filter { it != "top" }.forEach { t -> TopicChip(stringResource(tabLabel(t)), t in st.topics, onClick = { vm.toggleTopic(t) }, check = true) }
+                chat.omcp.app.ui.vm.NEWS_PREF_TOPICS.filter { it != "emergencies" }.forEach { t -> TopicChip(stringResource(tabLabel(t)), t in st.topics, onClick = { vm.toggleTopic(t) }, check = true) }
             }
             Section(stringResource(R.string.news_langs))
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {

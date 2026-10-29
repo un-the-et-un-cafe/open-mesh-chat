@@ -544,6 +544,41 @@ public struct NewsStory: Equatable, Sendable, Identifiable {
     }
 }
 
+/// What a phone may fetch now under the gateway rules (Rust `news_fetch_plan`).
+public struct NewsFetchPlan: Equatable, Sendable {
+    public var feeds: [String]
+    public var meteredWarning: Bool
+    public var blocked: String?
+    public var usedTodayBytes: Int64
+    public var dailyCapBytes: Int64
+    public init(feeds: [String] = [], meteredWarning: Bool = false, blocked: String? = "offline", usedTodayBytes: Int64 = 0, dailyCapBytes: Int64 = 500_000_000) {
+        self.feeds = feeds; self.meteredWarning = meteredWarning; self.blocked = blocked
+        self.usedTodayBytes = usedTodayBytes; self.dailyCapBytes = dailyCapBytes
+    }
+}
+
+/// News fetch rules shared by the app (mirrors Android `NewsViewModel.fetchNow`): only phones
+/// allowed by the core's role flag (gateway-only for now), then the gateway network rules
+/// (Wi-Fi-only unless mobile data is allowed, metered warning, 500 MB/day cap).
+public enum NewsFetchRules {
+    public static func plan(core: OmcpCore, store: AppStore, network: NetworkType, metered: Bool, nowMs: Int64) -> NewsFetchPlan? {
+        guard core.newsMayFetch(gatewayEnabled: store.gatewayEnabled) else { return nil }
+        return core.newsFetchPlan(wifiOnly: !store.gatewayAllowMobile, network: network, metered: metered, nowMs: nowMs)
+    }
+
+    /// Run one round with a synchronous GET (tests, background tasks). Returns stories added.
+    @discardableResult
+    public static func run(core: OmcpCore, store: AppStore, network: NetworkType, metered: Bool, nowMs: Int64, get: (String) -> String?) -> Int {
+        guard let p = plan(core: core, store: store, network: network, metered: metered, nowMs: nowMs) else { return 0 }
+        var added = 0
+        for url in p.feeds {
+            guard let body = get(url) else { continue }
+            added += (try? core.newsIngestRss(feedUrl: url, body: body, nowMs: nowMs)) ?? 0
+        }
+        return added
+    }
+}
+
 /// News tab chips (design §5.108).
 public let newsTabs = ["top", "local", "world", "politics", "tech", "sport", "health", "emergencies"]
 
@@ -590,6 +625,12 @@ public protocol OmcpCore: AnyObject {
     func meshStats() -> MeshRelayStats
     func newsFeed(tab: String) -> [NewsStory]
     func newsCardText(id: String) -> String?
+    func newsFetchPlan(wifiOnly: Bool, network: NetworkType, metered: Bool, nowMs: Int64) -> NewsFetchPlan
+    func newsIngestRss(feedUrl: String, body: String, nowMs: Int64) throws -> Int
+    /// Gateway-only vs any phone with internet: one flag in Rust (`NEWS_FETCH_GATEWAY_ONLY`).
+    func newsMayFetch(gatewayEnabled: Bool) -> Bool
+    /// News settings (§5.115) → Rust decides which channel tags to subscribe (persisted in the store).
+    func newsSetPrefs(topics: [String], langs: [String], city: String?, muted: [String], alertsNotify: Bool)
     /// RL2: report free/total storage; under 10 % free Rust lowers the relay cap.
     func meshSetFreeStorage(freeBytes: Int64, totalBytes: Int64)
     /// Periodic relay work; returns link handles with frames waiting.
@@ -685,6 +726,10 @@ public extension OmcpCore {
     func meshStats() -> MeshRelayStats { MeshRelayStats() }
     func newsFeed(tab: String) -> [NewsStory] { [] }
     func newsCardText(id: String) -> String? { nil }
+    func newsFetchPlan(wifiOnly: Bool, network: NetworkType, metered: Bool, nowMs: Int64) -> NewsFetchPlan { NewsFetchPlan() }
+    func newsIngestRss(feedUrl: String, body: String, nowMs: Int64) throws -> Int { 0 }
+    func newsMayFetch(gatewayEnabled: Bool) -> Bool { gatewayEnabled }
+    func newsSetPrefs(topics: [String], langs: [String], city: String?, muted: [String], alertsNotify: Bool) {}
     func meshSetFreeStorage(freeBytes: Int64, totalBytes: Int64) {}
     func meshTick(nowMs: Int64) -> [UInt64] { [] }
     func meshPendingLinks() -> [UInt64] { [] }

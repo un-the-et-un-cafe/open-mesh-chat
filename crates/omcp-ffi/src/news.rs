@@ -117,6 +117,9 @@ struct NewsRec {
     prefs: Option<NewsPrefs>,
     last_ok: Vec<(String, u64)>,
     via: Vec<([u8; 16], Via)>,
+    /// Gateway fetch byte counter `(day, bytes)`: the 500 MB/day cap holds across restarts.
+    #[serde(default)]
+    gate: Option<(u64, u64)>,
 }
 
 /// News state held next to the relay engine.
@@ -266,6 +269,7 @@ impl NewsState {
                 .filter(|(k, _)| self.cache.contains_key(*k))
                 .map(|(k, v)| (*k, *v))
                 .collect(),
+            gate: Some(self.gate.snapshot()),
         }
     }
 }
@@ -282,6 +286,9 @@ impl NodeState {
         n.prefs = rec.prefs.unwrap_or_default();
         n.last_ok = rec.last_ok.into_iter().collect();
         n.via = rec.via.into_iter().collect();
+        if let Some((day, used)) = rec.gate {
+            n.gate = core_news::gate::FetchGate::from_snapshot(day, used);
+        }
         for id in self.mesh.engine.item_ids() {
             if let Some(it) = self.mesh.engine.item(&id) {
                 if it.class == RelayClass::News {
@@ -404,6 +411,18 @@ pub fn news_lang_codes() -> Vec<String> {
 }
 
 /// Minimum time between two fetches of one feed.
+/// Open product question (docs/NEWS.md): REQUIREMENTS says any phone with internet fetches;
+/// this build lets only Gateway phones fetch. Flip this one constant to change it.
+pub const NEWS_FETCH_GATEWAY_ONLY: bool = true;
+
+/// May this phone fetch News RSS at all? (`gateway_enabled` = Settings › Gateway is on.)
+/// The network rules (Wi-Fi-only default, metered warning, daily cap) apply on top via
+/// `news_fetch_plan`.
+#[uniffi::export]
+pub fn news_may_fetch(gateway_enabled: bool) -> bool {
+    gateway_enabled || !NEWS_FETCH_GATEWAY_ONLY
+}
+
 #[uniffi::export]
 pub fn news_fetch_interval_ms() -> u64 {
     FETCH_INTERVAL_MS
@@ -513,6 +532,8 @@ impl OmcpNode {
     ) -> Result<u32, FfiError> {
         let mut st = self.inner.lock();
         st.mesh.news.gate.record(body.len() as u64, now_ms);
+        // Persist the counter now: the cap must hold even if the body is rejected or the app dies.
+        st.save_news()?;
         let ch = st
             .mesh
             .news

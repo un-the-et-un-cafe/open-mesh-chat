@@ -28,19 +28,29 @@ PROTOCOL.md has no News section yet; wire choices are documented in `crates/omcp
 | NW5 | ffi `nw5_city_channel_subscribes_only_that_city` |
 | NW6 | ffi `nw6_news_card_round_trips_through_a_chat_message` |
 | Gateway rules | core `news_fetch_gate_wifi_only_metered_warning_and_daily_cap`; ffi `news_fetch_plan_applies_gateway_rules`; Android `NewsViewModelTest` |
+| Prefs + byte cap persistence | ffi `news_prefs_and_fetch_byte_counter_survive_restart`; Android `NewsPersistenceTest` |
+| Fetch role flag | ffi `news_fetch_role_is_one_flag`; Android `NewsPersistenceTest.fetchRoleIsTheRustFlag`; iOS `NewsFetchRulesTests` |
 | No publish | core `news_publish_ban_*`; ffi `news_publish_ban_ingest_accepts_only_subscribed_google_news_feeds`; Android `tabsMatchDesignAndNoPublishApi` |
 
 ## Apps
 - Bottom bar: Chats · News · Communities · You (Nearby is not a tab in these builds); Live
   ("Coming in v0.2") moved to the top of Communities.
 - Android: News tab with chips, pinned emergency cards, reader with "Read on Google News", share to chat.
-- iOS: News tab + reader (read-only). Gateway fetching and share are not wired on iOS yet.
+- iOS: News tab, reader, share to chat, News settings, and gateway fetching (`NewsFetchRules` in
+  HoplaKit + `URLSession`, every 5 min while the News tab is open), mirroring Android.
+- Settings (topics, languages, city, muted topics, emergency alerts) are stored by the Rust core in
+  the encrypted store (`news_set_prefs`); Android reads/writes them through `NewsViewModel`.
 
 ## Spec gaps and decisions
-- REQUIREMENTS says "any phone with internet fetches; no dedicated gateway role". This build restricts
-  fetching to Gateway-enabled phones and applies the gateway rules (maintainer instruction). Revisit with the spec owner.
+- **Open product question:** REQUIREMENTS says "any phone with internet fetches; no dedicated gateway role".
+  This build restricts fetching to Gateway-enabled phones. It is one constant,
+  `NEWS_FETCH_GATEWAY_ONLY` in `crates/omcp-ffi/src/news.rs`, exposed as `news_may_fetch(gateway_enabled)`
+  and used by both apps; flip it to let any phone with internet fetch (network rules still apply).
 - NW1/NW3/NW5 timing is tested in-process only; the 60 s and chat-p95 claims are untested on real BLE hardware.
 - NW6: Communities are "Coming in v0.2", so sharing goes to chats only; community threads/moderation are not implemented.
-- News fetch byte counter is in memory (resets on app restart). Hebrew strings and a News settings screen
-  (topics/languages/city/mute) exist in the FFI (`news_set_prefs`) but have no app UI yet.
+- The fetch byte counter `(day, bytes)` is persisted with the News record, so the 500 MB/day cap
+  holds across restarts (`news_prefs_and_fetch_byte_counter_survive_restart`).
+- Not done yet: "Use my location" (needs the Nearby location permission flow), the catch-up card
+  (§5.116), skeleton loading cards, News onboarding step, Hebrew (draft copy, not shipped).
+  iOS offers only English as a news language.
 - No per-story signatures (spec rules them out): a modified client can forge an item that passes the ingest-shape checks.

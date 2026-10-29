@@ -2468,3 +2468,54 @@ fn roundtrip_backup_wipe_restore_from_24_words_is_identical() {
         assert!(x.restored_at_ms.is_some(), "restored notice");
     }
 }
+
+/// News prefs and the gateway fetch byte counter survive an app restart, so the
+/// 500 MB/day cap holds (design §5.115; gateway rules).
+#[test]
+fn news_prefs_and_fetch_byte_counter_survive_restart() {
+    let phrase = generate_recovery_phrase().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let now = now_ms();
+    let used;
+    {
+        let n = open_node(&phrase, "N", dir.path());
+        let mut p = n.news_prefs();
+        p.topics = vec!["tech".into(), "emergencies".into()];
+        p.langs = vec!["en".into(), "fr".into()];
+        p.city = Some("Riverside".into());
+        p.muted = vec!["sport".into()];
+        p.alerts_notify = false;
+        n.news_set_prefs(p).unwrap();
+        let url = n.news_due_feeds(now).into_iter().next().unwrap();
+        let _ = n.news_ingest_rss(url, news_feed_now(), now);
+        used = n
+            .news_fetch_plan(Network::Wifi { metered: false }, true, now)
+            .used_today_bytes;
+        assert!(used > 0);
+    }
+    let n = open_node(&phrase, "N", dir.path());
+    let p = n.news_prefs();
+    assert_eq!(p.city.as_deref(), Some("Riverside"));
+    assert_eq!(p.muted, vec!["sport".to_string()]);
+    assert!(!p.alerts_notify);
+    assert!(p.langs.contains(&"fr".to_string()));
+    assert_eq!(
+        n.news_fetch_plan(Network::Wifi { metered: false }, true, now)
+            .used_today_bytes,
+        used,
+        "byte counter persisted"
+    );
+    // Next day the counter resets.
+    assert_eq!(
+        n.news_fetch_plan(Network::Wifi { metered: false }, true, now + 86_400_000)
+            .used_today_bytes,
+        0
+    );
+}
+
+#[test]
+fn news_fetch_role_is_one_flag() {
+    use crate::news::news_may_fetch;
+    assert!(news_may_fetch(true));
+    assert_eq!(news_may_fetch(false), !crate::news::NEWS_FETCH_GATEWAY_ONLY);
+}

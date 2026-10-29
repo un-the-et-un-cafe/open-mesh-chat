@@ -111,8 +111,10 @@ struct NewsHomeView: View {
     @EnvironmentObject var model: AppModel
     @Environment(\.omcpColors) private var c
     @StateObject private var prefs = NewsPrefs()
+    @StateObject private var net = NetworkWatcher()
     @State private var tab = "top"
     @State private var stories: [NewsStory] = []
+    @State private var meteredWarning = false
 
     var body: some View {
         NavigationStack {
@@ -130,6 +132,9 @@ struct NewsHomeView: View {
                 }
                 .background(c.surface)
                 Divider().overlay(c.line)
+                if meteredWarning {
+                    Text(L("news_metered_warning")).font(.caption).foregroundStyle(c.danger).padding(.horizontal, 16).padding(.top, 8)
+                }
                 if tab == "world" || tab == "top" {
                     VStack(alignment: .leading, spacing: 2) {
                         if tab == "world" { Text(L("news_whl")).font(.subheadline.bold()).accessibilityAddTraits(.isHeader) }
@@ -164,10 +169,31 @@ struct NewsHomeView: View {
                 }
             }
             .onAppear(perform: reload)
+            // Gateway phones fetch Google News RSS under the gateway rules (Wi-Fi-only by default).
+            .task {
+                while !Task.isCancelled {
+                    await fetchRound()
+                    try? await Task.sleep(nanoseconds: 300 * 1_000_000_000)
+                }
+            }
         }
     }
 
     private func reload() { stories = arrangeNews(model.core.newsFeed(tab: tab), muted: prefs.muted) }
+
+    @MainActor
+    private func fetchRound() async {
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        guard let plan = NewsFetchRules.plan(core: model.core, store: model.store, network: net.type, metered: net.metered, nowMs: now) else { return }
+        meteredWarning = plan.meteredWarning
+        for feed in plan.feeds {
+            guard let url = URL(string: feed), url.scheme == "https",
+                  let (data, _) = try? await URLSession.shared.data(from: url) else { continue }
+            let body = String(decoding: data.prefix(1_000_000), as: UTF8.self)
+            _ = try? model.core.newsIngestRss(feedUrl: feed, body: body, nowMs: now)
+        }
+        if !plan.feeds.isEmpty { reload() }
+    }
 }
 
 /// Reader (§5.110): summary + "Read on Google News"; Share (primary) and More in the bottom bar.
@@ -268,6 +294,7 @@ struct NewsShareSheet: View {
 /// News settings (§5.115): topics, city, muted topics with a single-tap "Mute a topic"
 /// (WCAG 2.5.7), emergency alerts toggle (§5.111), storage note.
 struct NewsSettingsView: View {
+    @EnvironmentObject var model: AppModel
     @Environment(\.omcpColors) private var c
     @ObservedObject var prefs: NewsPrefs
 
@@ -302,6 +329,9 @@ struct NewsSettingsView: View {
             } header: { Text(L("news_storage")) }
         }
         .navigationTitle(L("news_settings"))
+        .onDisappear {
+            model.core.newsSetPrefs(topics: prefs.topics.sorted(), langs: ["en"], city: prefs.city, muted: prefs.muted.sorted(), alertsNotify: prefs.emergencyAlerts)
+        }
     }
 }
 
