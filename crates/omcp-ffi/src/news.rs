@@ -454,26 +454,47 @@ impl OmcpNode {
     /// Gateway-gated variant of [`Self::news_due_feeds`]: applies the
     /// gateway rules (Wi-Fi-only by default, metered warns, 500 MB/day cap)
     /// before handing out feeds. Apps should call this, not `news_due_feeds`.
-    pub fn news_fetch_plan(&self, network: crate::Network, wifi_only: bool, now_ms: u64) -> NewsFetchPlan {
-        use omcp_core::gateway::policy::{GatewayPolicy, NetworkKind};
+    pub fn news_fetch_plan(
+        &self,
+        network: crate::Network,
+        wifi_only: bool,
+        now_ms: u64,
+    ) -> NewsFetchPlan {
         use core_news::gate::FetchBlock;
-        let policy = GatewayPolicy { wifi_only, ..GatewayPolicy::default() };
+        use omcp_core::gateway::policy::{GatewayPolicy, NetworkKind};
+        let policy = GatewayPolicy {
+            wifi_only,
+            ..GatewayPolicy::default()
+        };
         let net = match network {
             crate::Network::Offline => NetworkKind::Offline,
             crate::Network::Wifi { metered } => NetworkKind::Wifi { metered },
             crate::Network::Cellular { metered } => NetworkKind::Cellular { metered },
         };
-        let d = self.inner.lock().mesh.news.gate.decide(&policy, net, now_ms);
-        let feeds = if d.allowed { self.news_due_feeds(now_ms) } else { Vec::new() };
+        let d = self
+            .inner
+            .lock()
+            .mesh
+            .news
+            .gate
+            .decide(&policy, net, now_ms);
+        let feeds = if d.allowed {
+            self.news_due_feeds(now_ms)
+        } else {
+            Vec::new()
+        };
         let used = self.inner.lock().mesh.news.gate.used_today(now_ms);
         NewsFetchPlan {
             feeds,
             metered_warning: d.metered_warning,
-            blocked: d.blocked.map(|b| match b {
-                FetchBlock::Offline => "offline",
-                FetchBlock::WifiOnly => "wifi_only",
-                FetchBlock::DailyCapReached => "daily_cap",
-            }.to_string()),
+            blocked: d.blocked.map(|b| {
+                match b {
+                    FetchBlock::Offline => "offline",
+                    FetchBlock::WifiOnly => "wifi_only",
+                    FetchBlock::DailyCapReached => "daily_cap",
+                }
+                .to_string()
+            }),
             used_today_bytes: used,
             daily_cap_bytes: policy.daily_byte_cap,
         }

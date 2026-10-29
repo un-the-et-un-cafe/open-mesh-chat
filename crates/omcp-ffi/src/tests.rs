@@ -2296,7 +2296,8 @@ fn nw1_offline_phone_catches_up_from_one_neighbour_within_60s() {
     let b = node("Ben");
     befriend(&a, &b);
     let now = now_ms();
-    a.news_ingest_rss(world_en_url(), news_feed_now(), now).unwrap();
+    a.news_ingest_rss(world_en_url(), news_feed_now(), now)
+        .unwrap();
     // B was offline for 72 h (never fetched); one encounter catches it up.
     let t0 = std::time::Instant::now();
     let l = up(&a, &b);
@@ -2310,20 +2311,33 @@ fn nw1_offline_phone_catches_up_from_one_neighbour_within_60s() {
 fn nw5_city_channel_subscribes_only_that_city() {
     let n = node("N");
     let p = n.news_prefs();
-    n.news_set_prefs(NewsPrefs { city: Some("Lyon".into()), ..p }).unwrap();
+    n.news_set_prefs(NewsPrefs {
+        city: Some("Lyon".into()),
+        ..p
+    })
+    .unwrap();
     let due = n.news_due_feeds(now_ms());
-    let local: Vec<_> = due.iter().filter(|u| u.contains("Lyon") || u.contains("lyon")).collect();
+    let local: Vec<_> = due
+        .iter()
+        .filter(|u| u.contains("Lyon") || u.contains("lyon"))
+        .collect();
     assert!(!local.is_empty(), "the city's feed is subscribed: {due:?}");
-    assert!(!due.iter().any(|u| u.contains("Paris")), "no other city channels");
+    assert!(
+        !due.iter().any(|u| u.contains("Paris")),
+        "no other city channels"
+    );
     // Location is never sent: only the city name appears in the feed URL.
-    assert!(due.iter().all(|u| !u.contains("lat") && !u.contains("geo=")));
+    assert!(due
+        .iter()
+        .all(|u| !u.contains("lat") && !u.contains("geo=")));
 }
 
 #[test]
 fn nw6_news_card_round_trips_through_a_chat_message() {
     let n = node("N");
     let now = now_ms();
-    n.news_ingest_rss(world_en_url(), news_feed_now(), now).unwrap();
+    n.news_ingest_rss(world_en_url(), news_feed_now(), now)
+        .unwrap();
     let s = n.news_feed("top".into()).unwrap()[0].clone();
     let text = news::news_card_text(s.clone());
     let (_a, _b, la, lb) = paired();
@@ -2334,7 +2348,12 @@ fn nw6_news_card_round_trips_through_a_chat_message() {
     assert_eq!(card.link, s.link);
     assert_eq!(card.title, s.title);
     assert!(news::parse_news_card("hello".into()).is_none());
-    assert!(news::parse_news_card(format!("{}{}\ngn\nX\nhttp://x\nT", news::NEWS_CARD_PREFIX, s.id_hex)).is_none());
+    assert!(news::parse_news_card(format!(
+        "{}{}\ngn\nX\nhttp://x\nT",
+        news::NEWS_CARD_PREFIX,
+        s.id_hex
+    ))
+    .is_none());
 }
 
 #[test]
@@ -2348,8 +2367,13 @@ fn news_fetch_plan_applies_gateway_rules() {
     let p = n.news_fetch_plan(Network::Cellular { metered: true }, false, now);
     assert!(!p.feeds.is_empty() && p.metered_warning && p.blocked.is_none());
     assert_eq!(p.daily_cap_bytes, 500_000_000);
-    n.news_ingest_rss(world_en_url(), news_feed_now(), now).unwrap();
-    assert!(n.news_fetch_plan(Network::Wifi { metered: false }, true, now).used_today_bytes > 0);
+    n.news_ingest_rss(world_en_url(), news_feed_now(), now)
+        .unwrap();
+    assert!(
+        n.news_fetch_plan(Network::Wifi { metered: false }, true, now)
+            .used_today_bytes
+            > 0
+    );
 }
 
 /// Full round trip (CB1–CB4, RS1/RS2): identity + two chats on disk, back up all
@@ -2375,15 +2399,26 @@ fn roundtrip_backup_wipe_restore_from_24_words_is_identical() {
         let lp = peer.open_responder_link().unwrap();
         pump(&la, &lp, la.start().unwrap());
         for i in 0..n {
-            pump(&la, &lp, la.send_text(format!("{i} → {} · émoji 🎉", cp.display_name)).unwrap());
+            pump(
+                &la,
+                &lp,
+                la.send_text(format!("{i} → {} · émoji 🎉", cp.display_name))
+                    .unwrap(),
+            );
             pump(&lp, &la, lp.send_text(format!("re {i}")).unwrap());
         }
         la.shutdown();
         lp.shutdown();
-        before.push((cp.contact_id.clone(), a.stored_messages(cp.contact_id).unwrap()));
+        before.push((
+            cp.contact_id.clone(),
+            a.stored_messages(cp.contact_id).unwrap(),
+        ));
     }
     backup_all(&a, 1, &mut blobs);
-    ident_blob.replace(a.create_backup_with_key(key.clone(), "t".into(), 1).unwrap());
+    ident_blob.replace(
+        a.create_backup_with_key(key.clone(), "t".into(), 1)
+            .unwrap(),
+    );
     // Key really comes from the words: same phrase → same key, other phrase → none.
     assert!(matches!(
         node("Mallory").chat_backup_restore(blobs.clone()),
@@ -2419,9 +2454,16 @@ fn roundtrip_backup_wipe_restore_from_24_words_is_identical() {
     // RS2: contacts' verified badge for the restored account resets on next link.
     let alice = a2.identity().peer_id_hex;
     for peer in [&b, &c] {
-        assert!(peer.contacts().iter().any(|x| x.contact_id == alice && x.verified));
+        assert!(peer
+            .contacts()
+            .iter()
+            .any(|x| x.contact_id == alice && x.verified));
         link(&a2, peer);
-        let x = peer.contacts().into_iter().find(|x| x.contact_id == alice).unwrap();
+        let x = peer
+            .contacts()
+            .into_iter()
+            .find(|x| x.contact_id == alice)
+            .unwrap();
         assert!(!x.verified, "verified badge reset");
         assert!(x.restored_at_ms.is_some(), "restored notice");
     }

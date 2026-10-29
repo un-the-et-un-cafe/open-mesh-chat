@@ -43,7 +43,12 @@ impl FetchGate {
     }
 
     /// May this phone fetch News feeds now?
-    pub fn decide(&mut self, policy: &GatewayPolicy, net: NetworkKind, now_ms: u64) -> FetchDecision {
+    pub fn decide(
+        &mut self,
+        policy: &GatewayPolicy,
+        net: NetworkKind,
+        now_ms: u64,
+    ) -> FetchDecision {
         self.roll(now_ms);
         let d = policy.evaluate(net);
         let blocked = if !d.bridge {
@@ -80,16 +85,32 @@ mod tests {
         let mut g = FetchGate::default();
         let p = GatewayPolicy::default();
         let t = 10 * DAY_MS + 5;
-        assert_eq!(g.decide(&p, NetworkKind::Offline, t).blocked, Some(FetchBlock::Offline));
+        assert_eq!(
+            g.decide(&p, NetworkKind::Offline, t).blocked,
+            Some(FetchBlock::Offline)
+        );
         let d = g.decide(&p, NetworkKind::Cellular { metered: true }, t);
         assert_eq!(d.blocked, Some(FetchBlock::WifiOnly));
-        assert!(g.decide(&p, NetworkKind::Wifi { metered: false }, t).allowed);
-        let p2 = GatewayPolicy { wifi_only: false, ..p.clone() };
+        assert!(
+            g.decide(&p, NetworkKind::Wifi { metered: false }, t)
+                .allowed
+        );
+        let p2 = GatewayPolicy {
+            wifi_only: false,
+            ..p.clone()
+        };
         let d = g.decide(&p2, NetworkKind::Cellular { metered: true }, t);
-        assert!(d.allowed && d.metered_warning, "metered warns, never blocks");
+        assert!(
+            d.allowed && d.metered_warning,
+            "metered warns, never blocks"
+        );
         g.record(500_000_000, t);
         let d = g.decide(&p, NetworkKind::Wifi { metered: false }, t);
         assert_eq!(d.blocked, Some(FetchBlock::DailyCapReached));
-        assert!(g.decide(&p, NetworkKind::Wifi { metered: false }, t + DAY_MS).allowed, "cap resets daily");
+        assert!(
+            g.decide(&p, NetworkKind::Wifi { metered: false }, t + DAY_MS)
+                .allowed,
+            "cap resets daily"
+        );
     }
 }
