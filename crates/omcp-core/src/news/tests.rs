@@ -330,3 +330,25 @@ fn news_long_summary_is_trimmed_to_fit_one_kib() {
     let back = open_news(&env, NOW).unwrap();
     assert!(back.summary.len() < it.summary.len());
 }
+
+/// Real Google News response (FR world topic, fetched 2026-10-29 with the app's
+/// User-Agent/Accept headers after the 302 to /rss/topics/…), trimmed to 10 items.
+#[test]
+fn parses_real_google_news_fr_response() {
+    let xml = include_str!("fixtures/google_news_world_fr_live.xml");
+    let items = super::rss::parse_rss(xml).unwrap();
+    assert_eq!(items.len(), 10);
+    for it in &items {
+        assert!(!it.title.is_empty());
+        assert!(it.link.starts_with("https://news.google.com/"));
+        assert!(it.published_ms.is_some(), "pubDate parses: {}", it.title);
+    }
+}
+
+#[test]
+fn unescape_never_splits_utf8_after_an_ampersand() {
+    use super::rss::unescape;
+    assert_eq!(unescape("R&D à Noël &amp; co"), "R&D à Noël & co");
+    assert_eq!(unescape("&éééééé;"), "&éééééé;");
+    assert_eq!(unescape("Tom &amp; Jérôme"), "Tom & Jérôme");
+}
