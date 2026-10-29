@@ -4,7 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    # Also stacked PRs (feature branch onto feature branch).
+    branches: [main, 'feat/**']
 
 permissions:
   contents: read
