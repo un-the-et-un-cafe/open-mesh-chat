@@ -41,8 +41,8 @@ fun arrangeNews(stories: List<NewsStoryUi>, muted: Set<String>): List<NewsStoryU
 
 /**
  * Hopla News (REQUIREMENTS "Hopla News", v0.4). Read-only: there is no publish API.
- * Fetching happens only on gateway phones (Settings > Gateway on) and only when the
- * gateway rules allow it (Wi-Fi-only by default, metered warns, 500 MB/day cap — decided in Rust).
+ * Any phone with internet fetches (Rust flag `NEWS_FETCH_GATEWAY_ONLY` = false), but only when
+ * the network rules allow it (Wi-Fi-only by default, metered warns, 500 MB/day cap — decided in Rust).
  * Everyone else receives stories over the mesh.
  */
 class NewsViewModel(
@@ -99,7 +99,7 @@ class NewsViewModel(
     /** Share as a news card to a chat (NW6); replies form its thread. */
     fun shareToChat(contactId: String, story: NewsStoryUi) = repo.send(contactId, repo.core.newsCardText(story))
 
-    /** Fetch due feeds now if this phone is a gateway and the network allows it. Returns stories added. */
+    /** Fetch due feeds now if the network rules allow it. Returns stories added. */
     fun fetchNow(network: NetworkType, metered: Boolean, nowMs: Long = System.currentTimeMillis(), sync: Boolean = false): Int {
         if (!repo.core.newsMayFetch(repo.appStore.gatewayEnabled)) return 0
         val plan = repo.core.newsFetchPlan(!repo.appStore.gatewayAllowMobile, network, metered, nowMs)

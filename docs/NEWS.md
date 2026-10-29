@@ -6,7 +6,7 @@ PROTOCOL.md has no News section yet; wire choices are documented in `crates/omcp
 ## What it does
 - **Source:** Google News RSS only (public feed URLs per language/topic/city, no API key).
   Sources are plain RSS URLs, so a later X news RSS feed needs no protocol change.
-- **Fetch (gateway rules):** RSS is fetched only on phones with **Gateway** turned on, through
+- **Fetch (network rules):** any phone with internet fetches RSS and relays it into the mesh, through
   `OmcpNode::news_fetch_plan`, which applies the gateway policy: Wi-Fi-only by default,
   metered networks warn (never blocked when the user allows mobile data), and fetched bytes count
   against a 500 MB/day cap. Each feed at most every 30 min; a failed fetch retries after 5 min.
@@ -42,10 +42,11 @@ PROTOCOL.md has no News section yet; wire choices are documented in `crates/omcp
   the encrypted store (`news_set_prefs`); Android reads/writes them through `NewsViewModel`.
 
 ## Spec gaps and decisions
-- **Open product question:** REQUIREMENTS says "any phone with internet fetches; no dedicated gateway role".
-  This build restricts fetching to Gateway-enabled phones. It is one constant,
-  `NEWS_FETCH_GATEWAY_ONLY` in `crates/omcp-ffi/src/news.rs`, exposed as `news_may_fetch(gateway_enabled)`
-  and used by both apps; flip it to let any phone with internet fetch (network rules still apply).
+- **Fetch role (decided by the product owner):** any phone with internet fetches news and relays it
+  into the mesh; no Gateway toggle is needed. It is one constant, `NEWS_FETCH_GATEWAY_ONLY = false` in
+  `crates/omcp-ffi/src/news.rs`, exposed as `news_may_fetch(gateway_enabled)` and used by both apps.
+  Wi-Fi-only stays the default (mobile data only if allowed in settings, with the metered warning),
+  and the 500 MB/day cap still applies.
 - NW1/NW3/NW5 timing is tested in-process only; the 60 s and chat-p95 claims are untested on real BLE hardware.
 - NW6: Communities are "Coming in v0.2", so sharing goes to chats only; community threads/moderation are not implemented.
 - The fetch byte counter `(day, bytes)` is persisted with the News record, so the 500 MB/day cap

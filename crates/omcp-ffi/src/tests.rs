@@ -2517,5 +2517,6 @@ fn news_prefs_and_fetch_byte_counter_survive_restart() {
 fn news_fetch_role_is_one_flag() {
     use crate::news::news_may_fetch;
     assert!(news_may_fetch(true));
-    assert_eq!(news_may_fetch(false), !crate::news::NEWS_FETCH_GATEWAY_ONLY);
+    // Product decision: any phone with internet fetches and relays news into the mesh.
+    assert!(news_may_fetch(false));
 }

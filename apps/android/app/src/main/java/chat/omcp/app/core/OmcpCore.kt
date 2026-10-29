@@ -333,7 +333,7 @@ interface OmcpCore {
     fun newsPrefs(): NewsPrefsUi = NewsPrefsUi()
     fun newsSetPrefs(p: NewsPrefsUi): NewsPrefsUi = p
     /** Gateway-only vs any phone with internet: one flag in Rust (`NEWS_FETCH_GATEWAY_ONLY`). */
-    fun newsMayFetch(gatewayEnabled: Boolean): Boolean = gatewayEnabled
+    fun newsMayFetch(gatewayEnabled: Boolean): Boolean = true
     fun newsFetchPlan(wifiOnly: Boolean, network: NetworkType, metered: Boolean, nowMs: Long): NewsFetchPlanUi = NewsFetchPlanUi()
     fun newsIngestRss(feedUrl: String, body: String, nowMs: Long): Int = 0
     fun newsTakeAlerts(): List<NewsStoryUi> = emptyList()

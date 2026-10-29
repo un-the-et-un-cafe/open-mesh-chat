@@ -51,6 +51,6 @@ class NewsPersistenceTest {
     @Test fun fetchRoleIsTheRustFlag() {
         val core = RustOmcpCore()
         assertTrue(core.newsMayFetch(true))
-        assertFalse("gateway-only for now", core.newsMayFetch(false))
+        assertTrue("any phone with internet fetches", core.newsMayFetch(false))
     }
 }
