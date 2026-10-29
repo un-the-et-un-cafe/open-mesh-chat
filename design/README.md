@@ -1,6 +1,6 @@
-# OMCP App Design Pack v0.1.16 — Hopla
+# OMCP App Design Pack v0.1.21 — Hopla
 
-**Date:** 2026-10-24 (Europe/Paris) · v0.1.14 2026-10-24 · v0.1.13 2026-10-24 · v0.1.12 2026-10-24 · v0.1.11 2026-10-24 · v0.1.10 2026-10-24 · v0.1.9 2026-10-24 · v0.1.8 2026-10-24 · v0.1.7 2026-10-24 · v0.1.6 2026-10-24 · v0.1.5 2026-10-24 · v0.1.4 2026-10-24 · v0.1.3 2026-10-24 · v0.1.2 2026-10-24 · v0.1.1 2026-10-24 · v0.1.0 2026-10-23  
+**Date:** 2026-10-26 (Europe/Paris) · v0.1.20 2026-10-24 · v0.1.19 2026-10-24 · v0.1.18 2026-10-24 · v0.1.17 2026-10-24 · v0.1.16 2026-10-24 · v0.1.15 2026-10-24 · v0.1.14 2026-10-24 · v0.1.13 2026-10-24 · v0.1.12 2026-10-24 · v0.1.11 2026-10-24 · v0.1.10 2026-10-24 · v0.1.9 2026-10-24 · v0.1.8 2026-10-24 · v0.1.7 2026-10-24 · v0.1.6 2026-10-24 · v0.1.5 2026-10-24 · v0.1.4 2026-10-24 · v0.1.3 2026-10-24 · v0.1.2 2026-10-24 · v0.1.1 2026-10-24 · v0.1.0 2026-10-23  
 **App name:** Hopla (consumer app) · **Protocol:** OMCP. Logo: approved `brand/hopla-v2/icon.svg` (inlined in welcome, done, restore mockups).  
 **Audience:** Proggy (Android/iOS implementers), Pipely (release), the maintainer / Writey (product)  
 **Source of truth for product rules:** `../PROTOCOL.md` §13, §20 and `../apps/REQUIREMENTS.md`  
@@ -8,10 +8,14 @@
 
 ## Where to start
 
-1. Read **[DESIGN_SPEC.md](./DESIGN_SPEC.md)** — principles, tokens, IA, navigation, screen-by-screen specs, platform notes, EN/FR copy, component inventory.
+1. Read **[DESIGN_SPEC.md](./DESIGN_SPEC.md)** — principles, tokens, IA, navigation, screen-by-screen specs, platform notes, EN/FR copy (+ **HE draft** column, pending native-speaker review), component inventory.
 2. Open **[mockups/](./mockups/)** in a browser — phone frames at 390×844. Shared tokens in `mockups/tokens.css`.
-3. Use **PNG screenshots** (`mockups/*.png`) in tickets and PR descriptions.
-4. Mirror copy for Proggy/Pipely: `/home/box/shared/omcp-design/` (identical tree).
+3. Accessibility (v0.1.18): both themes meet WCAG AA — **[a11y/light-contrast.md](./a11y/light-contrast.md)** and **[a11y/dark-contrast.md](./a11y/dark-contrast.md)** (every pair, before/after), **a11y/light-before-after.png**, **a11y/light-vs-dark.png** (matched pair + token-step table); older: a11y/dark-before-after.png, a11y/light-spot-check.png (v0.1.17).
+4. Locales: EN, FR and **Hebrew (he, RTL) — DRAFT, pending native-speaker review**. Hebrew frames are the `*--he.png` / `*--he-dark.png` screenshots; RTL rules in DESIGN_SPEC §5.106.
+5. **Hopla News (v0.4, v0.1.20)** — DESIGN_SPEC §5R: `mockups/news-*.html` (18 screens × EN/FR/HE, light/dark = 108 PNGs). Bar: Chats · News · Communities · Nearby · You; Live at the top of Communities. Source: Google News RSS only (neutral text label; second source can be added later) + “via ‹contact›”. Contrast: `a11y/news-contrast.md`. **Relay settings screen: placeholder — will follow once the relay questions are answered.**
+5a. **WCAG 2.2 (v0.1.21)** — DESIGN_SPEC §5S: target size, focus not obscured, drag alternatives, iOS glass-bar scrim.
+5b. Use **PNG screenshots** (`mockups/*.png`) in tickets and PR descriptions.
+6. Mirror copy for Proggy/Pipely: `/home/box/shared/omcp-design/` (identical tree).
 
 ## MVP (v0.1) vs post-MVP (v0.2)
 
@@ -24,7 +28,7 @@
 | Gateway toggle + battery/privacy disclosure | ✓ | — |
 | Offline queue + path indicators (mesh / gateway / mixed) | ✓ | — |
 | Security centre | ✓ | — |
-| Encrypted backup / restore (Google Drive, iCloud, written phrase) | ✓ | — |
+| Encrypted backup / restore (Google Drive, iCloud: phrase + all chats; written phrase: identity + contacts) | ✓ | — |
 | Notification previews **off** by default | ✓ | — |
 | Communities (roles, announcement + topics) | sketched | ✓ |
 | Livestreams (mesh-beacon / lan-relay / internet-sfu) | sketched (empty states) | ✓ |
@@ -36,7 +40,7 @@ Mockups marked **Communities** and **Live** are forward-looking so capacity can 
 ## How Proggy should consume this
 
 1. **Map components** in DESIGN_SPEC § Component inventory → Kotlin (Compose or View) / SwiftUI views. Prefer shared naming (`PathChip`, `SafetyNumberBlock`, `GatewayDisclosure`).
-2. **Tokens** → Android `Color`/`Type`/`Dimens` XML or Compose `OmcpTheme`; iOS `Asset` colors + `Font` styles. Light **and** dark required; WCAG AA.
+2. **Tokens** → Android `Color`/`Type`/`Dimens` XML or Compose `OmcpTheme`; iOS `Asset` colors + `Font` styles. Light **and** dark required; WCAG AA (both audited: `a11y/light-contrast.md`, `a11y/dark-contrast.md`; use `--brand-ink` for anything on a solid accent fill, never literal white).
 3. **Copy** → string catalogs `en` + `fr` from § Copy principles; never invent “military grade” / “unhackable” language.
 4. **Path indicator** is a first-class UI element (chat list row, thread banner, settings legend) — not a debug overlay.
 5. **Do not** treat HTML mockups as production UI; they are layout + state references. Native widgets and platform HIG win on spacing micro-adjustments.
