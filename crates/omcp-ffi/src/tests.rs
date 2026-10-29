@@ -2630,6 +2630,8 @@ fn tm_moderation_state_survives_restart_and_shipped_policy_parses() {
     let n = open_node(&phrase, "N", dir.path());
     assert_eq!(n.moderation_removed_reason(hex::encode(cid)), Some(2));
     assert_eq!(n.moderation_log().len(), 1);
+}
+
 #[test]
 fn news_ingests_real_google_news_fr_response() {
     let xml = include_str!("../../omcp-core/src/news/fixtures/google_news_world_fr_live.xml");
