@@ -28,7 +28,7 @@ class NewsPersistenceTest {
         val core1 = RustOmcpCore()
         val repo1 = MeshRepository(core1, store, db) { 1L }
         repo1.saveIdentity(core1.generateRecoveryPhrase(), "N")
-        val vm1 = NewsViewModel(repo1) { null }
+        val vm1 = NewsViewModel(repo1, { chat.omcp.app.data.FetchResult.Err("network") })
         vm1.toggleTopic("tech")
         vm1.toggleLanguage("fr")
         vm1.setCity("Riverside")
@@ -39,7 +39,7 @@ class NewsPersistenceTest {
         val core2 = RustOmcpCore()
         val repo2 = MeshRepository(core2, store, db) { 2L }
         assertTrue(repo2.restore())
-        val st = NewsViewModel(repo2) { null }.state.value
+        val st = NewsViewModel(repo2, { chat.omcp.app.data.FetchResult.Err("network") }).state.value
         assertTrue("tech" in st.topics)
         assertTrue("fr" in st.languages)
         assertEquals("Riverside", st.city)

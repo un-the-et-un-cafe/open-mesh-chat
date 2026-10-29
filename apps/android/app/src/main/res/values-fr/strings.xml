@@ -391,4 +391,23 @@
     <string name="mod_reason_4">Harcèlement coordonné</string>
     <string name="mod_reason_5">Spam ou arnaque</string>
     <string name="mod_reason_9">Autre</string>
+    <string name="news_fetch_now">Actualiser</string>
+    <string name="news_state_wifi_t">En attente du Wi‑Fi</string>
+    <string name="news_state_wifi_d">Les actus sont récupérées en Wi‑Fi uniquement, pour économiser vos données mobiles. Les téléphones proches peuvent toujours vous transmettre des articles via le maillage.</string>
+    <string name="news_state_mobile_note">Les données mobiles peuvent être payantes. Hopla vous prévient sur les réseaux facturés et n’utilise jamais plus de 500 Mo par jour.</string>
+    <string name="news_state_allow_mobile">Autoriser les données mobiles</string>
+    <string name="news_state_offline_t">Vous êtes hors ligne</string>
+    <string name="news_state_offline_d">Pas d’Internet pour le moment. Les articles arrivent quand vous êtes en ligne ou depuis les téléphones proches via le maillage.</string>
+    <string name="news_state_cap_t">Limite du jour atteinte</string>
+    <string name="news_state_cap_d">Hopla a utilisé les 500 Mo du jour pour les actus. Ça repart demain.</string>
+    <string name="news_state_fetching_t">Récupération des actus…</string>
+    <string name="news_state_failed_t">Impossible de récupérer les actus</string>
+    <string name="news_state_failed_d">Google Actualités n’a pas envoyé d’articles. Réessayez dans un instant.</string>
+    <string name="news_state_reason">Raison : %1$s</string>
+    <string name="news_state_last">Dernière récupération %1$s</string>
+    <string name="news_state_never">Jamais récupéré sur ce téléphone</string>
+    <string name="news_reason_consent">Google a demandé un consentement aux cookies au lieu d’envoyer le flux</string>
+    <string name="news_reason_network">erreur réseau ou délai dépassé</string>
+    <string name="news_reason_not_rss">la réponse était une page web, pas un flux d’actus</string>
+    <string name="news_reason_http">erreur serveur (HTTP %1$s)</string>
 </resources>

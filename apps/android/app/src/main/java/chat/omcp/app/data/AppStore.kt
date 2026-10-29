@@ -24,6 +24,8 @@ interface AppStore {
     /** Completed backup methods: "drive", "written". */
     var backupMethods: Set<String>
     var lastCloudBackupMs: Long
+    /** Last successful News fetch on this phone (shown on the empty News screen). */
+    var newsLastFetchMs: Long
     /** "Remind me later" deadline (24 h); 0 = not deferred. */
     var backupRemindDeadlineMs: Long
     /** Restore lockout (§5.85): wrong tries in the current round, rounds so far, lock end. */
@@ -47,6 +49,7 @@ class InMemoryAppStore : AppStore {
     override var gatewayAllowMobile = false
     override var backupMethods: Set<String> = emptySet()
     override var lastCloudBackupMs = 0L
+    override var newsLastFetchMs = 0L
     override var backupRemindDeadlineMs = 0L
     override var restoreFailures = 0
     override var restoreRound = 0
