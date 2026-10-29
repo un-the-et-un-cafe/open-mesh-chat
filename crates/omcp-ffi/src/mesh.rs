@@ -149,9 +149,19 @@ type PendingCopy = ([u8; 16], u64, zeroize::Zeroizing<Vec<u8>>, bool);
 /// One frame waiting for a link: link PDU kind, plain frame, and our own
 /// message id it hands over (status → Sent once it is actually sealed).
 pub(crate) struct OutFrame {
-    pdu: u8,
-    frame: Vec<u8>,
+    pub(crate) pdu: u8,
+    pub(crate) frame: Vec<u8>,
     handed: Option<[u8; 16]>,
+}
+
+impl OutFrame {
+    pub(crate) fn new(pdu: u8, frame: Vec<u8>) -> Self {
+        Self {
+            pdu,
+            frame,
+            handed: None,
+        }
+    }
 }
 
 /// Persisted as `(ready, member state)` (sealed meta row).
@@ -174,6 +184,8 @@ pub(crate) struct MeshState {
     /// Team moderation (§23.9): shipped policy and applied actions.
     pub team: omcp_core::moderation::TeamPolicy,
     pub moderation: omcp_core::moderation::ModerationState,
+    /// Live audio (never persisted).
+    pub live: crate::live::LiveState,
 }
 
 impl MeshState {
@@ -189,6 +201,7 @@ impl MeshState {
             news: Default::default(),
             team: crate::moderation::shipped_policy(),
             moderation: Default::default(),
+            live: Default::default(),
         }
     }
 
@@ -417,11 +430,15 @@ impl NodeState {
             match e {
                 RelayEvent::Send { link, frame } => {
                     last_link = Some(link);
-                    self.mesh.out.entry(link).or_default().push_back(OutFrame {
-                        pdu: PDU_MESH,
-                        frame,
-                        handed: None,
-                    })
+                    // Chat frames go ahead of queued live audio (LV2).
+                    let q = self.mesh.out.entry(link).or_default();
+                    let at = q
+                        .iter()
+                        .position(|f| {
+                            f.pdu == PDU_MESH && omcp_core::live::audio::is_live_audio(&f.frame)
+                        })
+                        .unwrap_or(q.len());
+                    q.insert(at, OutFrame::new(PDU_MESH, frame))
                 }
                 RelayEvent::Stored(it) => self.db.put_carry(&CarryRec {
                     id: it.envelope.envelope_id,
@@ -781,6 +798,9 @@ impl MeshLink {
     pub(crate) fn mesh_frame(&self, frame: &[u8], out: &mut LinkOutput) -> Result<(), FfiError> {
         let now = now_ms();
         let mut node = self.node.lock();
+        if node.on_live_frame(self.handle, frame, now) {
+            return Ok(()); // live audio: forwarded / played, never stored
+        }
         refresh_wants(&mut node, now)?;
         let ev = node.mesh.engine.on_frame(self.handle, frame, now)?;
         let from = node.links_up.get(&self.handle).copied();

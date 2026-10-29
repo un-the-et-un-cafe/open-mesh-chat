@@ -130,3 +130,20 @@ final class NewsFetchRulesTests: XCTestCase {
         XCTAssertTrue(core.newsIngested.isEmpty)
     }
 }
+
+/// Live tab rules (mirrors Android LiveViewModel).
+final class LiveRulesTests: XCTestCase {
+    func testGoLiveNeedsAListenerAndSplitsOwnStream() {
+        XCTAssertFalse(LiveRules.canGoLive(picked: [], hosting: false))
+        XCTAssertTrue(LiveRules.canGoLive(picked: ["c"], hosting: false))
+        XCTAssertFalse(LiveRules.canGoLive(picked: ["c"], hosting: true))
+        let a = LiveStreamModel(streamIdHex: "aa", title: "Mine", hostContactId: "", mine: true, listening: false, video: false, startedMs: 1)
+        let b = LiveStreamModel(streamIdHex: "bb", title: "Town hall", hostContactId: "h", mine: false, listening: true, video: false, startedMs: 2)
+        let s = LiveRules.split([b, a])
+        XCTAssertEqual(s.mine, a)
+        XCTAssertEqual(s.others, [b])
+        XCTAssertEqual(LiveStatsModel(played: 95, lost: 5).lossPercent, 5)
+        XCTAssertEqual(LiveStatsModel().lossPercent, 0)
+        XCTAssertTrue(FakeOmcpCore().liveStreams().isEmpty)
+    }
+}

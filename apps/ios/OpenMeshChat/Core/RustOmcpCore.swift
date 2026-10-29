@@ -205,6 +205,25 @@ public final class RustOmcpCore: HoplaKit.OmcpCore {
         return Int(try node.newsIngestRss(feedUrl: feedUrl, body: body, nowMs: UInt64(max(0, nowMs))))
     }
     public func newsMayFetch(gatewayEnabled: Bool) -> Bool { OmcpFFI.newsMayFetch(gatewayEnabled: gatewayEnabled) }
+    public func liveStart(title: String, video: Bool, contactIds: [String]) -> String? {
+        try? node?.liveStart(title: title, video: video, contactIds: contactIds)
+    }
+    public func liveStop() { try? node?.liveStop() }
+    public func liveStreams() -> [LiveStreamModel] {
+        (node?.liveStreams() ?? []).map {
+            LiveStreamModel(streamIdHex: $0.streamIdHex, title: $0.title, hostContactId: $0.hostContactId,
+                            mine: $0.mine, listening: $0.listening, video: $0.video, startedMs: Int64($0.startedMs))
+        }
+    }
+    public func liveJoin(streamIdHex: String, hasInternet: Bool) -> Bool {
+        guard let node else { return false }
+        return (try? node.liveJoin(streamIdHex: streamIdHex, hasInternet: hasInternet)) != nil
+    }
+    public func liveLeave() { node?.liveLeave() }
+    public func liveStats() -> LiveStatsModel {
+        guard let s = node?.liveStats() else { return LiveStatsModel() }
+        return LiveStatsModel(played: s.played, lost: s.lost, forwarded: s.forwarded, listeners: s.listeners)
+    }
     public func moderationHasTeam() -> Bool { node?.moderationHasTeam() ?? false }
     public func moderationLog() -> [TeamLogEntryModel] {
         (node?.moderationLog() ?? []).map {

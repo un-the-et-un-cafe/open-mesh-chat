@@ -335,6 +335,19 @@ interface OmcpCore {
     /** Gateway-only vs any phone with internet: one flag in Rust (`NEWS_FETCH_GATEWAY_ONLY`). */
     fun newsMayFetch(gatewayEnabled: Boolean): Boolean = true
 
+    // Live v0.2 (REQUIREMENTS "Live"): audio over the mesh; Rust does packets, keys and jitter.
+    fun liveStart(title: String, video: Boolean, contactIds: List<String>): String? = null
+    fun liveInvite(contactId: String) {}
+    fun liveRemoveListener(contactId: String) {}
+    fun liveStop() {}
+    /** Encoded 20 ms Opus frames (12 kbit/s mono). Returns link handles to flush. */
+    fun livePushAudio(frames: List<ByteArray>): List<Long> = emptyList()
+    fun liveStreams(): List<LiveStreamUi> = emptyList()
+    fun liveJoin(streamIdHex: String, hasInternet: Boolean): Boolean = false
+    fun liveLeave() {}
+    fun liveTakeAudio(nowMs: Long): List<LivePlayoutUi> = emptyList()
+    fun liveStats(): LiveStatsUi = LiveStatsUi()
+
     // Team moderation (PROTOCOL §23.9, TM1–TM4).
     /** Whether this build ships a moderation team (config/team_moderation.conf). */
     fun moderationHasTeam(): Boolean = false
@@ -406,4 +419,26 @@ data class TeamLogUi(
     val epoch: Long,
     val signedBy: List<String>,
     val appliedMs: Long,
+)
+
+data class LiveStreamUi(
+    val streamIdHex: String,
+    val title: String,
+    /** Empty for our own stream. */
+    val hostContactId: String,
+    val mine: Boolean,
+    val listening: Boolean,
+    val video: Boolean,
+    val startedMs: Long,
+)
+
+/** One 20 ms slot: [opus] empty when lost. */
+class LivePlayoutUi(val index: Long, val opus: ByteArray, val lost: Boolean, val fecNext: ByteArray?)
+
+data class LiveStatsUi(
+    val played: Long = 0,
+    val lost: Long = 0,
+    val forwarded: Long = 0,
+    val droppedCongested: Long = 0,
+    val listeners: Int = 0,
 )
