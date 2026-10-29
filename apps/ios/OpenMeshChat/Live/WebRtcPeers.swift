@@ -35,7 +35,7 @@ final class WebRtcPeers: NSObject, RtcPeers {
                                            decoderFactory: RTCDefaultVideoDecoderFactory())
         keys = RTCFrameCryptorKeyProvider(ratchetSalt: Self.ratchetSalt, ratchetWindowSize: 0, sharedKeyMode: true,
                                           uncryptedMagicBytes: Self.magic, failureTolerance: -1, keyRingSize: Self.keyRing,
-                                          discardFrameWhenCryptorNotReady: true, keyDerivationAlgorithm: .HKDF)
+                                          discardFrameWhenCryptorNotReady: true) // PBKDF2 key derivation, as Android
         super.init()
     }
 
