@@ -9,6 +9,7 @@ import chat.omcp.app.data.MeshRepository
 import chat.omcp.app.ui.vm.NEWS_TABS
 import chat.omcp.app.ui.vm.NewsViewModel
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -29,12 +30,10 @@ class NewsViewModelTest {
         assertTrue(NewsViewModel::class.java.methods.none { it.name.contains("publish", true) || it.name.contains("post", true) })
     }
 
-    @Test fun onlyGatewayPhonesFetch() {
+    @Test fun anyPhoneWithInternetFetches() {
         val core = NewsCore(); val store = InMemoryAppStore()
         val vm = NewsViewModel(MeshRepository(core, store) { 0L }) { "<rss/>" }
-        assertEquals(0, vm.fetchNow(NetworkType.Wifi, false, sync = true))
-        assertTrue(core.ingested.isEmpty())
-        store.gatewayEnabled = true
+        assertFalse(store.gatewayEnabled)
         assertEquals(2, vm.fetchNow(NetworkType.Wifi, false, sync = true))
         assertEquals(true, core.lastWifiOnly) // Wi-Fi-only by default
     }

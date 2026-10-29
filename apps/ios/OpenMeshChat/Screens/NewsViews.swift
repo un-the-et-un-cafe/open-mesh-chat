@@ -169,7 +169,7 @@ struct NewsHomeView: View {
                 }
             }
             .onAppear(perform: reload)
-            // Gateway phones fetch Google News RSS under the gateway rules (Wi-Fi-only by default).
+            // Any phone with internet fetches Google News RSS under the network rules (Wi-Fi-only by default).
             .task {
                 while !Task.isCancelled {
                     await fetchRound()

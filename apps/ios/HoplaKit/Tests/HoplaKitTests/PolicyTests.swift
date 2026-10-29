@@ -114,14 +114,12 @@ final class PolicyTests: XCTestCase {
     }
 }
 
-/// iOS News fetch mirrors Android: gateway-only role flag, then gateway network rules.
+/// iOS News fetch mirrors Android: any phone with internet fetches, under the network rules.
 final class NewsFetchRulesTests: XCTestCase {
-    func testOnlyGatewayPhonesFetchWifiOnlyByDefault() {
+    func testAnyPhoneFetchesWifiOnlyByDefault() {
         let core = FakeOmcpCore(); let store = InMemoryAppStore()
         core.newsPlan = NewsFetchPlan(feeds: ["https://news.google.com/rss/x"], blocked: nil)
-        XCTAssertEqual(NewsFetchRules.run(core: core, store: store, network: .wifi, metered: false, nowMs: 1) { _ in "<rss/>" }, 0)
-        XCTAssertTrue(core.newsIngested.isEmpty)
-        store.gatewayEnabled = true
+        XCTAssertFalse(store.gatewayEnabled)
         XCTAssertEqual(NewsFetchRules.run(core: core, store: store, network: .wifi, metered: false, nowMs: 1) { _ in "<rss/>" }, 3)
         XCTAssertEqual(core.lastNewsWifiOnly, true)
         store.gatewayAllowMobile = true

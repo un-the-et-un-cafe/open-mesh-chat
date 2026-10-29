@@ -413,7 +413,7 @@ pub fn news_lang_codes() -> Vec<String> {
 /// Minimum time between two fetches of one feed.
 /// Open product question (docs/NEWS.md): REQUIREMENTS says any phone with internet fetches;
 /// this build lets only Gateway phones fetch. Flip this one constant to change it.
-pub const NEWS_FETCH_GATEWAY_ONLY: bool = true;
+pub const NEWS_FETCH_GATEWAY_ONLY: bool = false;
 
 /// May this phone fetch News RSS at all? (`gateway_enabled` = Settings › Gateway is on.)
 /// The network rules (Wi-Fi-only default, metered warning, daily cap) apply on top via

@@ -333,7 +333,7 @@ interface OmcpCore {
     fun newsPrefs(): NewsPrefsUi = NewsPrefsUi()
     fun newsSetPrefs(p: NewsPrefsUi): NewsPrefsUi = p
     /** Gateway-only vs any phone with internet: one flag in Rust (`NEWS_FETCH_GATEWAY_ONLY`). */
-    fun newsMayFetch(gatewayEnabled: Boolean): Boolean = gatewayEnabled
+    fun newsMayFetch(gatewayEnabled: Boolean): Boolean = true
 
     // Team moderation (PROTOCOL §23.9, TM1–TM4).
     /** Whether this build ships a moderation team (config/team_moderation.conf). */

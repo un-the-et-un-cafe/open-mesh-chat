@@ -558,7 +558,7 @@ public struct NewsFetchPlan: Equatable, Sendable {
 }
 
 /// News fetch rules shared by the app (mirrors Android `NewsViewModel.fetchNow`): only phones
-/// allowed by the core's role flag (gateway-only for now), then the gateway network rules
+/// allowed by the core's role flag (any phone with internet), then the gateway network rules
 /// (Wi-Fi-only unless mobile data is allowed, metered warning, 500 MB/day cap).
 public enum NewsFetchRules {
     public static func plan(core: OmcpCore, store: AppStore, network: NetworkType, metered: Bool, nowMs: Int64) -> NewsFetchPlan? {
@@ -734,7 +734,7 @@ public extension OmcpCore {
     func newsCardText(id: String) -> String? { nil }
     func newsFetchPlan(wifiOnly: Bool, network: NetworkType, metered: Bool, nowMs: Int64) -> NewsFetchPlan { NewsFetchPlan() }
     func newsIngestRss(feedUrl: String, body: String, nowMs: Int64) throws -> Int { 0 }
-    func newsMayFetch(gatewayEnabled: Bool) -> Bool { gatewayEnabled }
+    func newsMayFetch(gatewayEnabled: Bool) -> Bool { true }
     func moderationHasTeam() -> Bool { false }
     func moderationLog() -> [TeamLogEntryModel] { [] }
     func moderationPublish(actionHex: String) -> String { "no_team" }
