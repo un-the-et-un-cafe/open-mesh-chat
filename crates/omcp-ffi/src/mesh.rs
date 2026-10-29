@@ -186,6 +186,8 @@ pub(crate) struct MeshState {
     pub moderation: omcp_core::moderation::ModerationState,
     /// Live audio (never persisted).
     pub live: crate::live::LiveState,
+    /// Communities (MLS groups) and their control outbox.
+    pub community: crate::community::CommunityState,
 }
 
 impl MeshState {
@@ -202,6 +204,7 @@ impl MeshState {
             team: crate::moderation::shipped_policy(),
             moderation: Default::default(),
             live: Default::default(),
+            community: Default::default(),
         }
     }
 
@@ -362,6 +365,8 @@ impl NodeState {
         }
         self.mesh = mesh;
         self.load_moderation()?;
+        self.load_communities()?;
+        self.enforce_live_moderation();
         self.load_news(now)
     }
 

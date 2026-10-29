@@ -40,6 +40,8 @@ public final class FakeOmcpCore: OmcpCore {
     public func liveTakeSignals() -> [LiveSignalModel] { defer { fakeSignals = [] }; return fakeSignals }
     public func liveVideoDrop(peerHex: String) { droppedPeers.append(peerHex) }
     public func liveMediaKey() -> LiveMediaKeyModel? { fakeMediaKey }
+    public var fakeLiveStarted: [(String, String)] = []
+    public func liveTakeStarted() -> [(String, String)] { defer { fakeLiveStarted = [] }; return fakeLiveStarted }
 
     public func meshStats() -> MeshRelayStats { fakeMeshStats }
     public var maxFile: UInt64 = 50_000_000

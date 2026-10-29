@@ -431,4 +431,27 @@
     <string name="news_reason_network">network error or timeout</string>
     <string name="news_reason_not_rss">the reply was a web page, not a news feed</string>
     <string name="news_reason_http">server error (HTTP %1$s)</string>
+    <string name="community_invite_t">Join %1$s?</string>
+    <string name="community_invite_from">Invited by %1$s</string>
+    <string name="community_accept">Join</string>
+    <string name="community_decline">Not now</string>
+    <string name="community_none">You’re not in a community yet. Create one, or ask a friend to invite you.</string>
+    <string name="community_sub">%1$d members</string>
+    <string name="community_sub_live">%1$d members · %2$d live now</string>
+    <string name="community_removed">Removed by the Hopla team</string>
+    <string name="community_removed_body">The Hopla team removed this community. Its lives can’t be started or watched, and its posts aren’t passed on.</string>
+    <string name="community_create_t">Create a community</string>
+    <string name="community_create_d">Up to 32 people you invite from your contacts. Everything stays end-to-end encrypted.</string>
+    <string name="community_name">Name</string>
+    <string name="community_create">Create</string>
+    <string name="community_no_live">Nobody in this community is live right now.</string>
+    <string name="community_live_body">Every member can listen and gets a notification. The key comes from the community’s encrypted group, so phones in between can’t listen.</string>
+    <string name="community_live_host_note">Tap Remove next to a member to stop them watching. The key changes for everyone else.</string>
+    <string name="community_members">Members (%1$d)</string>
+    <string name="community_you">You</string>
+    <string name="community_invite_h">Invite a contact</string>
+    <string name="community_invite">Invite</string>
+    <string name="community_invited">Invited</string>
+    <string name="live_remove_viewer">Remove</string>
+    <string name="live_taken_down">The Hopla team took this live down. It stopped on this phone.</string>
 </resources>

@@ -106,6 +106,8 @@ struct LiveTabView: View {
     }
 
     private func reload() {
+        // Team takedown: stop the mic and camera, close every WebRTC peer.
+        if !model.core.liveTakeEnded().isEmpty { session?.stop() }
         streams = model.core.liveStreams()
         stats = model.core.liveStats()
         // The host ended the stream we were in.

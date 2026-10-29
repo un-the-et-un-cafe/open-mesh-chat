@@ -356,6 +356,22 @@ interface OmcpCore {
     fun liveMediaKey(): LiveMediaKeyUi? = null
     fun liveStunServers(): List<String> = listOf("stun:stun.l.google.com:19302")
 
+    // Communities (MLS groups) and Live inside a community.
+    fun communities(): List<CommunityUi> = emptyList()
+    fun communityCreate(name: String): CommunityUi? = null
+    fun communityInvite(communityId: String, contactId: String): Boolean = false
+    fun communityInvites(): List<CommunityInviteUi> = emptyList()
+    fun communityAccept(communityId: String): Boolean = false
+    fun communityDecline(communityId: String) {}
+    fun communityMembers(communityId: String): List<CommunityMemberUi> = emptyList()
+    /** Key from the community MLS exporter; every member is notified (generic text). */
+    fun liveStartCommunity(communityId: String, title: String, video: Boolean): String? = null
+    /** Community lives that started since the last call (stream id to community id). */
+    fun liveTakeStarted(): List<Pair<String, String>> = emptyList()
+    /** Streams stopped by a team takedown: stop mic/camera and close every WebRTC peer. */
+    fun liveTakeEnded(): List<LiveEndedUi> = emptyList()
+    fun moderationLiveRemovedReason(streamIdHex: String): Int? = null
+
     // Team moderation (PROTOCOL §23.9, TM1–TM4).
     /** Whether this build ships a moderation team (config/team_moderation.conf). */
     fun moderationHasTeam(): Boolean = false
@@ -438,7 +454,26 @@ data class LiveStreamUi(
     val listening: Boolean,
     val video: Boolean,
     val startedMs: Long,
+    /** Hex community id for a community live, empty for a contact-picked one. */
+    val communityId: String = "",
 )
+
+data class CommunityUi(
+    val id: String,
+    val name: String,
+    val members: Int,
+    val founderIsMe: Boolean,
+    /** Team takedown reason code (§23.9), null if not removed. */
+    val removedReason: Int? = null,
+    val liveCount: Int = 0,
+)
+
+data class CommunityInviteUi(val communityId: String, val name: String, val fromContactId: String)
+
+data class CommunityMemberUi(val peerId: String, val name: String, val isContact: Boolean, val isMe: Boolean)
+
+/** A stream stopped here: [reason] "taken_down" (team moderation). */
+data class LiveEndedUi(val streamIdHex: String, val reason: String, val mine: Boolean)
 
 /** One 20 ms slot: [opus] empty when lost. */
 class LivePlayoutUi(val index: Long, val opus: ByteArray, val lost: Boolean, val fecNext: ByteArray?)
@@ -458,4 +493,6 @@ data class LiveStatsUi(
     val forwarded: Long = 0,
     val droppedCongested: Long = 0,
     val listeners: Int = 0,
+    /** Packets of taken-down streams this phone refused to relay. */
+    val droppedModeration: Long = 0,
 )

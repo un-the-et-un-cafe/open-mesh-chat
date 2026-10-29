@@ -77,6 +77,7 @@ impl NodeState {
         match self.mesh.moderation.apply(&policy, a, now_ms()) {
             Ok(_) => {
                 self.save_moderation()?;
+                self.enforce_live_moderation();
                 Ok(TeamActionResult::Applied)
             }
             Err(r) => Ok(r.into()),
@@ -145,6 +146,8 @@ impl OmcpNode {
                 kind: match e.kind {
                     ActionKind::Takedown => "takedown".into(),
                     ActionKind::Restore => "restore".into(),
+                    ActionKind::TakedownLive => "takedown_live".into(),
+                    ActionKind::RestoreLive => "restore_live".into(),
                 },
                 community_id_hex: hex::encode(e.community_id),
                 reason_code: e.reason_code,
@@ -154,6 +157,17 @@ impl OmcpNode {
                 applied_ms: e.applied_ms,
             })
             .collect()
+    }
+
+    /// Reason code if this live stream was taken down by the team.
+    pub fn moderation_live_removed_reason(&self, stream_id_hex: String) -> Option<u8> {
+        let id: [u8; 16] = hex::decode(stream_id_hex.trim()).ok()?.try_into().ok()?;
+        self.inner
+            .lock()
+            .mesh
+            .moderation
+            .live_removal(&id)
+            .map(|r| r.reason.code())
     }
 
     /// Reason code if the community was removed by the team, else `None`.

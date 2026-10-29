@@ -8,7 +8,7 @@
 //! - Live packets are never stored and are dropped (not queued) when a link
 //!   already has [`LIVE_QUEUE_CAP`] waiting; chat frames go ahead of them.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use omcp_core::burn::AppContent;
 use omcp_core::live::audio::is_live_audio;
@@ -25,19 +25,47 @@ use crate::{invalid, now_ms, parse_id, FfiError, LinkOutput, NodeState, OmcpNode
 
 #[derive(Default)]
 pub(crate) struct LiveState {
-    relay: LiveRelay,
-    host: Option<HostSession>,
+    pub(crate) relay: LiveRelay,
+    pub(crate) host: Option<HostSession>,
     /// Streams we were invited to: stream id → (host contact, invite).
-    known: HashMap<[u8; 16], ([u8; 32], LiveInvite)>,
-    listening: Option<ListenerSession>,
-    forwarded: u64,
-    dropped_congested: u64,
+    pub(crate) known: HashMap<[u8; 16], ([u8; 32], LiveInvite)>,
+    pub(crate) listening: Option<ListenerSession>,
+    pub(crate) forwarded: u64,
+    pub(crate) dropped_congested: u64,
     /// Host: online video tree + signal router.
-    video: VideoRouter,
+    pub(crate) video: VideoRouter,
     /// Signals for our app (offer/answer/ICE/assign/bye).
-    signals_in: Vec<LiveSignalIn>,
+    pub(crate) signals_in: Vec<LiveSignalIn>,
     /// Host: signals to relay to viewers (sent on the next poll, outside the lock).
     pub(crate) pending_fwd: Vec<Routed>,
+    /// Community lives announced to us (lock-screen notification, no content).
+    pub(crate) started: Vec<LiveStarted>,
+    /// Streams that stopped here because of a team takedown.
+    pub(crate) ended: Vec<LiveEnded>,
+    /// Host of a community live: the announcement nonce.
+    pub(crate) community_nonce: Option<[u8; 32]>,
+    /// Host of a community live: members removed from this stream (cumulative).
+    pub(crate) removed_viewers: Vec<[u8; 32]>,
+    /// Public audio tags of taken-down streams: relays drop them.
+    pub(crate) blocked_tags: BTreeSet<[u8; 8]>,
+    pub(crate) dropped_moderation: u64,
+}
+
+/// A community member went live (poll `live_take_started`).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct LiveStarted {
+    pub stream_id_hex: String,
+    pub community_id_hex: String,
+}
+
+/// A stream ended here for a reason other than the host stopping.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct LiveEnded {
+    pub stream_id_hex: String,
+    /// `taken_down` (team moderation) or `removed` (the host removed you).
+    pub reason: String,
+    /// We were the host.
+    pub mine: bool,
 }
 
 /// WebRTC signal kinds (PROTOCOL §20.3, content type 0x50).
@@ -114,6 +142,8 @@ pub struct LiveStreamInfo {
     /// The host offers video (needs internet on both ends).
     pub video: bool,
     pub started_ms: u64,
+    /// Hex community id for a community live, empty for a contact-picked one.
+    pub community_id_hex: String,
 }
 
 /// One 20 ms slot for the player.
@@ -133,6 +163,8 @@ pub struct LiveStats {
     pub forwarded: u64,
     pub dropped_congested: u64,
     pub listeners: u32,
+    /// Packets of taken-down streams this phone refused to relay.
+    pub dropped_moderation: u64,
 }
 
 fn is_live_out(f: &OutFrame) -> bool {
@@ -163,6 +195,13 @@ impl NodeState {
     pub(crate) fn on_live_frame(&mut self, from: u64, frame: &[u8], now: u64) -> bool {
         if !is_live_audio(frame) {
             return false;
+        }
+        if omcp_core::live::audio::AudioHeader::parse(frame)
+            .is_ok_and(|h| self.mesh.live.blocked_tags.contains(&h.tag))
+        {
+            // Team takedown: neither played nor relayed (§23.9).
+            self.mesh.live.dropped_moderation += 1;
+            return true;
         }
         let d = self.mesh.live.relay.on_packet(frame, now);
         if d.deliver {
@@ -241,7 +280,21 @@ impl NodeState {
             return Ok(()); // malformed invite: ignore
         };
         inv.host = peer; // the authenticated sender is the host
+        inv.community_id = None; // community lives only come through the group
         let id = inv.key.stream_id;
+        if inv.live {
+            // Frames must be signed by the host's identity key: it has to be
+            // the sender's (PeerID = BLAKE2b(identity key), or the pinned key).
+            let pinned = self
+                .contacts
+                .get(&peer)
+                .and_then(|c| c.device.identity_sign.clone());
+            let ok = omcp_core::device::peer_id_from_identity(&inv.host_key) == peer
+                || pinned.as_deref() == Some(inv.host_key.as_slice());
+            if !ok || !self.mesh.moderation.live_allowed(&id, None) {
+                return Ok(());
+            }
+        }
         if !inv.live {
             self.mesh.live.known.remove(&id);
             if self
@@ -265,6 +318,65 @@ impl NodeState {
             }
         }
         Ok(())
+    }
+}
+
+impl NodeState {
+    pub(crate) fn stop_hosting_quietly(&mut self) {
+        self.mesh.live.video = VideoRouter::new();
+        self.mesh.live.signals_in.clear();
+        self.mesh.live.community_nonce = None;
+    }
+
+    /// The host ended a stream we know.
+    pub(crate) fn live_ended_remote(&mut self, id: &[u8; 16]) {
+        self.mesh.live.known.remove(id);
+        if self
+            .mesh
+            .live
+            .listening
+            .as_ref()
+            .is_some_and(|l| l.invite.key.stream_id == *id)
+        {
+            self.mesh.live.listening = None;
+            self.mesh.live.signals_in.clear();
+        }
+    }
+
+    /// Apply team takedowns to lives (after any accepted moderation action):
+    /// the host stops broadcasting, viewers stop playing, relays stop forwarding.
+    pub(crate) fn enforce_live_moderation(&mut self) {
+        let m = &self.mesh.moderation;
+        let lv = &mut self.mesh.live;
+        lv.blocked_tags = m.removed_live_tags();
+        if let Some(h) = lv.host.as_ref() {
+            if !m.live_allowed(&h.stream_id(), h.community_id.as_ref()) {
+                lv.ended.push(LiveEnded {
+                    stream_id_hex: hex::encode(h.stream_id()),
+                    reason: "taken_down".into(),
+                    mine: true,
+                });
+                lv.host = None;
+                lv.video = VideoRouter::new();
+                lv.signals_in.clear();
+                lv.pending_fwd.clear();
+                lv.community_nonce = None;
+            }
+        }
+        if let Some(l) = lv.listening.as_ref() {
+            let i = &l.invite;
+            if !m.live_allowed(&i.key.stream_id, i.community_id.as_ref()) {
+                lv.ended.push(LiveEnded {
+                    stream_id_hex: hex::encode(i.key.stream_id),
+                    reason: "taken_down".into(),
+                    mine: false,
+                });
+                lv.listening = None;
+                lv.signals_in.clear();
+            }
+        }
+        lv.known
+            .retain(|id, (_, i)| m.live_allowed(id, i.community_id.as_ref()));
     }
 }
 
@@ -348,13 +460,13 @@ impl OmcpNode {
             }
             let mut h = HostSession::start([0; 32], &title, video, now_ms())
                 .map_err(|_| invalid("live start"))?;
+            h.set_signer(self.signing_key()?);
             for id in &ids {
                 h.add_listener(*id);
             }
             let inv = h.invite(true);
+            st.stop_hosting_quietly();
             st.mesh.live.host = Some(h);
-            st.mesh.live.video = VideoRouter::new();
-            st.mesh.live.signals_in.clear();
             inv
         };
         for id in &ids {
@@ -380,6 +492,29 @@ impl OmcpNode {
     /// Remove a listener: the key rotates and the others get the new key (LV4).
     pub fn live_remove_listener(&self, contact_id: String) -> Result<(), FfiError> {
         let id = parse_id(&contact_id)?;
+        let community = {
+            let st = self.inner.lock();
+            st.mesh.live.host.as_ref().and_then(|h| h.community_id)
+        };
+        if let Some(cid) = community {
+            // Community live: everyone else gets a host-signed new key; the
+            // removed member can't derive it from the community exporter.
+            {
+                let mut st = self.inner.lock();
+                if !st.mesh.live.removed_viewers.contains(&id) {
+                    st.mesh.live.removed_viewers.push(id);
+                }
+                let ex = st.mesh.live.removed_viewers.clone();
+                st.community_rekey(&cid, ex)?;
+                if let Some(h) = st.mesh.live.host.as_mut() {
+                    h.remove_listener(&id).map_err(|_| invalid("rotate"))?;
+                }
+                let fwd = st.mesh.live.video.leave(&id);
+                st.mesh.live.pending_fwd.extend(fwd);
+            }
+            self.drain_community_outbox();
+            return Ok(());
+        }
         let (inv, notify) = {
             let mut st = self.inner.lock();
             let Some(h) = st.mesh.live.host.as_mut() else {
@@ -402,8 +537,27 @@ impl OmcpNode {
         let h = {
             let mut st = self.inner.lock();
             st.mesh.live.video = VideoRouter::new();
-            st.mesh.live.host.take()
+            let h = st.mesh.live.host.take();
+            let nonce = st.mesh.live.community_nonce.take();
+            if let (Some(h), Some(nonce)) = (h.as_ref(), nonce) {
+                if let Some(cid) = h.community_id {
+                    let a = omcp_core::live::community::CommunityLive {
+                        community_id: cid,
+                        stream_id: h.stream_id(),
+                        nonce,
+                        title: h.title.clone(),
+                        started_ms: h.started_ms,
+                        video: h.video,
+                        max_hops: h.max_hops,
+                        live: false,
+                        host_key: h.host_key(),
+                    };
+                    let _ = st.announce_live(&cid, &a);
+                }
+            }
+            h
         };
+        self.drain_community_outbox();
         if let Some(h) = h {
             let inv = h.invite(false);
             for c in h.listeners() {
@@ -418,6 +572,7 @@ impl OmcpNode {
     pub fn live_push_audio(&self, frames: Vec<Vec<u8>>) -> Result<Vec<u64>, FfiError> {
         let mut st = self.inner.lock();
         let now = now_ms();
+        st.enforce_live_moderation();
         let Some(h) = st.mesh.live.host.as_mut() else {
             return Err(invalid("not live"));
         };
@@ -540,6 +695,7 @@ impl OmcpNode {
                 listening: false,
                 video: h.video,
                 started_ms: h.started_ms,
+                community_id_hex: h.community_id.map(hex::encode).unwrap_or_default(),
             })
             .collect();
         let mut others: Vec<_> = lv
@@ -553,6 +709,7 @@ impl OmcpNode {
                 listening: listening == Some(*id),
                 video: inv.video,
                 started_ms: inv.started_ms,
+                community_id_hex: inv.community_id.map(hex::encode).unwrap_or_default(),
             })
             .collect();
         others.sort_by_key(|s| std::cmp::Reverse(s.started_ms));
@@ -571,6 +728,13 @@ impl OmcpNode {
             .get(&id)
             .map(|(_, i)| i.clone())
             .ok_or_else(|| invalid("unknown stream"))?;
+        if !st
+            .mesh
+            .moderation
+            .live_allowed(&id, inv.community_id.as_ref())
+        {
+            return Err(invalid("live taken down"));
+        }
         st.mesh.live.listening = Some(ListenerSession::new(inv, has_internet));
         Ok(())
     }
@@ -617,7 +781,22 @@ impl OmcpNode {
             forwarded: lv.forwarded,
             dropped_congested: lv.dropped_congested,
             listeners: lv.host.as_ref().map_or(0, |h| h.listeners().len() as u32),
+            dropped_moderation: lv.dropped_moderation,
         }
+    }
+
+    /// Community lives that started since the last call: show a lock-screen
+    /// notification with the generic text (no title, no host name).
+    pub fn live_take_started(&self) -> Vec<LiveStarted> {
+        std::mem::take(&mut self.inner.lock().mesh.live.started)
+    }
+
+    /// Streams stopped here by a team takedown: stop the mic/camera, close
+    /// every WebRTC connection (so relaying viewers stop forwarding video).
+    pub fn live_take_ended(&self) -> Vec<LiveEnded> {
+        let mut st = self.inner.lock();
+        st.enforce_live_moderation();
+        std::mem::take(&mut st.mesh.live.ended)
     }
 }
 

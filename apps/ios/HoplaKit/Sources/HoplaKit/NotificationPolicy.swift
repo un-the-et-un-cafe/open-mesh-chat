@@ -46,6 +46,15 @@ public enum NotificationPolicy {
             threadId: chatId)
     }
 
+    /// A community member went live: always generic ("Hopla" / "New message"),
+    /// never the title, host or community, whatever the privacy setting.
+    public static func liveStartedContent(_ store: AppStore, genericBody: String) -> NotificationContent {
+        NotificationContent(
+            title: appName, body: genericBody, showAvatar: false, isPrivate: true,
+            hiddenPreviewsPlaceholder: genericBody, hideOnLockScreen: store.hideOnLockScreen,
+            threadId: "hopla")
+    }
+
     /// Incoming call (decision 1). Private: "Hopla · Incoming call", no caller name.
     public static func callContent(
         _ store: AppStore, chatId: String, caller: String, genericCall: String

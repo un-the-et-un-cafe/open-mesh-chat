@@ -62,6 +62,12 @@ class LiveVideoController(
     /** Call every ~50–100 ms with the audio loop. */
     @Synchronized fun poll(now: Long) {
         if (state == VideoState.Off) return
+        // No key = the stream ended or was taken down by the team: close every
+        // connection, so we neither play nor forward video to our children.
+        if (core.liveMediaKey() == null && key != null) {
+            peers.closeAll(); children.clear(); parent = null; key = null; state = VideoState.Off
+            return
+        }
         refreshKey()
         for (s in core.liveTakeSignals()) when (s.kind) {
             "assign" -> if (s.peerHex !in children && children.size < maxChildren) {

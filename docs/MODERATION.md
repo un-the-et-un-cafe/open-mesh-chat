@@ -22,7 +22,14 @@ Implements PROTOCOL §23.9 (App-team moderation) and REQUIREMENTS TM1–TM4 in `
 ```
 TAKEDOWN{community_id[32], reason_code, note, epoch, sigs[]}
 RESTORE {community_id[32], epoch, sigs[]}
+TAKEDOWN_LIVE{stream_id[16] ‖ 0[16], reason_code, note, epoch, sigs[]}   // kind 3
+RESTORE_LIVE {stream_id[16] ‖ 0[16], epoch, sigs[]}                      // kind 4
 ```
+
+Live takedowns use the **same** team keys, threshold, verification (`verify_strict`), envelope, tag,
+propagation and transparency log as community actions; only the kind byte and the target differ. The
+kind is inside the signed body, so a community action can't be replayed as a live one. Live targets
+keep their own epochs (a separate map), so they never collide with community epochs.
 
 Signed body: `"OMCP-team-mod-v1" ‖ 0x00 ‖ kind (1 takedown, 2 restore) ‖ community_id ‖ epoch u64 BE ‖
 reason u8 (0 for restore) ‖ note_len u16 BE ‖ note`. Signatures are Ed25519 (`verify_strict`), one
@@ -63,6 +70,26 @@ joins and posts, and show "This community was removed by the Hopla team" with th
 its envelopes (`ModerationState::relay_allows`). The module never reads, changes or deletes 1:1 or
 group chats (MR10).
 
+### Lives
+
+A live is blocked when its stream is taken down (`TAKEDOWN_LIVE`) **or** its community is
+(`ModerationState::live_allowed`). On every accepted action the FFI runs `enforce_live_moderation`:
+
+- **Host:** the session is dropped, `live_push_audio` fails, and `live_take_ended` reports
+  `taken_down`, so the app stops the mic and camera and closes every WebRTC connection. A new live in a
+  removed community is refused.
+- **Viewer:** listening stops, the stream key is dropped (`live_media_key` = none), joining is refused,
+  and the app closes its peer connections. Without a key, `LiveVideoController.poll` closes every peer
+  (Android and iOS), so a relaying viewer also stops forwarding video to its children.
+- **Relays (any phone):** mesh audio packets whose public tag (`BLAKE2b-64(stream_id)`) belongs to a
+  taken-down stream are neither played nor forwarded (`LiveStats.dropped_moderation`). Community
+  announcements of a removed community are neither applied nor forwarded.
+- **Spread:** the same as community actions: a public high-priority envelope over the mesh, re-offered
+  at every encounter, or pasted on an online phone.
+
+The input to `team_mod takedown-live` is the 32-hex stream id. There is no "Report this live" screen
+yet that shows it to users (design gap); today the team gets it from a reporter's debug build.
+
 ## Transparency (TM2, MR9)
 
 Every accepted takedown and restore is appended to a log persisted in the encrypted store and shown
@@ -78,6 +105,8 @@ cargo run -p omcp-core --example team_mod -- keygen ~/hopla-team.key   # prints 
 # put that public key in config/team_moderation.conf as `team_key = …`, then release the app
 cargo run -p omcp-core --example team_mod -- takedown ~/hopla-team.key <community_id_hex> 1 <epoch> "note"
 cargo run -p omcp-core --example team_mod -- restore  ~/hopla-team.key <community_id_hex> <epoch>
+cargo run -p omcp-core --example team_mod -- takedown-live ~/hopla-team.key <stream_id_hex> 3 <epoch> "note"
+cargo run -p omcp-core --example team_mod -- restore-live  ~/hopla-team.key <stream_id_hex> <epoch>
 ```
 
 `keygen` writes the secret key to a new 0600 file outside the repo. Keep it offline (§23.9(8)). Paste
@@ -95,12 +124,19 @@ only appears in builds that ship a team. If a key is compromised, remove it in t
 | RESTORE ordering (in order and out of order) | core `restore_lifts_only_older_takedown_and_old_takedown_cannot_come_back` |
 | Mesh propagation and restore, private chats untouched | FFI `tm_takedown_gossips_to_neighbour_and_restore_undoes_it` |
 | Persistence across restart, shipped config parses | FFI `tm_moderation_state_survives_restart_and_shipped_policy_parses` |
+| Live takedown/restore with the team key, own epochs, community takedown blocks its lives | core `live_takedown_and_restore_use_the_team_key_with_own_epochs` |
+| Unsigned, foreign or community-signature-reused live takedowns rejected | core `unsigned_foreign_or_reinterpreted_live_takedowns_are_rejected`; FFI `unsigned_foreign_or_replayed_live_takedowns_are_ignored` |
+| A valid live takedown stops host, viewer and relay (over the mesh) | FFI `live_takedown_stops_host_viewer_and_relay` |
+| Community takedown stops its lives and blocks new ones | FFI `community_takedown_blocks_its_lives_and_announcements` |
 | App without team ignores actions | core `app_without_team_ignores_everything`; Android `TeamModerationTest` |
 
 ## Gaps
 
-- Communities are a v0.2 feature and are not built yet, so nothing is hidden on screen today. The API
-  (`moderation_removed_reason`, `relay_allows`) and the log are ready for the communities code to call.
+- Communities exist now (minimal v0.2 cut, `omcp-ffi/src/community.rs`): removed ones show the removal
+  banner, can't start or join lives, and their announcements are not forwarded. Community posts and
+  search don't exist yet, so there is nothing else to hide.
+- A phone running another app (no team) keeps hosting after a live takedown. Compliant relays then
+  drop its audio, but a direct WebRTC link to a non-compliant viewer is out of our reach.
 - The maintainer public key is not in the config yet (shipped default: no team).
 - The jury appeal (§23.5) and the ⅔ "fine" result next to a takedown are not implemented.
 - MR7's 10-minute bound is not measured. Actions spread at the next encounter like other high-priority

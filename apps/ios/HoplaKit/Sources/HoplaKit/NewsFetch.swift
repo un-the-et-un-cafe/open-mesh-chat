@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 /// Outcome of one Google News RSS GET (same rules as Android `NewsHttp.classify`).
 public enum NewsHttpResult: Equatable, Sendable {

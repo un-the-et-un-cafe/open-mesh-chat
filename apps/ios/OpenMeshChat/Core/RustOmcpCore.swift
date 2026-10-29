@@ -212,7 +212,8 @@ public final class RustOmcpCore: HoplaKit.OmcpCore {
     public func liveStreams() -> [LiveStreamModel] {
         (node?.liveStreams() ?? []).map {
             LiveStreamModel(streamIdHex: $0.streamIdHex, title: $0.title, hostContactId: $0.hostContactId,
-                            mine: $0.mine, listening: $0.listening, video: $0.video, startedMs: Int64($0.startedMs))
+                            mine: $0.mine, listening: $0.listening, video: $0.video, startedMs: Int64($0.startedMs),
+                            communityId: $0.communityIdHex)
         }
     }
     public func liveJoin(streamIdHex: String, hasInternet: Bool) -> Bool {
@@ -241,6 +242,42 @@ public final class RustOmcpCore: HoplaKit.OmcpCore {
         node?.liveMediaKey().map { LiveMediaKeyModel(baseKey: $0.baseKey, kid: $0.kid) }
     }
     public func liveStunServers() -> [String] { OmcpFFI.liveStunServers() }
+    private static func community(_ c: CommunityInfo) -> CommunityModel {
+        CommunityModel(id: c.communityIdHex, name: c.name, members: Int(c.members), founderIsMe: c.founderIsMe,
+                       removedReason: c.removedReason.map { Int($0) }, liveCount: Int(c.liveCount))
+    }
+    public func communities() -> [CommunityModel] { (node?.communities() ?? []).map(Self.community) }
+    public func communityCreate(name: String) -> CommunityModel? {
+        (try? node?.communityCreate(name: name)).map(Self.community)
+    }
+    @discardableResult public func communityInvite(communityId: String, contactId: String) -> Bool {
+        guard let node else { return false }
+        return (try? node.communityInvite(communityIdHex: communityId, contactId: contactId)) != nil
+    }
+    public func communityInvites() -> [CommunityInviteModel] {
+        (node?.communityInvites() ?? []).map { CommunityInviteModel(communityId: $0.communityIdHex, name: $0.name, fromContactId: $0.fromContactId) }
+    }
+    @discardableResult public func communityAccept(communityId: String) -> Bool {
+        guard let node else { return false }
+        return (try? node.communityAccept(communityIdHex: communityId)) != nil
+    }
+    public func communityDecline(communityId: String) { try? node?.communityDecline(communityIdHex: communityId) }
+    public func communityMembers(communityId: String) -> [CommunityMemberModel] {
+        (node?.communityMembers(communityIdHex: communityId) ?? []).map {
+            CommunityMemberModel(peerId: $0.peerIdHex, name: $0.name, isContact: $0.isContact, isMe: $0.isMe)
+        }
+    }
+    public func liveStartCommunity(communityId: String, title: String, video: Bool) -> String? {
+        try? node?.liveStartCommunity(communityIdHex: communityId, title: title, video: video)
+    }
+    public func liveRemoveListener(contactId: String) { try? node?.liveRemoveListener(contactId: contactId) }
+    public func liveTakeStarted() -> [(String, String)] { (node?.liveTakeStarted() ?? []).map { ($0.streamIdHex, $0.communityIdHex) } }
+    public func liveTakeEnded() -> [LiveEndedModel] {
+        (node?.liveTakeEnded() ?? []).map { LiveEndedModel(streamIdHex: $0.streamIdHex, reason: $0.reason, mine: $0.mine) }
+    }
+    public func moderationLiveRemovedReason(streamIdHex: String) -> Int? {
+        node?.moderationLiveRemovedReason(streamIdHex: streamIdHex).map { Int($0) }
+    }
     private static func signalKind(_ k: String) -> LiveSignalKind? {
         switch k {
         case "offer": return .offer

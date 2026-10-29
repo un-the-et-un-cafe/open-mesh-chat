@@ -15,8 +15,13 @@
 //! (XChaCha20-Poly1305). Relays that are not listeners only see the public
 //! header (tag, sequence, hop count, time) and cannot decrypt. Removing a
 //! listener rotates the secret and bumps `key_epoch` ([`host::HostSession`]).
+//!
+//! Community lives ([`community`]) derive the epoch-0 secret from the
+//! community's MLS exporter plus a per-stream random nonce (PROTOCOL §20.3),
+//! so every member can derive it and nobody else can.
 
 pub mod audio;
+pub mod community;
 pub mod host;
 pub mod jitter;
 pub mod mode;
@@ -161,6 +166,13 @@ pub struct LiveInvite {
     pub key: StreamKey,
     /// `false` = the stream ended (sent to listeners on stop).
     pub live: bool,
+    /// Host's Ed25519 identity key: every audio packet is signed with it
+    /// (receivers check it against the sender's PeerID / pinned key).
+    #[serde(default)]
+    pub host_key: [u8; 32],
+    /// Set for a community live (key from the community MLS exporter).
+    #[serde(default)]
+    pub community_id: Option<[u8; 32]>,
 }
 
 /// MIME used to carry a [`LiveInvite`] inside an E2EE chat message.

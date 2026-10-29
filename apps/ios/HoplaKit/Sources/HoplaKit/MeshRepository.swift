@@ -424,6 +424,14 @@ public final class MeshRepository {
         r.mediaRequests.forEach(onMediaRequest)
         r.resendAsks.forEach(onResendAsk)
         r.mediaUpdates.forEach(onMediaUpdate)
+        notifyLiveStarts()
+    }
+
+    /// Community lives announced since the last step: generic lock-screen notification.
+    public func notifyLiveStarts() {
+        for (sid, _) in core.liveTakeStarted() {
+            notifier?.post(NotificationPolicy.liveStartedContent(store, genericBody: genericBody), id: "live-" + sid)
+        }
     }
 
     /// Mesh status changes (handed to a relay → sent, ack → delivered); never goes backwards.

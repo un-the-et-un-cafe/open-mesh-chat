@@ -477,6 +477,26 @@ impl OmcpMlsMember {
         Ok(s)
     }
 
+    /// Community live secret input (PROTOCOL §20.3):
+    /// `MLS-Exporter("OMCP-live-v1", community_id ‖ stream_id, 32)` at the
+    /// current MLS epoch. Every member derives the same value; non-members can't.
+    pub fn live_exporter(&self, community_id: &[u8; 32], stream_id: &[u8; 16]) -> Result<[u8; 32]> {
+        let group = self.group_ref()?;
+        let mut ctx = community_id.to_vec();
+        ctx.extend_from_slice(stream_id);
+        let out = group
+            .export_secret(
+                self.provider.crypto(),
+                crate::live::community::LIVE_EXPORTER_LABEL,
+                &ctx,
+                32,
+            )
+            .map_err(|_| OmcpError::Mls("export_secret"))?;
+        let mut s = [0u8; 32];
+        s.copy_from_slice(&out);
+        Ok(s)
+    }
+
     /// Build PQ encapsulations to `others` for the current epoch.
     ///
     /// Returns `(extension_bytes, kem_shared_secrets, hybrid_exporter)`.

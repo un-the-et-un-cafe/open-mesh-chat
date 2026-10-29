@@ -611,6 +611,8 @@ class BleMeshTransport(private val context: Context, private val repo: MeshRepos
         r.peerContactId?.let { repo.markFlushed(it, r.flushed) } ?: repo.refresh()
         if (r.relayLinks.isNotEmpty()) queueRelay(r.relayLinks)
         repo.onStatusUpdates(runCatching { repo.core.meshTakeStatusUpdates() }.getOrDefault(emptyList()))
+        runCatching { repo.core.liveTakeStarted() }.getOrDefault(emptyList())
+            .forEach { (sid, _) -> MeshNotifications.onLiveStarted(context, sid) }
     }
 
     /** New text queued for [contactId]: flush on whichever link to them is up. */

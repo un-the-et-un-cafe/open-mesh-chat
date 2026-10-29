@@ -40,6 +40,8 @@ class LiveViewModel(
         val stats: LiveStatsUi = LiveStatsUi(),
         val error: String? = null,
         val video: VideoState = VideoState.Off,
+        /** "taken_down" after a team takedown stopped our stream. */
+        val notice: String? = null,
     )
 
     /** For the renderer (WebRTC builds only). */
@@ -49,6 +51,13 @@ class LiveViewModel(
     val state: StateFlow<State> = _state.asStateFlow()
 
     fun refresh() {
+        // Team takedown (same key as community moderation): stop the mic and
+        // camera and close every WebRTC peer, so we neither play nor forward.
+        val ended = core.liveTakeEnded()
+        if (ended.isNotEmpty()) {
+            audio?.stop(); stopVideo(); wasListening = false
+            _state.value = _state.value.copy(notice = ended.first().reason)
+        }
         val all = core.liveStreams()
         _state.value = _state.value.copy(
             streams = all.filter { !it.mine },
@@ -74,6 +83,27 @@ class LiveViewModel(
         refresh()
         return true
     }
+
+    /** Go live inside a community: every member can listen; key from the community MLS group. */
+    fun goLiveCommunity(communityId: String, title: String, hasInternet: Boolean): Boolean {
+        leave()
+        val id = core.liveStartCommunity(communityId, title.ifBlank { "Live" }, video = hasInternet && VIDEO_ENABLED)
+        if (id == null) { _state.value = _state.value.copy(error = "start"); return false }
+        _state.value = _state.value.copy(notice = null)
+        audio?.startHosting()
+        if (hasInternet && video != null) startVideo { it.startHosting() }
+        refresh()
+        return true
+    }
+
+    /** Host: remove a viewer. The key rotates; the removed person can't decrypt new frames. */
+    fun removeViewer(peerId: String) {
+        if (_state.value.hosting == null) return
+        core.liveRemoveListener(peerId)
+        refresh()
+    }
+
+    fun dismissNotice() { _state.value = _state.value.copy(notice = null) }
 
     fun stopLive() {
         audio?.stop()

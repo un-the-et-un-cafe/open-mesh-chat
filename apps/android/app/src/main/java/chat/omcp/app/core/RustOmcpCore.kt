@@ -191,7 +191,7 @@ class RustOmcpCore : OmcpCore {
     override fun livePushAudio(frames: List<ByteArray>): List<Long> =
         runCatching { node?.livePushAudio(frames)?.map { it.toLong() } }.getOrNull() ?: emptyList()
     override fun liveStreams(): List<LiveStreamUi> = node?.liveStreams()?.map {
-        LiveStreamUi(it.streamIdHex, it.title, it.hostContactId, it.mine, it.listening, it.video, it.startedMs.toLong())
+        LiveStreamUi(it.streamIdHex, it.title, it.hostContactId, it.mine, it.listening, it.video, it.startedMs.toLong(), it.communityIdHex)
     } ?: emptyList()
     override fun liveJoin(streamIdHex: String, hasInternet: Boolean): Boolean =
         runCatching { node?.liveJoin(streamIdHex, hasInternet) != null }.getOrDefault(false)
@@ -200,7 +200,7 @@ class RustOmcpCore : OmcpCore {
         LivePlayoutUi(it.index.toLong(), it.opus, it.lost, it.fecNext)
     } ?: emptyList()
     override fun liveStats(): LiveStatsUi = node?.liveStats()?.let {
-        LiveStatsUi(it.played.toLong(), it.lost.toLong(), it.forwarded.toLong(), it.droppedCongested.toLong(), it.listeners.toInt())
+        LiveStatsUi(it.played.toLong(), it.lost.toLong(), it.forwarded.toLong(), it.droppedCongested.toLong(), it.listeners.toInt(), it.droppedModeration.toLong())
     } ?: LiveStatsUi()
     override fun liveVideoJoin() { runCatching { node?.liveVideoJoin() } }
     override fun liveSendSignal(peerHex: String, kind: String, body: String): Boolean {
@@ -213,6 +213,30 @@ class RustOmcpCore : OmcpCore {
     override fun liveVideoDrop(peerHex: String) { runCatching { node?.liveVideoDrop(peerHex) } }
     override fun liveMediaKey(): LiveMediaKeyUi? = node?.liveMediaKey()?.let { LiveMediaKeyUi(it.baseKey, it.kid.toLong()) }
     override fun liveStunServers(): List<String> = chat.omcp.ffi.liveStunServers()
+    private fun community(c: chat.omcp.ffi.CommunityInfo) =
+        CommunityUi(c.communityIdHex, c.name, c.members.toInt(), c.founderIsMe, c.removedReason?.toInt(), c.liveCount.toInt())
+    override fun communities(): List<CommunityUi> = node?.communities()?.map(::community) ?: emptyList()
+    override fun communityCreate(name: String): CommunityUi? =
+        runCatching { node?.communityCreate(name)?.let(::community) }.getOrNull()
+    override fun communityInvite(communityId: String, contactId: String): Boolean =
+        runCatching { node?.communityInvite(communityId, contactId) != null }.getOrDefault(false)
+    override fun communityInvites(): List<CommunityInviteUi> = node?.communityInvites()?.map {
+        CommunityInviteUi(it.communityIdHex, it.name, it.fromContactId)
+    } ?: emptyList()
+    override fun communityAccept(communityId: String): Boolean =
+        runCatching { node?.communityAccept(communityId) != null }.getOrDefault(false)
+    override fun communityDecline(communityId: String) { runCatching { node?.communityDecline(communityId) } }
+    override fun communityMembers(communityId: String): List<CommunityMemberUi> = node?.communityMembers(communityId)?.map {
+        CommunityMemberUi(it.peerIdHex, it.name, it.isContact, it.isMe)
+    } ?: emptyList()
+    override fun liveStartCommunity(communityId: String, title: String, video: Boolean): String? =
+        runCatching { node?.liveStartCommunity(communityId, title, video) }.getOrNull()
+    override fun liveTakeStarted(): List<Pair<String, String>> =
+        node?.liveTakeStarted()?.map { it.streamIdHex to it.communityIdHex } ?: emptyList()
+    override fun liveTakeEnded(): List<LiveEndedUi> =
+        node?.liveTakeEnded()?.map { LiveEndedUi(it.streamIdHex, it.reason, it.mine) } ?: emptyList()
+    override fun moderationLiveRemovedReason(streamIdHex: String): Int? =
+        node?.moderationLiveRemovedReason(streamIdHex)?.toInt()
     private fun signalKind(k: String) = chat.omcp.ffi.LiveSignalKind.entries.firstOrNull { it.name.equals(k, ignoreCase = true) }
     override fun moderationHasTeam() = node?.moderationHasTeam() ?: false
     override fun moderationLog(): List<TeamLogUi> = node?.moderationLog()?.map {

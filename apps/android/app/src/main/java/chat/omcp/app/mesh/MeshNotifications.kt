@@ -54,4 +54,25 @@ object MeshNotifications {
         // TODO(avatar): setLargeIcon(contact avatar) only when c.showAvatar; no avatars stored yet.
         NotificationManagerCompat.from(ctx).notify(msg.contactId.hashCode(), b.build())
     }
+
+    /**
+     * A community member went live. Always the generic text ("Hopla · New
+     * message"): no title, host or community name on the lock screen.
+     */
+    fun onLiveStarted(ctx: Context, streamIdHex: String) {
+        if (ctx.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
+        val (title, body) = liveStartedText(ctx.getString(R.string.app_name), ctx.getString(R.string.notif_new_message))
+        val n = NotificationCompat.Builder(ctx, CHANNEL_MESSAGES)
+            .setSmallIcon(R.drawable.ic_stat_mesh)
+            .setContentTitle(title)
+            .setContentText(body)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setCategory(NotificationCompat.CATEGORY_SOCIAL)
+            .setAutoCancel(true)
+            .build()
+        NotificationManagerCompat.from(ctx).notify(("live" + streamIdHex).hashCode(), n)
+    }
+
+    /** Lock-screen text for a live start: never content. */
+    fun liveStartedText(appName: String, genericNewMessage: String): Pair<String, String> = appName to genericNewMessage
 }
