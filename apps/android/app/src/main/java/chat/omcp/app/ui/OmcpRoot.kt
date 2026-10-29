@@ -144,19 +144,13 @@ fun OmcpRoot(
     }
 
     val nav = rememberNavController()
-    val newsVm = vm { NewsViewModel(repo) }
     val newsCtx = androidx.compose.ui.platform.LocalContext.current
+    val newsVm = vm { NewsViewModel(repo, network = { chat.omcp.app.data.NewsNet.current(newsCtx.applicationContext) }) }
     LaunchedEffect(Unit) {
-        // Gateway phones fetch Google News RSS when the gateway rules allow it.
+        // Foreground: fetch when the rules allow it (Rust: Wi-Fi-only default, metered warns, daily cap).
+        // In the background NewsFetchWorker takes over every 30 min.
         while (true) {
-            val cm = newsCtx.getSystemService(android.net.ConnectivityManager::class.java)
-            val caps = cm?.getNetworkCapabilities(cm.activeNetwork)
-            val type = when {
-                caps == null -> chat.omcp.app.core.NetworkType.Offline
-                caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) || caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET) -> chat.omcp.app.core.NetworkType.Wifi
-                else -> chat.omcp.app.core.NetworkType.Cellular
-            }
-            val metered = caps != null && !caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_NOT_METERED)
+            val (type, metered) = chat.omcp.app.data.NewsNet.current(newsCtx.applicationContext)
             newsVm.fetchNow(type, metered)
             kotlinx.coroutines.delay(5 * 60_000L)
         }

@@ -377,4 +377,23 @@
     <string name="about_body">Hopla · built on the open OMCP protocol · MIT · beta (experimental)</string>
     <string name="about_version">Version %1$s · design v%2$s</string>
     <string name="about_build">Build %1$s · %2$s</string>
+    <string name="news_fetch_now">Fetch now</string>
+    <string name="news_state_wifi_t">Waiting for Wi‑Fi</string>
+    <string name="news_state_wifi_d">News is fetched on Wi‑Fi only, to save your mobile data. Nearby phones can still pass stories to you over the mesh.</string>
+    <string name="news_state_mobile_note">Mobile data may cost money. Hopla warns you on metered networks and never uses more than 500 MB a day.</string>
+    <string name="news_state_allow_mobile">Allow mobile data</string>
+    <string name="news_state_offline_t">You’re offline</string>
+    <string name="news_state_offline_d">No internet right now. Stories arrive when you’re online or from nearby phones over the mesh.</string>
+    <string name="news_state_cap_t">Daily limit reached</string>
+    <string name="news_state_cap_d">Hopla has used today’s 500 MB for News. It starts again tomorrow.</string>
+    <string name="news_state_fetching_t">Fetching news…</string>
+    <string name="news_state_failed_t">Couldn’t fetch news</string>
+    <string name="news_state_failed_d">Google News didn’t send stories. Try again in a moment.</string>
+    <string name="news_state_reason">Reason: %1$s</string>
+    <string name="news_state_last">Last fetched %1$s</string>
+    <string name="news_state_never">Not fetched on this phone yet</string>
+    <string name="news_reason_consent">Google asked for cookie consent instead of sending the feed</string>
+    <string name="news_reason_network">network error or timeout</string>
+    <string name="news_reason_not_rss">the reply was a web page, not a news feed</string>
+    <string name="news_reason_http">server error (HTTP %1$s)</string>
 </resources>
