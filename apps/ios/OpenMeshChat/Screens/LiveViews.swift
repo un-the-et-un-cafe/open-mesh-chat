@@ -121,5 +121,3 @@ struct LiveTabView: View {
         reload()
     }
 }
-
-private func L(_ key: String) -> String { NSLocalizedString(key, comment: "") }
