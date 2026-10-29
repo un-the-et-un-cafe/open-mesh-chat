@@ -83,6 +83,7 @@ private object Routes {
     const val Storage = "storage"
     const val RemovedCommunities = "removed-communities"
     const val Relay = "relay"
+    const val Diagnostics = "diagnostics"
 
     fun thread(id: String) = "thread/$id"
     fun security(id: String) = "security/$id"
@@ -112,7 +113,12 @@ fun OmcpRoot(
         if (MeshPermissions.hasBle(ctx)) MeshService.start(ctx)
     }
     val requestMesh = { perms.launch(MeshPermissions.BLE + Manifest.permission.POST_NOTIFICATIONS) }
-    LaunchedEffect(onboarded) { if (onboarded && MeshPermissions.hasBle(ctx)) MeshService.start(ctx) }
+    // Ask for Nearby devices (+ notifications) right after onboarding, not only after adding a
+    // contact: the phone that shows its QR never went through that path, so its mesh never started.
+    LaunchedEffect(onboarded) {
+        if (!onboarded) return@LaunchedEffect
+        if (MeshPermissions.hasBle(ctx)) MeshService.start(ctx) else requestMesh()
+    }
 
     if (!onboarded || gate == BackupGate.Required) {
         // O6: after 24 h without a backup method, the Secure step is mandatory.
@@ -245,6 +251,7 @@ fun OmcpRoot(
                     onRemovedCommunities = { nav.navigate(Routes.RemovedCommunities) },
                     onRelay = { nav.navigate(Routes.Relay) },
                     onMyQr = { nav.navigate(Routes.MyQr) },
+                    onDiagnostics = { nav.navigate(Routes.Diagnostics) },
                     themeMode = themeMode,
                     onThemeMode = onThemeMode,
                 )
@@ -290,6 +297,14 @@ fun OmcpRoot(
                     vm = vm { ContactAddViewModel(repo) },
                     onBack = { nav.popBackStack() },
                     onScanTheirs = { nav.navigate(Routes.ContactAdd) { popUpTo(Routes.Chats) } },
+                )
+            }
+            composable(Routes.Diagnostics) {
+                chat.omcp.app.ui.screens.DiagnosticsScreen(
+                    myShortId = repo.core.identity()?.peerIdHex?.take(8),
+                    contacts = contacts.size,
+                    onRequestPermissions = { requestMesh() },
+                    onBack = { nav.popBackStack() },
                 )
             }
             composable(Routes.Relay) {

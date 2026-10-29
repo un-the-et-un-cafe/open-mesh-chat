@@ -144,11 +144,14 @@ class NewsViewModel(
 
     /** Fetch due feeds now if the network rules allow it. Returns stories added (sync mode). */
     fun fetchNow(network: NetworkType, metered: Boolean, nowMs: Long = clock(), sync: Boolean = false): Int {
-        if (!repo.core.newsMayFetch(repo.appStore.gatewayEnabled)) return 0
+        val net = network.name.lowercase() + if (metered) " (metered)" else ""
+        fun diag(r: String) { chat.omcp.app.diag.Diag.news = chat.omcp.app.diag.Diag.News(nowMs, net, r) }
+        if (!repo.core.newsMayFetch(repo.appStore.gatewayEnabled)) { diag("disabled (gateway only)"); return 0 }
         val plan = repo.core.newsFetchPlan(!repo.appStore.gatewayAllowMobile, network, metered, nowMs)
         _state.value = _state.value.copy(meteredWarning = plan.meteredWarning)
-        NewsFetchState.fromBlocked(plan.blocked)?.let { _state.value = _state.value.copy(fetch = it); return 0 }
+        NewsFetchState.fromBlocked(plan.blocked)?.let { diag("blocked: ${plan.blocked}"); _state.value = _state.value.copy(fetch = it); return 0 }
         if (plan.feeds.isEmpty()) {
+            diag("nothing due (fetched or tried < 30 min ago)")
             // Nothing due (fetched < 30 min ago): keep the last result, but clear a stale block.
             if (_state.value.fetch !is NewsFetchState.Failed) _state.value = _state.value.copy(fetch = NewsFetchState.Ok)
             return 0
@@ -162,10 +165,11 @@ class NewsViewModel(
                 when (val r = http(url)) {
                     is chat.omcp.app.data.FetchResult.Err -> lastErr = r.reason
                     is chat.omcp.app.data.FetchResult.Ok -> runCatching { repo.core.newsIngestRss(url, r.body, nowMs) }
-                        .onSuccess { added += it; ok++ }.onFailure { lastErr = "not_rss" }
+                        .onSuccess { added += it; ok++ }.onFailure { lastErr = "not_rss"; chat.omcp.app.diag.Diag.log("news ingest failed: ${it.javaClass.simpleName}", true) }
                 }
             }
             if (ok > 0) runCatching { repo.appStore.newsLastFetchMs = nowMs }
+            diag(if (ok > 0) "ok: $ok/${plan.feeds.size} feeds, $added new" else "failed: ${lastErr ?: "?"} (${plan.feeds.size} feeds)")
             _state.value = _state.value.copy(
                 fetching = false,
                 fetch = if (ok > 0 || lastErr == null) NewsFetchState.Ok else NewsFetchState.Failed(lastErr!!),

@@ -491,4 +491,12 @@
     <string name="live_report_r5">Something else</string>
     <string name="live_report_send">Send report</string>
     <string name="live_report_note">Reporting does not stop the live by itself.</string>
+    <string name="diag_title">Connection diagnostics</string>
+    <string name="diag_row_desc">Bluetooth, permissions, peers, News fetch. No messages or keys.</string>
+    <string name="diag_body">Screenshot this on both phones, or copy it. It contains no messages and no keys.</string>
+    <string name="diag_copy">Copy diagnostics</string>
+    <string name="diag_permissions">Ask for permissions again</string>
+    <string name="live_report_copied_short">Copied</string>
+    <string name="add_mutual_hint">%1$s must add you too: after this, show them your code (Add contact › Show my QR code). Messages only go through once both phones have added each other.</string>
+    <string name="my_qr_mutual">Both phones must add each other. After they scan you, tap Scan their code.</string>
 </resources>

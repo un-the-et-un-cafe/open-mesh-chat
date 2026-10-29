@@ -492,4 +492,12 @@
     <string name="live_report_r5">Autre chose</string>
     <string name="live_report_send">Envoyer</string>
     <string name="live_report_note">Signaler n’arrête pas le direct à lui seul.</string>
+    <string name="diag_title">Diagnostic de connexion</string>
+    <string name="diag_row_desc">Bluetooth, autorisations, appareils, actualités. Aucun message ni clé.</string>
+    <string name="diag_body">Faites une capture sur les deux téléphones, ou copiez-le. Aucun message ni clé.</string>
+    <string name="diag_copy">Copier le diagnostic</string>
+    <string name="diag_permissions">Redemander les autorisations</string>
+    <string name="live_report_copied_short">Copié</string>
+    <string name="add_mutual_hint">%1$s doit aussi vous ajouter : ensuite, montrez-lui votre code (Ajouter un contact › Afficher mon code QR). Les messages ne passent qu’une fois que les deux téléphones se sont ajoutés.</string>
+    <string name="my_qr_mutual">Les deux téléphones doivent s’ajouter. Après qu’on vous a scanné, touchez Scanner son code.</string>
 </resources>

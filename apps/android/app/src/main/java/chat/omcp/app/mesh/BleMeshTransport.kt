@@ -30,6 +30,7 @@ import chat.omcp.app.core.CoreLink
 import chat.omcp.app.core.LinkResult
 import chat.omcp.app.core.OmcpGatt
 import chat.omcp.app.data.MeshRepository
+import chat.omcp.app.diag.Diag
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
@@ -106,9 +107,11 @@ class BleMeshTransport(private val context: Context, private val repo: MeshRepos
 
     fun start() {
         if (running) return
-        val adapter = bt?.adapter ?: return
-        if (!adapter.isEnabled) return
+        val adapter = bt?.adapter ?: run { Diag.transportNote = "no Bluetooth adapter"; Diag.log("no Bluetooth adapter", true); return }
+        if (!adapter.isEnabled) { Diag.transportNote = "Bluetooth is off"; Diag.log("Bluetooth is off: waiting for it", true); return }
         running = true
+        Diag.transportRunning = true; Diag.transportNote = "started"
+        Diag.log("transport start, me=" + (repo.core.identity()?.peerIdHex?.take(8) ?: "?"))
         startServer()
         startAdvertising()
         startScanning()
@@ -118,6 +121,7 @@ class BleMeshTransport(private val context: Context, private val repo: MeshRepos
 
     fun stop() {
         running = false
+        Diag.transportRunning = false; Diag.transportNote = "stopped"; Diag.advertising = false; Diag.scanning = false
         repo.kick = null
         ticker?.cancel(false)
         ticker = null
@@ -136,7 +140,7 @@ class BleMeshTransport(private val context: Context, private val repo: MeshRepos
     // ---------------- peripheral ----------------
 
     private fun startServer() {
-        val s = bt.openGattServer(context, serverCb) ?: return
+        val s = bt.openGattServer(context, serverCb) ?: run { Diag.log("openGattServer failed", true); return }
         val svc = BluetoothGattService(service, BluetoothGattService.SERVICE_TYPE_PRIMARY)
         svc.addCharacteristic(
             BluetoothGattCharacteristic(
@@ -170,9 +174,13 @@ class BleMeshTransport(private val context: Context, private val repo: MeshRepos
         server = s
     }
 
+    private val longWrites = ConcurrentHashMap<String, java.io.ByteArrayOutputStream>()
+
     private val serverCb = object : BluetoothGattServerCallback() {
         override fun onConnectionStateChange(device: BluetoothDevice, status: Int, newState: Int) {
+            Diag.link("in " + Diag.mask(device.address), if (newState == BluetoothProfile.STATE_CONNECTED) "connected" else "disconnected status=$status")
             if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                longWrites.remove(device.address)
                 io.execute {
                     serverLinks.remove(device.address)?.close()
                     notifyQueues.remove(device.address)
@@ -201,15 +209,41 @@ class BleMeshTransport(private val context: Context, private val repo: MeshRepos
             d: BluetoothDevice, id: Int, c: BluetoothGattCharacteristic,
             prepared: Boolean, needResp: Boolean, offset: Int, value: ByteArray,
         ) {
+            if (prepared) {
+                // Long write (PDU > MTU-3, e.g. MTU negotiation failed): Android splits it into
+                // prepared writes; reassemble and deliver on execute.
+                val buf = longWrites.getOrPut(d.address) { java.io.ByteArrayOutputStream() }
+                if (offset == buf.size()) buf.write(value) else Diag.log("long write offset mismatch $offset/${buf.size()}", true)
+                if (needResp) server?.sendResponse(d, id, BluetoothGatt.GATT_SUCCESS, offset, value)
+                return
+            }
             if (needResp) server?.sendResponse(d, id, BluetoothGatt.GATT_SUCCESS, 0, null)
             if (c.uuid != inbox) return
+            deliverInbox(d, value)
+        }
+
+        override fun onExecuteWrite(d: BluetoothDevice, id: Int, execute: Boolean) {
+            val buf = longWrites.remove(d.address)
+            server?.sendResponse(d, id, BluetoothGatt.GATT_SUCCESS, 0, null)
+            if (execute && buf != null && buf.size() > 0) deliverInbox(d, buf.toByteArray())
+        }
+
+        override fun onMtuChanged(d: BluetoothDevice, mtu: Int) {
+            Diag.link("in " + Diag.mask(d.address), "connected mtu=$mtu")
+            if (mtu < MIN_MTU) Diag.log("in ${Diag.mask(d.address)}: MTU $mtu < $MIN_MTU, notifications may be cut", true)
+        }
+
+        private fun deliverInbox(d: BluetoothDevice, value: ByteArray) {
             io.execute {
                 val link = serverLinks.getOrPut(d.address) { repo.core.openResponderLink() }
+                val wasUp = link.isEstablished()
                 val r = runCatching { link.onPdu(value) }.getOrElse {
                     Log.w(tag, "responder pdu rejected: ${it.message}")
+                    Diag.link("in " + Diag.mask(d.address), "rejected: " + rejectReason(it))
                     serverLinks.remove(d.address)?.close()
                     return@execute
                 }
+                if (!wasUp && link.isEstablished()) Diag.link("in " + Diag.mask(d.address), "handshake ok peer=" + (r.peerContactId?.take(8) ?: "?"))
                 onServerResult(d, r)
             }
         }
@@ -263,7 +297,7 @@ class BleMeshTransport(private val context: Context, private val repo: MeshRepos
     }
 
     private fun startAdvertising() {
-        val adv = bt.adapter.bluetoothLeAdvertiser ?: return
+        val adv = bt.adapter.bluetoothLeAdvertiser ?: run { Diag.log("no BLE advertiser (peripheral mode unsupported or Bluetooth off)", true); return }
         val settings = AdvertiseSettings.Builder()
             .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_BALANCED)
             .setConnectable(true)
@@ -276,11 +310,21 @@ class BleMeshTransport(private val context: Context, private val repo: MeshRepos
         val scanResp = AdvertiseData.Builder()
             .addManufacturerData(OmcpGatt.MANUFACTURER_ID, MeshBeacon.join(repo.core.advertisement(), beacon))
             .build()
-        adv.startAdvertising(settings, data, scanResp, advCb)
+        runCatching { adv.startAdvertising(settings, data, scanResp, advCb) }
+            .onFailure { Diag.advertising = false; Diag.log("advertise threw: ${it.javaClass.simpleName}", true) }
     }
 
     private val advCb = object : AdvertiseCallback() {
-        override fun onStartFailure(errorCode: Int) = Log.w(tag, "advertise failed $errorCode").let { }
+        override fun onStartSuccess(settingsInEffect: AdvertiseSettings?) {
+            Diag.advertising = true; Diag.advertiseError = null; Diag.log("advertising on")
+        }
+        override fun onStartFailure(errorCode: Int) {
+            Log.w(tag, "advertise failed $errorCode")
+            // 3 = ALREADY_STARTED (a restart raced): still advertising.
+            Diag.advertising = errorCode == ADVERTISE_FAILED_ALREADY_STARTED
+            Diag.advertiseError = errorCode
+            Diag.log("advertise failed code=$errorCode (1 data too large, 2 too many advertisers, 3 already started, 4 internal, 5 unsupported)", errorCode != 3)
+        }
     }
 
     // ---------------- central ----------------
@@ -292,7 +336,7 @@ class BleMeshTransport(private val context: Context, private val repo: MeshRepos
      * iPhones) and Apple's overflow-area manufacturer data (backgrounded iPhones).
      */
     private fun startScanning() {
-        val scanner = bt.adapter.bluetoothLeScanner ?: return
+        val scanner = bt.adapter.bluetoothLeScanner ?: run { Diag.log("no BLE scanner", true); return }
         val filters = listOf(
             ScanFilter.Builder().setServiceUuid(ParcelUuid(service)).build(),
             ScanFilter.Builder().setManufacturerData(OmcpGatt.MANUFACTURER_ID, ByteArray(0)).build(),
@@ -306,13 +350,15 @@ class BleMeshTransport(private val context: Context, private val repo: MeshRepos
             else -> ScanSettings.SCAN_MODE_BALANCED
         }
         val settings = ScanSettings.Builder().setScanMode(mode).build()
-        scanner.startScan(filters, settings, scanCb)
-        scanOn = true
+        runCatching { scanner.startScan(filters, settings, scanCb) }
+            .onSuccess { scanOn = true; Diag.scanning = true; Diag.scanError = null }
+            .onFailure { Diag.scanning = false; Diag.log("startScan threw: ${it.javaClass.simpleName}", true) }
     }
 
     private fun stopScanning() {
         runCatching { bt.adapter.bluetoothLeScanner?.stopScan(scanCb) }
         scanOn = false
+        Diag.scanning = false
     }
 
     // ---------------- relay duty cycle ----------------
@@ -395,8 +441,15 @@ class BleMeshTransport(private val context: Context, private val repo: MeshRepos
     }
 
     private val probes = ProbeLimiter()
+    @Volatile private var lastRssi = 0
 
     private val scanCb = object : ScanCallback() {
+        override fun onScanFailed(errorCode: Int) {
+            scanOn = false
+            Diag.scanning = false; Diag.scanError = errorCode
+            Diag.log("scan failed code=$errorCode (1 already started, 2 app registration, 3 internal, 4 unsupported, 6 scanning too frequently)", true)
+        }
+
         override fun onScanResult(callbackType: Int, result: ScanResult) {
             val rec = result.scanRecord ?: return
             val mfr = HashMap<Int, ByteArray>()
@@ -410,7 +463,7 @@ class BleMeshTransport(private val context: Context, private val repo: MeshRepos
                 omcpLocalName = OmcpGatt.LOCAL_NAME,
             )
             when (decision) {
-                is ScanClassifier.Decision.Dial -> io.execute { maybeDial(result.device, decision.advertisement) }
+                is ScanClassifier.Decision.Dial -> io.execute { lastRssi = result.rssi; maybeDial(result.device, decision.advertisement) }
                 is ScanClassifier.Decision.Probe -> io.execute { maybeProbe(result.device) }
                 ScanClassifier.Decision.Ignore -> Unit
             }
@@ -419,11 +472,14 @@ class BleMeshTransport(private val context: Context, private val repo: MeshRepos
 
     private fun maybeDial(device: BluetoothDevice, adv: ByteArray) {
         if (!running) return
-        val contactId = repo.core.contactForAdvertisement(adv) ?: return
+        val contactId = repo.core.contactForAdvertisement(adv)
+        Diag.seen(device.address, contactId?.take(8) ?: Diag.mask(device.address), lastRssi, contactId != null)
+        if (contactId == null) return
         if (clients.containsKey(contactId) || clients.containsKey(device.address)) return
         if (!underLinkLimit()) return
         val me = repo.core.identity()?.peerIdHex ?: return
         if (me >= contactId) return // tie-break: lower PeerID dials
+        Diag.link(contactId.take(8), "dialing")
         val c = Client(device.address, contactId)
         clients[contactId] = c
         c.gatt = device.connectGatt(context, false, clientCb(c), BluetoothDevice.TRANSPORT_LE)
@@ -448,8 +504,10 @@ class BleMeshTransport(private val context: Context, private val repo: MeshRepos
 
     private fun clientCb(c: Client) = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
+            Diag.link(c.contactId?.take(8) ?: Diag.mask(c.address),
+                if (newState == BluetoothProfile.STATE_CONNECTED) "connected" else "disconnected status=$status")
             when (newState) {
-                BluetoothProfile.STATE_CONNECTED -> g.requestMtu(517)
+                BluetoothProfile.STATE_CONNECTED -> if (!g.requestMtu(517)) g.discoverServices()
                 BluetoothProfile.STATE_DISCONNECTED -> io.execute {
                     endProbe(c, useful = false)
                     c.link?.close()
@@ -462,11 +520,13 @@ class BleMeshTransport(private val context: Context, private val repo: MeshRepos
         }
 
         override fun onMtuChanged(g: BluetoothGatt, mtu: Int, status: Int) {
+            Diag.link(c.contactId?.take(8) ?: Diag.mask(c.address), "connected mtu=$mtu")
+            if (mtu < MIN_MTU) Diag.log("out ${c.contactId?.take(8)}: MTU $mtu < $MIN_MTU, writes become long writes", true)
             g.discoverServices()
         }
 
         override fun onServicesDiscovered(g: BluetoothGatt, status: Int) {
-            val svc = g.getService(service) ?: return g.disconnect()
+            val svc = g.getService(service) ?: run { Diag.log("no OMCP service on ${Diag.mask(c.address)} (status=$status)", true); return g.disconnect() }
             if (c.contactId == null) {
                 // Probe: learn who this is from the 13-byte ad on Control.
                 val ctl = svc.getCharacteristic(control) ?: return g.disconnect()
@@ -523,7 +583,9 @@ class BleMeshTransport(private val context: Context, private val repo: MeshRepos
         override fun onDescriptorWrite(g: BluetoothGatt, d: BluetoothGattDescriptor, status: Int) {
             io.execute {
                 val cid = c.contactId ?: return@execute
-                val link = runCatching { repo.core.openInitiatorLink(cid) }.getOrNull() ?: return@execute
+                val link = runCatching { repo.core.openInitiatorLink(cid) }
+                    .onFailure { Diag.link(cid.take(8), "error: open link ${it.javaClass.simpleName}") }.getOrNull() ?: return@execute
+                Diag.link(cid.take(8), "handshake sent")
                 c.link = link
                 onClientResult(c, link.start())
             }
@@ -551,11 +613,14 @@ class BleMeshTransport(private val context: Context, private val repo: MeshRepos
             if (ch.uuid != outbox) return
             io.execute {
                 val link = c.link ?: return@execute
+                val wasUp = link.isEstablished()
                 val r = runCatching { link.onPdu(value) }.getOrElse {
                     Log.w(tag, "initiator pdu rejected: ${it.message}")
+                    Diag.link(c.contactId?.take(8) ?: "?", "rejected: " + rejectReason(it))
                     g.disconnect()
                     return@execute
                 }
+                if (!wasUp && link.isEstablished()) Diag.link(c.contactId?.take(8) ?: "?", "handshake ok")
                 onClientResult(c, r)
             }
         }
@@ -598,6 +663,12 @@ class BleMeshTransport(private val context: Context, private val repo: MeshRepos
 
     // ---------------- shared ----------------
 
+    /** Short, content-free reason for a rejected PDU (Diagnostics). */
+    private fun rejectReason(e: Throwable): String {
+        val n = e.javaClass.simpleName
+        return if (n.contains("UnknownContact")) "not a contact (both phones must add each other)" else n
+    }
+
     private fun handle(r: LinkResult) {
         r.received.forEach { repo.onReceived(it); MeshNotifications.onMessage(context, repo, it) }
         r.opened.forEach(repo::onOpened)
@@ -632,5 +703,11 @@ class BleMeshTransport(private val context: Context, private val repo: MeshRepos
             val d = subscribed[addr] ?: continue
             onServerResult(d, link.flush())
         }
+    }
+
+    companion object {
+        /** Largest PDU is 3 + 480 (handshake chunk); an ATT value carries MTU - 3 bytes. */
+        const val MIN_MTU = 486
+        private const val ADVERTISE_FAILED_ALREADY_STARTED = 3
     }
 }
