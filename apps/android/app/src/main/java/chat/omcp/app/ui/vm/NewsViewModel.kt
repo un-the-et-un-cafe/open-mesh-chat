@@ -21,7 +21,20 @@ data class NewsUiState(
     val stories: List<NewsStoryUi> = emptyList(),
     val meteredWarning: Boolean = false,
     val fetching: Boolean = false,
+    /** News settings (§5.115). Personalisation stays on this phone. */
+    val topics: Set<String> = emptySet(),
+    val languages: Set<String> = setOf("en"),
+    val city: String = "",
+    val muted: Set<String> = emptySet(),
+    /** §5.111: on by default, user can turn it off. */
+    val emergencyAlerts: Boolean = true,
+    val loaded: Boolean = false,
 )
+
+/** §5.108 ordering: pinned emergency alerts first, then newest; muted topics hidden (alerts never). */
+fun arrangeNews(stories: List<NewsStoryUi>, muted: Set<String>): List<NewsStoryUi> =
+    stories.filter { it.emergency || it.topic.lowercase() !in muted }
+        .sortedWith(compareByDescending<NewsStoryUi> { it.emergency }.thenByDescending { it.publishedMs })
 
 /**
  * Hopla News (REQUIREMENTS "Hopla News", v0.4). Read-only: there is no publish API.
@@ -43,8 +56,17 @@ class NewsViewModel(
 
     fun refresh() {
         val st = _state.value
-        _state.value = st.copy(stories = runCatching { repo.core.newsFeed(st.tab) }.getOrDefault(emptyList()))
+        val raw = runCatching { repo.core.newsFeed(st.tab) }.getOrDefault(emptyList())
+        _state.value = st.copy(stories = arrangeNews(raw, st.muted), loaded = true)
     }
+
+    /** Long-press shortcut and the single-tap "Mute a topic" button (WCAG 2.5.7) both land here. */
+    fun mute(topic: String) { if (topic != "emergencies") { _state.value = _state.value.copy(muted = _state.value.muted + topic); refresh() } }
+    fun unmute(topic: String) { _state.value = _state.value.copy(muted = _state.value.muted - topic); refresh() }
+    fun toggleTopic(topic: String) = _state.value.let { _state.value = it.copy(topics = if (topic in it.topics) it.topics - topic else it.topics + topic) }
+    fun toggleLanguage(l: String) = _state.value.let { if (l in it.languages && it.languages.size == 1) return@let; _state.value = it.copy(languages = if (l in it.languages) it.languages - l else it.languages + l) }
+    fun setCity(c: String) { _state.value = _state.value.copy(city = c.take(60)) }
+    fun setEmergencyAlerts(on: Boolean) { _state.value = _state.value.copy(emergencyAlerts = on) }
 
     fun story(id: String) = _state.value.stories.firstOrNull { it.idHex == id }
 

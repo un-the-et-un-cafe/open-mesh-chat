@@ -69,6 +69,7 @@ private object Routes {
     const val Live = "live"
     const val News = "news"
     const val NewsStory = "news/{id}"
+    const val NewsSettings = "news-settings"
     fun newsStory(id: String) = "news/$id"
     const val You = "you"
     const val Thread = "thread/{chatId}"
@@ -94,6 +95,8 @@ fun OmcpRoot(
     cloud: CloudBackupStore,
     secureWindow: (Boolean) -> Unit,
     requestDeviceAuth: ((() -> Unit) -> Unit),
+    themeMode: chat.omcp.app.ui.theme.ThemeMode = chat.omcp.app.ui.theme.ThemeMode.System,
+    onThemeMode: (chat.omcp.app.ui.theme.ThemeMode) -> Unit = {},
 ) {
     val ctx = LocalContext.current
     val onboarded by repo.onboarded.collectAsState()
@@ -186,8 +189,9 @@ fun OmcpRoot(
             }
             composable(Routes.Communities) { CommunitiesHomeScreen(onOpenLive = { nav.navigate(Routes.Live) }) }
             composable(Routes.News) { entry ->
-                NewsHomeScreen(vm = newsVm, onOpen = { nav.navigate(Routes.newsStory(it)) })
+                NewsHomeScreen(vm = newsVm, onOpen = { nav.navigate(Routes.newsStory(it)) }, onSettings = { nav.navigate(Routes.NewsSettings) })
             }
+            composable(Routes.NewsSettings) { chat.omcp.app.ui.screens.NewsSettingsScreen(newsVm, onBack = { nav.popBackStack() }) }
             composable(Routes.NewsStory) { entry ->
                 NewsReaderScreen(newsVm, entry.arguments?.getString("id").orEmpty(), repo.core.contacts(), onBack = { nav.popBackStack() })
             }
@@ -206,6 +210,8 @@ fun OmcpRoot(
                     onStorage = { nav.navigate(Routes.Storage) },
                     onRelay = { nav.navigate(Routes.Relay) },
                     onMyQr = { nav.navigate(Routes.MyQr) },
+                    themeMode = themeMode,
+                    onThemeMode = onThemeMode,
                 )
             }
             composable(Routes.Thread) { entry ->

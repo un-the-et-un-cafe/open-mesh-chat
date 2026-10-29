@@ -28,6 +28,20 @@ import androidx.compose.ui.unit.dp
 import chat.omcp.app.R
 import chat.omcp.app.core.Identity
 import chat.omcp.app.ui.theme.LocalOmcpColors
+import chat.omcp.app.ui.theme.ThemeMode
+import chat.omcp.app.BuildConfig
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.material3.RadioButton
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -44,12 +58,14 @@ fun YouScreen(
     onStorage: () -> Unit = {},
     onRelay: () -> Unit = {},
     onMyQr: () -> Unit,
+    themeMode: ThemeMode = ThemeMode.System,
+    onThemeMode: (ThemeMode) -> Unit = {},
 ) {
     val c = LocalOmcpColors.current
     var priv by remember { mutableStateOf(privateNotifications) }
     var hideLock by remember { mutableStateOf(hideOnLockScreen) }
     Scaffold(topBar = { TopAppBar(title = { Text(stringResource(R.string.tab_you)) }) }) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding)) {
+        Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState())) {
             Column(Modifier.padding(16.dp)) {
                 Text(identity?.displayName ?: "You", style = MaterialTheme.typography.headlineSmall)
                 Text(
@@ -78,9 +94,32 @@ fun YouScreen(
                 supportingContent = { Text(stringResource(R.string.notif_hide_lock_desc)) },
                 trailingContent = { Switch(checked = hideLock, onCheckedChange = { hideLock = it; onSetHideOnLockScreen(it) }) },
             )
+            Text(stringResource(R.string.appearance), style = MaterialTheme.typography.titleSmall,
+                modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 4.dp).semantics { heading() })
+            Column(Modifier.selectableGroup()) {
+                listOf(ThemeMode.System to R.string.theme_system, ThemeMode.Light to R.string.theme_light, ThemeMode.Dark to R.string.theme_dark).forEach { (m, label) ->
+                    Row(
+                        Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                            .selectable(selected = themeMode == m, role = Role.RadioButton) { onThemeMode(m) }
+                            .padding(horizontal = 16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(selected = themeMode == m, onClick = null)
+                        Text(stringResource(label), modifier = Modifier.padding(start = 12.dp))
+                    }
+                }
+            }
+            HorizontalDivider()
+            val ctx = LocalContext.current
             ListItem(
-                headlineContent = { Text("About") },
-                supportingContent = { Text("Hopla · built on the open OMCP protocol · MIT · beta (experimental)") },
+                headlineContent = { Text(stringResource(R.string.about)) },
+                supportingContent = {
+                    Column {
+                        Text(stringResource(R.string.about_body))
+                        Text(stringResource(R.string.about_version, BuildConfig.VERSION_NAME, BuildConfig.DESIGN_VERSION), color = c.ink2)
+                        Text(stringResource(R.string.about_build, BuildConfig.GIT_COMMIT, ctx.packageName), color = c.ink2, fontFamily = FontFamily.Monospace)
+                    }
+                },
             )
         }
     }
