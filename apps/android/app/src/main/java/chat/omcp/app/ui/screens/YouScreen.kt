@@ -58,6 +58,7 @@ fun YouScreen(
     onStorage: () -> Unit = {},
     onRelay: () -> Unit = {},
     onMyQr: () -> Unit,
+    onDiagnostics: () -> Unit = {},
     themeMode: ThemeMode = ThemeMode.System,
     onThemeMode: (ThemeMode) -> Unit = {},
 ) {
@@ -116,11 +117,16 @@ fun YouScreen(
                 supportingContent = {
                     Column {
                         Text(stringResource(R.string.about_body))
+                        // Big and selectable so two phones can be compared at a glance.
+                        androidx.compose.foundation.text.selection.SelectionContainer {
+                            Text("${BuildConfig.VERSION_NAME} · ${BuildConfig.GIT_COMMIT}", style = MaterialTheme.typography.titleLarge, fontFamily = FontFamily.Monospace)
+                        }
                         Text(stringResource(R.string.about_version, BuildConfig.VERSION_NAME, BuildConfig.DESIGN_VERSION), color = c.ink2)
                         Text(stringResource(R.string.about_build, BuildConfig.GIT_COMMIT, ctx.packageName), color = c.ink2, fontFamily = FontFamily.Monospace)
                     }
                 },
             )
+            Item(stringResource(R.string.diag_title), stringResource(R.string.diag_row_desc), onDiagnostics)
         }
     }
 }

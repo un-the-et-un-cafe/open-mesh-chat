@@ -167,7 +167,8 @@ private fun StoryCard(s: NewsStoryUi, onOpen: () -> Unit) {
 fun NewsHomeScreen(vm: NewsViewModel, onOpen: (String) -> Unit, onSettings: () -> Unit = {}) {
     val st by vm.state.collectAsState()
     val c = LocalOmcpColors.current
-    LaunchedEffect(Unit) { vm.refresh() }
+    // Opening News fetches due feeds (first run never waited for the 30-min background job).
+    LaunchedEffect(Unit) { vm.refresh(); vm.fetchNowFromUi() }
     Scaffold(topBar = {
         TopAppBar(
             title = { Text(stringResource(R.string.tab_news), modifier = Modifier.semantics { heading() }) },
