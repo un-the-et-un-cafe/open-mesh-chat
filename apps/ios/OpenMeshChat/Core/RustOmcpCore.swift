@@ -205,6 +205,29 @@ public final class RustOmcpCore: HoplaKit.OmcpCore {
         return Int(try node.newsIngestRss(feedUrl: feedUrl, body: body, nowMs: UInt64(max(0, nowMs))))
     }
     public func newsMayFetch(gatewayEnabled: Bool) -> Bool { OmcpFFI.newsMayFetch(gatewayEnabled: gatewayEnabled) }
+    public func moderationHasTeam() -> Bool { node?.moderationHasTeam() ?? false }
+    public func moderationLog() -> [TeamLogEntryModel] {
+        (node?.moderationLog() ?? []).map {
+            TeamLogEntryModel(kind: $0.kind, communityIdHex: $0.communityIdHex, reasonCode: Int($0.reasonCode),
+                              note: $0.note, epoch: $0.epoch, signedBy: $0.signedBy, appliedMs: Int64($0.appliedMs))
+        }
+    }
+    public func moderationPublish(actionHex: String) -> String {
+        guard let node else { return "no_node" }
+        guard let r = try? node.moderationPublish(actionHex: actionHex) else { return "malformed" }
+        switch r {
+        case .applied: return "applied"
+        case .noTeam: return "no_team"
+        case .malformed: return "malformed"
+        case .badSignature: return "bad_signature"
+        case .notWhitelisted: return "not_whitelisted"
+        case .belowThreshold: return "below_threshold"
+        case .replay: return "replay"
+        }
+    }
+    public func moderationRemovedReason(communityIdHex: String) -> Int? {
+        node?.moderationRemovedReason(communityIdHex: communityIdHex).map { Int($0) }
+    }
     public func newsSetPrefs(topics: [String], langs: [String], city: String?, muted: [String], alertsNotify: Bool) {
         guard let node else { return }
         var p = node.newsPrefs()

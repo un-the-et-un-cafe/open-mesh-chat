@@ -245,7 +245,19 @@ S = {
  'theme_light': ('Light', 'Clair'),
  'theme_dark': ('Dark', 'Sombre'),
  'about_version': ('Version %@ · design v%@', 'Version %@ · design v%@'),
- "news_metered_warning": ("Metered connection: fetching news uses your data plan.", "Connexion facturée : la récupération des actus utilise votre forfait."),
+ 'mod_log_title': ('Removed communities', 'Communautés supprimées'),
+ 'mod_log_desc': ('Public log of Hopla team takedowns', 'Journal public des suppressions par l’équipe Hopla'),
+ 'mod_log_empty': ('No community has been removed.', 'Aucune communauté n’a été supprimée.'),
+ 'mod_publish_label': ('Signed team action (hex)', 'Action d’équipe signée (hex)'),
+ 'mod_publish': ('Publish', 'Publier'),
+ 'mod_restored': ('Restored', 'Rétablie'),
+ 'mod_signed_by': ('Signed by', 'Signé par'),
+ 'mod_reason_1': ('Hate speech or incitement', 'Discours de haine ou incitation'),
+ 'mod_reason_2': ('Illegal content', 'Contenu illégal'),
+ 'mod_reason_3': ('Terrorism or violent extremism', 'Terrorisme ou extrémisme violent'),
+ 'mod_reason_4': ('Coordinated harassment', 'Harcèlement coordonné'),
+ 'mod_reason_5': ('Spam or scam', 'Spam ou arnaque'),
+ 'mod_reason_9': ('Other', 'Autre'),
 }
 NSE = ["notif_new_message"]
 

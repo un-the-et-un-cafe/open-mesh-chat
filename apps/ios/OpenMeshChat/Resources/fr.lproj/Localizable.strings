@@ -258,7 +258,7 @@
 "news_source_cd" = "Source : %@";
 "news_via" = "via %@";
 "news_emergency_pinned" = "URGENCE · Épinglé";
-"news_metered_warning" = "Connexion facturée : la récupération des actus utilise votre forfait.";
+"news_metered_warning" = "Connexion limitée : la récupération des actus utilise votre forfait.";
 "news_empty_title" = "Pas encore d’actus";
 "news_empty_body" = "Les articles arrivent des téléphones proches qui ont Internet. Choisissez vos centres d’intérêt pour commencer.";
 "news_summary" = "Résumé";
@@ -302,3 +302,16 @@
 "theme_light" = "Clair";
 "theme_dark" = "Sombre";
 "about_version" = "Version %@ · design v%@";
+"mod_log_title" = "Communautés supprimées";
+"mod_log_desc" = "Journal public des suppressions par l’équipe Hopla";
+"mod_log_empty" = "Aucune communauté n’a été supprimée.";
+"mod_publish_label" = "Action d’équipe signée (hex)";
+"mod_publish" = "Publier";
+"mod_restored" = "Rétablie";
+"mod_signed_by" = "Signé par";
+"mod_reason_1" = "Discours de haine ou incitation";
+"mod_reason_2" = "Contenu illégal";
+"mod_reason_3" = "Terrorisme ou extrémisme violent";
+"mod_reason_4" = "Harcèlement coordonné";
+"mod_reason_5" = "Spam ou arnaque";
+"mod_reason_9" = "Autre";

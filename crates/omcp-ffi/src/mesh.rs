@@ -171,6 +171,9 @@ pub(crate) struct MeshState {
     pub status: Vec<MessageStatusUpdate>,
     /// Hopla News: interests, fetch times, story cache.
     pub news: crate::news::NewsState,
+    /// Team moderation (§23.9): shipped policy and applied actions.
+    pub team: omcp_core::moderation::TeamPolicy,
+    pub moderation: omcp_core::moderation::ModerationState,
 }
 
 impl MeshState {
@@ -184,6 +187,8 @@ impl MeshState {
             mls: HashMap::new(),
             status: Vec::new(),
             news: Default::default(),
+            team: crate::moderation::shipped_policy(),
+            moderation: Default::default(),
         }
     }
 
@@ -343,6 +348,7 @@ impl NodeState {
             mesh.engine.mark_seen(s.id, s.until_ms);
         }
         self.mesh = mesh;
+        self.load_moderation()?;
         self.load_news(now)
     }
 
@@ -541,6 +547,8 @@ pub(crate) fn refresh_wants(st: &mut NodeState, now: u64) -> Result<(), FfiError
     let mut wants: BTreeSet<MailboxTag> = tags.keys().copied().collect();
     // Hopla News: the phone subscribes only to its channels' public tags.
     wants.extend(st.mesh.news.tags());
+    // Team moderation actions (§23.9) are wanted by every compliant client.
+    wants.insert(omcp_core::moderation::team_mod_tag());
     st.mesh.tags = tags;
     st.mesh.tags_for = Some((epoch, fp));
     let ev = st.mesh.engine.set_wants(wants, now);
@@ -787,6 +795,9 @@ impl MeshLink {
             }
         }
         for (tag, env, ack_of) in node.route(ev)? {
+            if node.on_team_mod_envelope(&env)? {
+                continue; // public team action: verified and applied, never a chat
+            }
             if omcp_core::news::is_news_envelope(&env) {
                 // Public news (already checked by the engine): no ack, no chat.
                 node.mesh.news.note(&env, now);

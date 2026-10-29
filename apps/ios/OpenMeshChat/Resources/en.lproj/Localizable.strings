@@ -302,3 +302,16 @@
 "theme_light" = "Light";
 "theme_dark" = "Dark";
 "about_version" = "Version %@ · design v%@";
+"mod_log_title" = "Removed communities";
+"mod_log_desc" = "Public log of Hopla team takedowns";
+"mod_log_empty" = "No community has been removed.";
+"mod_publish_label" = "Signed team action (hex)";
+"mod_publish" = "Publish";
+"mod_restored" = "Restored";
+"mod_signed_by" = "Signed by";
+"mod_reason_1" = "Hate speech or incitement";
+"mod_reason_2" = "Illegal content";
+"mod_reason_3" = "Terrorism or violent extremism";
+"mod_reason_4" = "Coordinated harassment";
+"mod_reason_5" = "Spam or scam";
+"mod_reason_9" = "Other";

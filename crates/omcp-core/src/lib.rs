@@ -38,6 +38,7 @@ pub mod framing;
 pub mod gateway;
 pub mod handshake;
 pub mod mls;
+pub mod moderation;
 pub mod negotiate;
 pub mod news;
 pub mod recovery;

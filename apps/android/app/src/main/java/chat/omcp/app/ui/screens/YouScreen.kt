@@ -57,6 +57,7 @@ fun YouScreen(
     onBackup: () -> Unit,
     onStorage: () -> Unit = {},
     onRelay: () -> Unit = {},
+    onRemovedCommunities: () -> Unit = {},
     onMyQr: () -> Unit,
     themeMode: ThemeMode = ThemeMode.System,
     onThemeMode: (ThemeMode) -> Unit = {},
@@ -84,6 +85,7 @@ fun YouScreen(
             Item(stringResource(R.string.backup_settings_title), stringResource(R.string.backup_settings_desc), onBackup)
             Item(stringResource(R.string.storage_title), stringResource(R.string.storage_keep_title), onStorage)
             Item(stringResource(R.string.relay_title), stringResource(R.string.relay_row_desc), onRelay)
+            Item(stringResource(R.string.mod_log_title), stringResource(R.string.mod_log_desc), onRemovedCommunities)
             ListItem(
                 headlineContent = { Text(stringResource(R.string.notif_private)) },
                 supportingContent = { Text(stringResource(R.string.notif_private_desc)) },
