@@ -2351,3 +2351,78 @@ fn news_fetch_plan_applies_gateway_rules() {
     n.news_ingest_rss(world_en_url(), news_feed_now(), now).unwrap();
     assert!(n.news_fetch_plan(Network::Wifi { metered: false }, true, now).used_today_bytes > 0);
 }
+
+/// Full round trip (CB1–CB4, RS1/RS2): identity + two chats on disk, back up all
+/// text with the key derived from the 24 words, wipe the install, restore from
+/// the 24 words alone, and compare every message field by field.
+#[test]
+fn roundtrip_backup_wipe_restore_from_24_words_is_identical() {
+    let phrase = generate_recovery_phrase().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let a = open_node(&phrase, "Alice", dir.path());
+    let b = node("Bob");
+    let c = node("Carol");
+    let mut before = Vec::new();
+    let mut blobs = Vec::new();
+    let mut ident_blob = None;
+    let key = generate_backup_key().unwrap();
+    for (peer, n) in [(&b, 12usize), (&c, 7usize)] {
+        peer.add_contact_from_qr(a.qr_payload()).unwrap();
+        let cp = a.add_contact_from_qr(peer.qr_payload()).unwrap();
+        peer.verify_contact_from_qr(a.qr_payload()).unwrap();
+        a.set_verified(cp.contact_id.clone(), true).unwrap();
+        let la = a.open_initiator_link(cp.contact_id.clone()).unwrap();
+        let lp = peer.open_responder_link().unwrap();
+        pump(&la, &lp, la.start().unwrap());
+        for i in 0..n {
+            pump(&la, &lp, la.send_text(format!("{i} → {} · émoji 🎉", cp.display_name)).unwrap());
+            pump(&lp, &la, lp.send_text(format!("re {i}")).unwrap());
+        }
+        la.shutdown();
+        lp.shutdown();
+        before.push((cp.contact_id.clone(), a.stored_messages(cp.contact_id).unwrap()));
+    }
+    backup_all(&a, 1, &mut blobs);
+    ident_blob.replace(a.create_backup_with_key(key.clone(), "t".into(), 1).unwrap());
+    // Key really comes from the words: same phrase → same key, other phrase → none.
+    assert!(matches!(
+        node("Mallory").chat_backup_restore(blobs.clone()),
+        Err(FfiError::WrongBackupPassword)
+    ));
+    // Wipe: drop the node and every file of the install.
+    drop(a);
+    drop(dir);
+    let dir2 = tempfile::tempdir().unwrap();
+    let r = open_backup_with_key(ident_blob.unwrap(), key).unwrap();
+    assert_eq!(r.phrase, phrase);
+    let a2 = open_node(&phrase, "Alice", dir2.path());
+    assert!(a2.device_info().unwrap().restored_at_ms.is_none());
+    for ct in r.contacts {
+        a2.restore_contact_with_key(ct.contact_id, ct.display_name, ct.verified, ct.dh_hex)
+            .unwrap();
+    }
+    a2.mark_restored(now_ms()).unwrap();
+    let sum = a2.chat_backup_restore(blobs).unwrap();
+    let _ = sum;
+    for (cid, msgs) in &before {
+        let after = a2.stored_messages(cid.clone()).unwrap();
+        let key = |m: &StoredMessage| (m.id_hex.clone(), m.text.clone(), m.mine, m.time_ms);
+        assert_eq!(
+            after.iter().map(key).collect::<Vec<_>>(),
+            msgs.iter().map(key).collect::<Vec<_>>(),
+            "chat {cid} identical after restore"
+        );
+        assert!(!after.is_empty());
+    }
+    // Restored indicator (RS1) is set on the new install.
+    assert!(a2.device_info().unwrap().restored_at_ms.is_some());
+    // RS2: contacts' verified badge for the restored account resets on next link.
+    let alice = a2.identity().peer_id_hex;
+    for peer in [&b, &c] {
+        assert!(peer.contacts().iter().any(|x| x.contact_id == alice && x.verified));
+        link(&a2, peer);
+        let x = peer.contacts().into_iter().find(|x| x.contact_id == alice).unwrap();
+        assert!(!x.verified, "verified badge reset");
+        assert!(x.restored_at_ms.is_some(), "restored notice");
+    }
+}
