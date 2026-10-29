@@ -115,6 +115,8 @@ struct NewsHomeView: View {
     @State private var tab = "top"
     @State private var stories: [NewsStory] = []
     @State private var meteredWarning = false
+    @State private var fetchStatus: NewsFetchStatus = .idle
+    @AppStorage("omcp.news.lastFetchMs") private var lastFetchMs: Double = 0
 
     var body: some View {
         NavigationStack {
@@ -142,11 +144,30 @@ struct NewsHomeView: View {
                     }.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 16).padding(.vertical, 8)
                 }
                 if stories.isEmpty {
-                    VStack(spacing: 16) {
-                        EmptyStateView(title: L("news_empty_title"), bodyText: L("news_empty_body"))
-                        NavigationLink(L("news_empty_btn")) { NewsSettingsView(prefs: prefs) }
-                            .buttonStyle(.borderedProminent).omcpHitTarget()
+                    ScrollView {
+                        VStack(spacing: 12) {
+                            EmptyStateView(title: L(fetchStatus.textKeys.0), bodyText: L(fetchStatus.textKeys.1))
+                            if case .failed(let r) = fetchStatus {
+                                Text(String(format: L("news_state_reason"),
+                                            r.hasPrefix("http_") ? String(format: L("news_reason_http"), String(r.dropFirst(5))) : L(NewsFetchStatus.reasonKey(r))))
+                                    .font(.caption).foregroundStyle(c.ink2)
+                            }
+                            if fetchStatus == .waitingWifi {
+                                Text(L("news_state_mobile_note")).font(.caption).foregroundStyle(c.ink2)
+                                Button(L("news_state_allow_mobile")) {
+                                    model.store.gatewayAllowMobile = true
+                                    Task { await fetchRound() }
+                                }.buttonStyle(.bordered).omcpHitTarget()
+                            }
+                            Button(L("news_fetch_now")) { Task { await fetchRound() } }
+                                .buttonStyle(.borderedProminent).omcpHitTarget()
+                            Text(lastFetchMs > 0
+                                 ? String(format: L("news_state_last"), RelativeDateTimeFormatter().localizedString(for: Date(timeIntervalSince1970: lastFetchMs / 1000), relativeTo: Date()))
+                                 : L("news_state_never")).font(.caption).foregroundStyle(c.ink3)
+                            NavigationLink(L("news_empty_btn")) { NewsSettingsView(prefs: prefs) }.omcpHitTarget()
+                        }.padding(16)
                     }
+                    .refreshable { await fetchRound() }
                 } else {
                     ScrollView {
                         LazyVStack(spacing: 12) {
@@ -156,11 +177,16 @@ struct NewsHomeView: View {
                             }
                         }.padding(16)
                     }
+                    .refreshable { await fetchRound() }
                 }
             }
             .background(c.bg)
             .navigationTitle(L("tab_news"))
             .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { Task { await fetchRound() } } label: { Image(systemName: "arrow.clockwise").omcpHitTarget() }
+                        .accessibilityLabel(L("news_fetch_now"))
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     NavigationLink { NewsSettingsView(prefs: prefs) } label: {
                         Image(systemName: "slider.horizontal.3").omcpHitTarget()
@@ -169,6 +195,9 @@ struct NewsHomeView: View {
                 }
             }
             .onAppear(perform: reload)
+            // New topics / city / languages: fetch right away instead of waiting for the 5-min loop.
+            .onChange(of: prefs.topics) { _, _ in Task { await fetchRound() } }
+            .onChange(of: prefs.city) { _, _ in Task { await fetchRound() } }
             // Any phone with internet fetches Google News RSS under the network rules (Wi-Fi-only by default).
             .task {
                 while !Task.isCancelled {
@@ -186,13 +215,33 @@ struct NewsHomeView: View {
         let now = Int64(Date().timeIntervalSince1970 * 1000)
         guard let plan = NewsFetchRules.plan(core: model.core, store: model.store, network: net.type, metered: net.metered, nowMs: now) else { return }
         meteredWarning = plan.meteredWarning
-        for feed in plan.feeds {
-            guard let url = URL(string: feed), url.scheme == "https",
-                  let (data, _) = try? await URLSession.shared.data(from: url) else { continue }
-            let body = String(decoding: data.prefix(1_000_000), as: UTF8.self)
-            _ = try? model.core.newsIngestRss(feedUrl: feed, body: body, nowMs: now)
+        if let b = NewsFetchStatus.from(blocked: plan.blocked) { fetchStatus = b; return }
+        guard !plan.feeds.isEmpty else {
+            if case .failed = fetchStatus {} else { fetchStatus = .ok }
+            return
         }
-        if !plan.feeds.isEmpty { reload() }
+        fetchStatus = .fetching
+        var ok = 0
+        var lastErr: String?
+        for feed in plan.feeds {
+            guard let url = URL(string: feed), url.scheme == "https" else { continue }
+            do {
+                let (data, resp) = try await URLSession.shared.data(for: NewsHttp.request(url))
+                let http = resp as? HTTPURLResponse
+                let body = String(decoding: data.prefix(1_000_000), as: UTF8.self)
+                switch NewsHttp.classify(status: http?.statusCode ?? 0, contentType: http?.value(forHTTPHeaderField: "Content-Type"),
+                                         host: resp.url?.host, body: body) {
+                case .ok(let rss):
+                    if (try? model.core.newsIngestRss(feedUrl: feed, body: rss, nowMs: now)) != nil { ok += 1 } else { lastErr = "not_rss" }
+                case .err(let r): lastErr = r
+                }
+            } catch {
+                lastErr = "network"
+            }
+        }
+        if ok > 0 { lastFetchMs = Double(now) }
+        fetchStatus = ok > 0 || lastErr == nil ? .ok : .failed(lastErr ?? "network")
+        reload()
     }
 }
 

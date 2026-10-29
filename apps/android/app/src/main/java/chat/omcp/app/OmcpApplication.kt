@@ -62,6 +62,7 @@ class OmcpApplication : Application() {
             repository.core, chatBlobs, { p -> runCatching { java.io.File(p).readBytes() }.getOrNull() },
         )
         runCatching { chat.omcp.app.backup.ChatBackupWorker.schedule(this) }
+        runCatching { chat.omcp.app.data.NewsFetchWorker.schedule(this) }
         runCatching { repository.restore() }
     }
 }
