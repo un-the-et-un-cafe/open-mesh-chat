@@ -29,6 +29,8 @@ import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -170,6 +172,7 @@ fun NewsHomeScreen(vm: NewsViewModel, onOpen: (String) -> Unit, onSettings: () -
         TopAppBar(
             title = { Text(stringResource(R.string.tab_news), modifier = Modifier.semantics { heading() }) },
             actions = {
+                IconButton(onClick = vm::fetchNowFromUi) { Icon(Icons.Default.Refresh, contentDescription = stringResource(R.string.news_fetch_now)) }
                 IconButton(onClick = onSettings) { Icon(Icons.Default.Tune, contentDescription = stringResource(R.string.news_settings)) }
             },
         )
@@ -198,6 +201,7 @@ fun NewsHomeScreen(vm: NewsViewModel, onOpen: (String) -> Unit, onSettings: () -
                     TextButton(onClick = onSettings) { Text(stringResource(R.string.news_le_btn)) }
                 }
             }
+            PullToRefreshBox(isRefreshing = st.fetching, onRefresh = vm::fetchNowFromUi, modifier = Modifier.fillMaxSize()) {
             when {
                 !st.loaded -> Column {
                     Text(stringResource(R.string.news_loading), modifier = Modifier.padding(16.dp), color = c.ink2)
@@ -207,13 +211,11 @@ fun NewsHomeScreen(vm: NewsViewModel, onOpen: (String) -> Unit, onSettings: () -
                     body = stringResource(R.string.news_le_d),
                     actionLabel = stringResource(R.string.news_le_btn), onAction = onSettings,
                 )
-                st.stories.isEmpty() -> EmptyState(
-                    title = stringResource(R.string.news_empty_title), body = stringResource(R.string.news_empty_body),
-                    actionLabel = stringResource(R.string.news_empty_btn), onAction = onSettings,
-                )
+                st.stories.isEmpty() -> NewsEmpty(st, vm, onSettings)
                 else -> LazyColumn(contentPadding = PaddingValues(bottom = 16.dp)) {
                     items(st.stories, key = { it.idHex }) { s -> StoryCard(s) { onOpen(s.idHex) } }
                 }
+            }
             }
         }
     }
@@ -373,3 +375,49 @@ fun NewsSettingsScreen(vm: NewsViewModel, onBack: () -> Unit) {
 @Composable
 private fun Section(t: String) =
     Text(t, style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 20.dp, bottom = 6.dp).semantics { heading() })
+
+/** Empty News: says why (waiting for Wi-Fi, offline, daily cap, fetch failed) and when it last worked. */
+@Composable
+private fun NewsEmpty(st: chat.omcp.app.ui.vm.NewsUiState, vm: NewsViewModel, onSettings: () -> Unit) {
+    val c = LocalOmcpColors.current
+    val f = st.fetch
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+        val (title, body) = newsEmptyText(f)
+        EmptyState(title = stringResource(title), body = stringResource(body), actionLabel = stringResource(R.string.news_fetch_now), onAction = vm::fetchNowFromUi)
+        Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (f is chat.omcp.app.ui.vm.NewsFetchState.Failed) {
+                Text(stringResource(R.string.news_state_reason, stringResource(newsReasonText(f.reason).first, newsReasonText(f.reason).second)),
+                    color = c.ink2, style = MaterialTheme.typography.bodySmall)
+            }
+            if (f == chat.omcp.app.ui.vm.NewsFetchState.WaitingWifi) {
+                Text(stringResource(R.string.news_state_mobile_note), color = c.ink2, style = MaterialTheme.typography.bodySmall)
+                OutlinedButton(onClick = vm::allowMobileData) { Text(stringResource(R.string.news_state_allow_mobile)) }
+            }
+            Text(
+                if (st.lastFetchMs > 0) stringResource(R.string.news_state_last, android.text.format.DateUtils.getRelativeTimeSpanString(st.lastFetchMs).toString())
+                else stringResource(R.string.news_state_never),
+                color = c.ink3, style = MaterialTheme.typography.bodySmall,
+            )
+            TextButton(onClick = onSettings) { Text(stringResource(R.string.news_empty_btn)) }
+        }
+    }
+}
+
+/** (title, body) string ids for the empty News screen (unit-tested). */
+fun newsEmptyText(f: chat.omcp.app.ui.vm.NewsFetchState): Pair<Int, Int> = when (f) {
+    chat.omcp.app.ui.vm.NewsFetchState.WaitingWifi -> R.string.news_state_wifi_t to R.string.news_state_wifi_d
+    chat.omcp.app.ui.vm.NewsFetchState.Offline -> R.string.news_state_offline_t to R.string.news_state_offline_d
+    chat.omcp.app.ui.vm.NewsFetchState.DailyCap -> R.string.news_state_cap_t to R.string.news_state_cap_d
+    chat.omcp.app.ui.vm.NewsFetchState.Fetching -> R.string.news_state_fetching_t to R.string.news_empty_body
+    is chat.omcp.app.ui.vm.NewsFetchState.Failed -> R.string.news_state_failed_t to R.string.news_state_failed_d
+    else -> R.string.news_empty_title to R.string.news_empty_body
+}
+
+/** Reason code → (string id, format arg). */
+fun newsReasonText(r: String): Pair<Int, String> = when {
+    r == "consent" -> R.string.news_reason_consent to ""
+    r == "network" -> R.string.news_reason_network to ""
+    r == "html" || r == "not_rss" -> R.string.news_reason_not_rss to ""
+    r.startsWith("http_") -> R.string.news_reason_http to r.removePrefix("http_")
+    else -> R.string.news_reason_network to ""
+}

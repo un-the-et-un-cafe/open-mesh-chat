@@ -104,6 +104,10 @@ class PrefsAppStore(context: Context) : AppStore {
         get() = prefs.getStringSet("backup_methods", emptySet())!!.toSet()
         set(v) = prefs.edit().putStringSet("backup_methods", v).apply()
 
+    override var newsLastFetchMs: Long
+        get() = prefs.getLong("news_last_fetch", 0)
+        set(v) = prefs.edit().putLong("news_last_fetch", v).apply()
+
     override var lastCloudBackupMs: Long
         get() = prefs.getLong("backup_last", 0)
         set(v) = prefs.edit().putLong("backup_last", v).apply()

@@ -32,7 +32,7 @@ class NewsViewModelTest {
 
     @Test fun anyPhoneWithInternetFetches() {
         val core = NewsCore(); val store = InMemoryAppStore()
-        val vm = NewsViewModel(MeshRepository(core, store) { 0L }) { "<rss/>" }
+        val vm = NewsViewModel(MeshRepository(core, store) { 0L }, { chat.omcp.app.data.FetchResult.Ok("<rss/>") })
         assertFalse(store.gatewayEnabled)
         assertEquals(2, vm.fetchNow(NetworkType.Wifi, false, sync = true))
         assertEquals(true, core.lastWifiOnly) // Wi-Fi-only by default
@@ -40,7 +40,7 @@ class NewsViewModelTest {
 
     @Test fun meteredWarningSurfacesAndBlockedPlanFetchesNothing() {
         val core = NewsCore(); val store = InMemoryAppStore().apply { gatewayEnabled = true; gatewayAllowMobile = true }
-        val vm = NewsViewModel(MeshRepository(core, store) { 0L }) { "<rss/>" }
+        val vm = NewsViewModel(MeshRepository(core, store) { 0L }, { chat.omcp.app.data.FetchResult.Ok("<rss/>") })
         core.plan = NewsFetchPlanUi(feeds = listOf("https://news.google.com/rss/x"), meteredWarning = true, blocked = null)
         vm.fetchNow(NetworkType.Cellular, true, sync = true)
         assertTrue(vm.state.value.meteredWarning)
