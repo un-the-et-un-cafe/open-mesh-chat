@@ -64,7 +64,7 @@ class WebRtcPeers(
             .setVideoDecoderFactory(DefaultVideoDecoderFactory(egl.eglBaseContext))
             .createPeerConnectionFactory()
         keys = FrameCryptorFactory.createFrameCryptorKeyProvider(
-            // PBKDF2: the iOS SDK (137.x) has no KDF switch and always uses PBKDF2.
+            // PBKDF2 frame-key derivation, same as iOS (WebRtcPeers.swift).
             true, RATCHET_SALT, 0, MAGIC, -1, KEY_RING, true, FrameCryptorKeyDerivationAlgorithm.PBKDF2,
         )
     }

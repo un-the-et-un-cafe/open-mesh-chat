@@ -16,12 +16,10 @@ settings:
 packages:
   HoplaKit:
     path: HoplaKit
-  # Live video: libwebrtc build with the frame cryptor (E2EE), BSD-3-Clause.
-  # Same SDK family as Android io.github.webrtc-sdk:android (docs/LIVE.md). 137.x: the
-  # 144+/150 Package.swift needs visionOS 26 SDK, which the CI Xcode lacks.
-  WebRTC:
-    url: https://github.com/webrtc-sdk/Specs
-    exactVersion: 137.7151.12
+  # Live video: libwebrtc build with the frame cryptor (E2EE), BSD-3-Clause, 150.7871.04
+  # (same as Android). Local manifest: upstream's needs a newer PackageDescription.
+  WebRTCBinary:
+    path: Packages/WebRTCBinary
 targets:
   # UniFFI Swift bindings (generated, git-ignored) over the Rust static library.
   OmcpFFI:
@@ -47,7 +45,8 @@ targets:
       - path: OpenMeshChat
     dependencies:
       - package: HoplaKit
-      - package: WebRTC
+      - package: WebRTCBinary
+        product: WebRTC
       - target: OmcpFFI
       - target: NotificationService
     settings:
