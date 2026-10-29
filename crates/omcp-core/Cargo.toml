@@ -22,6 +22,8 @@ ml-kem = { version = "=0.3.3", features = ["getrandom"] }
 
 # Hybrid ck mix per PROTOCOL §21.5: HKDF-SHA-384(salt=ck, ikm=mlkem_ss, info=OMCP-Noise-Hybrid-v1)
 hkdf = "=0.12.4"
+# Live video: SFrame (RFC 9605) AES_128_GCM_SHA256_128 media frames.
+aes-gcm = "=0.10.3"
 sha2 = "=0.10.8"
 
 getrandom = "=0.2.15"

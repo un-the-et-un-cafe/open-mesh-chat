@@ -27,6 +27,19 @@ public final class FakeOmcpCore: OmcpCore {
     private var counter = 0
     /// Test hook: what `meshStats()` returns (the relay itself lives in Rust).
     public var fakeMeshStats = MeshRelayStats()
+    // Live video test hooks.
+    public var fakeSignals: [LiveSignalModel] = []
+    public var sentSignals: [LiveSignalModel] = []
+    public var videoJoins = 0
+    public var droppedPeers: [String] = []
+    public var fakeMediaKey: LiveMediaKeyModel? = LiveMediaKeyModel(baseKey: Data(repeating: 1, count: 16), kid: 0)
+    public func liveVideoJoin() { videoJoins += 1 }
+    @discardableResult public func liveSendSignal(peerHex: String, kind: String, body: String) -> Bool {
+        sentSignals.append(LiveSignalModel(peerHex: peerHex, kind: kind, body: body)); return true
+    }
+    public func liveTakeSignals() -> [LiveSignalModel] { defer { fakeSignals = [] }; return fakeSignals }
+    public func liveVideoDrop(peerHex: String) { droppedPeers.append(peerHex) }
+    public func liveMediaKey() -> LiveMediaKeyModel? { fakeMediaKey }
 
     public func meshStats() -> MeshRelayStats { fakeMeshStats }
     public var maxFile: UInt64 = 50_000_000

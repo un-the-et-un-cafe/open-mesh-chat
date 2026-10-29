@@ -317,7 +317,11 @@
 "mod_reason_9" = "Autre";
 "live_entry" = "Direct";
 "live_offline_callout" = "Pas d’Internet : le direct est audio uniquement, via le maillage Bluetooth (jusqu’à 3 sauts).";
-"live_online_callout" = "L’audio en direct passe par le maillage. La vidéo nécessitera une version avec la vidéo activée.";
+"live_online_callout" = "En ligne : la vidéo passe de téléphone à téléphone (chiffrée de bout en bout). L’audio passe aussi par le maillage.";
+"live_video_badge" = "Vidéo · audio";
+"live_video_connecting" = "Connexion de la vidéo…";
+"live_video_no_path" = "La vidéo n’a pas pu se connecter directement (ce réseau la bloque et Hopla n’utilise aucun serveur relais). L’audio continue via le maillage.";
+"live_video_full" = "La vidéo est complète pour le moment. L’audio continue via le maillage.";
 "live_happening" = "En ce moment";
 "live_badge" = "● EN DIRECT";
 "live_audio_badge" = "Audio · maillage";

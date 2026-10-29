@@ -392,7 +392,7 @@
     <string name="mod_reason_5">Spam ou arnaque</string>
     <string name="mod_reason_9">Autre</string>
     <string name="live_offline_callout">Pas d\'Internet : le direct est audio uniquement, via le maillage Bluetooth (jusqu\'à 3 sauts).</string>
-    <string name="live_online_callout">L\'audio en direct passe par le maillage. La vidéo nécessitera une version avec la vidéo activée.</string>
+    <string name="live_online_callout">En ligne : la vidéo passe de téléphone à téléphone (chiffrée de bout en bout). L\'audio passe aussi par le maillage.</string>
     <string name="live_happening">En ce moment</string>
     <string name="live_badge">● EN DIRECT</string>
     <string name="live_audio_badge">Audio · maillage</string>
@@ -408,5 +408,9 @@
     <string name="live_you_are_live">Vous êtes en direct · %1$d peuvent écouter</string>
     <string name="live_empty">Personne que vous connaissez n\'est en direct.</string>
     <string name="live_mic_denied">Hopla a besoin du micro pour passer en direct. Vous pouvez l\'autoriser dans Réglages.</string>
+    <string name="live_video_badge">Vidéo · audio</string>
+    <string name="live_video_connecting">Connexion de la vidéo…</string>
+    <string name="live_video_no_path">La vidéo n\'a pas pu se connecter directement (ce réseau la bloque et Hopla n\'utilise aucun serveur relais). L\'audio continue via le maillage.</string>
+    <string name="live_video_full">La vidéo est complète pour le moment. L\'audio continue via le maillage.</string>
     <string name="live_entry">Direct</string>
 </resources>

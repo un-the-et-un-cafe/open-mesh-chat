@@ -21,8 +21,10 @@ pub mod host;
 pub mod jitter;
 pub mod mode;
 pub mod relay;
+pub mod sframe;
 pub mod signal;
 pub mod tree;
+pub mod video;
 
 #[cfg(test)]
 mod sim;

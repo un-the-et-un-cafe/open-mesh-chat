@@ -1872,6 +1872,14 @@ impl MeshLink {
                 // Live invite: stream key over the E2EE chat; no chat row.
                 node.on_live_invite(peer, &bytes, out)?;
             }
+            (None, AppContent::Media { mime, bytes })
+                if mime == omcp_core::live::signal::SIGNAL_MIME =>
+            {
+                // Live WebRTC signal (0x50); hosts relay to the tree neighbour.
+                // Forwards go out on the next `live_take_signals()` poll.
+                let fwd = node.on_live_signal(peer, &bytes);
+                node.mesh.live.pending_fwd.extend(fwd);
+            }
             (None, AppContent::Media { mime, .. }) => {
                 // TODO(M5.x): non-burn media goes through the chunked file path.
                 node.db()

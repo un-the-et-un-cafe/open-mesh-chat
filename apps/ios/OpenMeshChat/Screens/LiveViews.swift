@@ -4,8 +4,8 @@ import Network
 import HoplaKit
 
 /// Live tab (REQUIREMENTS "Live"): who's live, listen, or go live. Mirrors Android.
-/// Audio capture/playback on iOS is not wired yet (docs/LIVE.md); stream control, keys and
-/// mesh forwarding run in the shared Rust core.
+/// Audio goes over the mesh (LiveAudioIO); with internet, video goes peer to peer in the
+/// viewer tree (WebRtcPeers, STUN only, E2EE frames). Keys and the tree live in Rust.
 struct LiveTabView: View {
     @EnvironmentObject var model: AppModel
     @Environment(\.omcpColors) private var c
@@ -15,6 +15,8 @@ struct LiveTabView: View {
     @State private var picked: Set<String> = []
     @State private var micDenied = false
     @State private var online = false
+    @State private var session: LiveSession?
+    @State private var videoState: VideoState = .off
     private let monitor = NWPathMonitor()
 
     var body: some View {
@@ -23,14 +25,16 @@ struct LiveTabView: View {
             Section {
                 Text(L(online ? "live_online_callout" : "live_offline_callout"))
                     .font(.footnote).foregroundStyle(c.ink2)
-                Text(L("live_ios_audio_soon")).font(.footnote).foregroundStyle(c.ink3)
             }
             if let mine = split.mine {
                 Section {
                     Text(L("live_badge")).font(.caption).foregroundStyle(c.danger)
                     Text(mine.title).font(.headline)
+                    if let session, videoState == .hosting {
+                        LiveVideoView(peers: session.peers).aspectRatio(4.0 / 3.0, contentMode: .fit)
+                    }
                     Text(String(format: L("live_you_are_live"), Int(stats.listeners))).foregroundStyle(c.ink2)
-                    Button(L("live_stop")) { model.core.liveStop(); reload() }
+                    Button(L("live_stop")) { session?.stop(); model.core.liveStop(); reload() }
                 }
             }
             Section(L("live_happening")) {
@@ -41,16 +45,25 @@ struct LiveTabView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         HStack {
                             Text(L("live_badge")).font(.caption).foregroundStyle(c.danger)
-                            Text(L("live_audio_badge")).font(.caption).foregroundStyle(c.ink2)
+                            Text(L(s.video && online ? "live_video_badge" : "live_audio_badge")).font(.caption).foregroundStyle(c.ink2)
                         }
                         Text(s.title).font(.headline)
                         Text(hostName(s)).foregroundStyle(c.ink2)
                         if s.listening {
+                            if let session, videoState == .watching {
+                                LiveVideoView(peers: session.peers).aspectRatio(4.0 / 3.0, contentMode: .fit)
+                            }
+                            if let key = LiveVideoController.messageKey(videoState) {
+                                Text(L(key)).font(.footnote).foregroundStyle(c.ink2)
+                            }
                             Text(String(format: L("live_listening"), stats.lossPercent)).foregroundStyle(c.ink2)
-                            Button(L("live_leave")) { model.core.liveLeave(); reload() }
+                            Button(L("live_leave")) { session?.stop(); model.core.liveLeave(); reload() }
                         } else {
                             Button(L("live_join")) {
-                                _ = model.core.liveJoin(streamIdHex: s.streamIdHex, hasInternet: online); reload()
+                                if model.core.liveJoin(streamIdHex: s.streamIdHex, hasInternet: online) {
+                                    liveSession().startListening(video: online && s.video)
+                                }
+                                reload()
                             }.disabled(split.mine != nil)
                         }
                     }
@@ -95,6 +108,16 @@ struct LiveTabView: View {
     private func reload() {
         streams = model.core.liveStreams()
         stats = model.core.liveStats()
+        // The host ended the stream we were in.
+        if session != nil && !streams.contains(where: { $0.listening || $0.mine }) { session?.stop() }
+        videoState = session?.video ?? .off
+    }
+
+    private func liveSession() -> LiveSession {
+        if let session { return session }
+        let s = LiveSession(core: model.core, kick: model.repo.kick)
+        session = s
+        return s
     }
 
     /// Microphone: asked the first time the user goes live, never at start-up.
@@ -102,22 +125,35 @@ struct LiveTabView: View {
         let session = AVAudioSession.sharedInstance()
         switch session.recordPermission {
         case .granted:
-            start()
+            withCamera { start(video: $0) }
         case .denied:
             micDenied = true
         default:
             session.requestRecordPermission { ok in
                 DispatchQueue.main.async {
                     micDenied = !ok
-                    if ok { start() }
+                    if ok { withCamera { start(video: $0) } }
                 }
             }
         }
     }
 
-    private func start() {
+    /// Camera: asked the first time the user goes live with internet; denied = audio only.
+    private func withCamera(_ then: @escaping (Bool) -> Void) {
+        guard online else { then(false); return }
+        switch AVCaptureDevice.authorizationStatus(for: .video) {
+        case .authorized: then(true)
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .video) { ok in DispatchQueue.main.async { then(ok) } }
+        default: then(false)
+        }
+    }
+
+    private func start(video: Bool) {
         let t = title.trimmingCharacters(in: .whitespaces)
-        _ = model.core.liveStart(title: t.isEmpty ? "Live" : t, video: false, contactIds: Array(picked))
+        if model.core.liveStart(title: t.isEmpty ? "Live" : t, video: video, contactIds: Array(picked)) != nil {
+            liveSession().startHosting(video: video)
+        }
         reload()
     }
 }

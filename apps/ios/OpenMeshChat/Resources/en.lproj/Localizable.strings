@@ -317,7 +317,11 @@
 "mod_reason_9" = "Other";
 "live_entry" = "Live";
 "live_offline_callout" = "No internet: Live is audio only, over the Bluetooth mesh (up to 3 hops).";
-"live_online_callout" = "Live audio goes over the mesh. Video will need a build with video turned on.";
+"live_online_callout" = "Online: video goes phone to phone (encrypted end to end). Audio also goes over the mesh.";
+"live_video_badge" = "Video · audio";
+"live_video_connecting" = "Connecting video…";
+"live_video_no_path" = "Video couldn’t connect directly (this network blocks it and Hopla uses no relay servers). You’re still hearing the audio over the mesh.";
+"live_video_full" = "Video is full right now. You’re still hearing the audio over the mesh.";
 "live_happening" = "Happening now";
 "live_badge" = "● LIVE";
 "live_audio_badge" = "Audio · mesh";

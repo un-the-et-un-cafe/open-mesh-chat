@@ -391,7 +391,7 @@
     <string name="mod_reason_5">Spam or scam</string>
     <string name="mod_reason_9">Other</string>
     <string name="live_offline_callout">No internet: Live is audio only, over the Bluetooth mesh (up to 3 hops).</string>
-    <string name="live_online_callout">Live audio goes over the mesh. Video will need a build with video turned on.</string>
+    <string name="live_online_callout">Online: video goes phone to phone (encrypted end to end). Audio also goes over the mesh.</string>
     <string name="live_happening">Happening now</string>
     <string name="live_badge">● LIVE</string>
     <string name="live_audio_badge">Audio · mesh</string>
@@ -407,5 +407,9 @@
     <string name="live_you_are_live">You\'re live · %1$d can listen</string>
     <string name="live_empty">Nobody you know is live right now.</string>
     <string name="live_mic_denied">Hopla needs the microphone to go live. You can allow it in Settings.</string>
+    <string name="live_video_badge">Video · audio</string>
+    <string name="live_video_connecting">Connecting video…</string>
+    <string name="live_video_no_path">Video couldn\'t connect directly (this network blocks it and Hopla uses no relay servers). You\'re still hearing the audio over the mesh.</string>
+    <string name="live_video_full">Video is full right now. You\'re still hearing the audio over the mesh.</string>
     <string name="live_entry">Live</string>
 </resources>

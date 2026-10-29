@@ -19,8 +19,6 @@ val gitCommit: String = runCatching {
 // registered for chat.omcp.app.debug (package + signing SHA-1). Release builds without it use
 // "chat.omcp.app", which needs its own Android OAuth client in Google Cloud.
 val releaseAppIdSuffix: String = (findProperty("OMCP_RELEASE_APP_ID_SUFFIX") as String?)?.trim().orEmpty()
-/** -POMCP_LIVE_VIDEO=true adds WebRTC video to Live (off by default: APK size). */
-val liveVideo: Boolean = (findProperty("OMCP_LIVE_VIDEO") as String?)?.trim() == "true"
 require(releaseAppIdSuffix.all { it.isLetterOrDigit() || it in "._" }) { "bad OMCP_RELEASE_APP_ID_SUFFIX" }
 
 plugins {
@@ -49,9 +47,8 @@ android {
         buildConfigField("boolean", "SIMULATED_DRIVE_BACKUP", "false")
         buildConfigField("String", "GIT_COMMIT", "\"$gitCommit\"")
         buildConfigField("String", "DESIGN_VERSION", "\"0.1.21\"")
-        // Live video (WebRTC) is off by default: the WebRTC arm64 library alone adds ~12 MB
-        // stored (~6 MB compressed), pushing the arm64 APK past 25 MB (docs/LIVE.md).
-        buildConfigField("boolean", "LIVE_VIDEO", liveVideo.toString())
+        // Live video (WebRTC) ships by default (owner decision: APK budget ~35 MB, docs/LIVE.md).
+        buildConfigField("boolean", "LIVE_VIDEO", "true")
     }
 
     buildTypes {
@@ -100,10 +97,9 @@ android {
 }
 
 dependencies {
-    if (liveVideo) {
-        // BSD-3-Clause; maintained build of Google's libwebrtc (docs/LIVE.md).
-        implementation("io.github.webrtc-sdk:android:150.7871.04")
-    }
+    // Live video: BSD-3-Clause, maintained build of Google's libwebrtc with the frame
+    // cryptor (E2EE) API (docs/LIVE.md). Same SDK family as iOS (WebRTC-SDK via SPM).
+    implementation("io.github.webrtc-sdk:android:150.7871.04")
     val composeBom = platform("androidx.compose:compose-bom:2024.10.01")
     implementation(composeBom)
     androidTestImplementation(composeBom)

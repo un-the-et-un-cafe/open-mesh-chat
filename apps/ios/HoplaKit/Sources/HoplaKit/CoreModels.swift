@@ -636,6 +636,18 @@ public protocol OmcpCore: AnyObject {
     func liveJoin(streamIdHex: String, hasInternet: Bool) -> Bool
     func liveLeave()
     func liveStats() -> LiveStatsModel
+    /// Host: hand encoded 20 ms Opus frames; returns the links to flush.
+    func livePushAudio(_ frames: [Data]) -> [UInt64]
+    /// Frames due for playout now (listener).
+    func liveTakeAudio(nowMs: UInt64) -> [LivePlayoutModel]
+    /// Online video (WebRTC, STUN only, 0x50 signals relayed by the host; docs/LIVE.md).
+    func liveVideoJoin()
+    /// `kind`: offer, answer, ice, bye, join, assign. `peerHex` 64 zeros = the host.
+    @discardableResult func liveSendSignal(peerHex: String, kind: String, body: String) -> Bool
+    func liveTakeSignals() -> [LiveSignalModel]
+    func liveVideoDrop(peerHex: String)
+    func liveMediaKey() -> LiveMediaKeyModel?
+    func liveStunServers() -> [String]
     /// Team moderation (PROTOCOL §23.9, TM1–TM4).
     func moderationHasTeam() -> Bool
     func moderationLog() -> [TeamLogEntryModel]
@@ -748,6 +760,14 @@ public extension OmcpCore {
     func liveJoin(streamIdHex: String, hasInternet: Bool) -> Bool { false }
     func liveLeave() {}
     func liveStats() -> LiveStatsModel { LiveStatsModel() }
+    func livePushAudio(_ frames: [Data]) -> [UInt64] { [] }
+    func liveTakeAudio(nowMs: UInt64) -> [LivePlayoutModel] { [] }
+    func liveVideoJoin() {}
+    @discardableResult func liveSendSignal(peerHex: String, kind: String, body: String) -> Bool { false }
+    func liveTakeSignals() -> [LiveSignalModel] { [] }
+    func liveVideoDrop(peerHex: String) {}
+    func liveMediaKey() -> LiveMediaKeyModel? { nil }
+    func liveStunServers() -> [String] { ["stun:stun.l.google.com:19302"] }
     func moderationHasTeam() -> Bool { false }
     func moderationLog() -> [TeamLogEntryModel] { [] }
     func moderationPublish(actionHex: String) -> String { "no_team" }

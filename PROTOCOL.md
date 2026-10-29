@@ -554,7 +554,7 @@ Livestreams NEED a high-bandwidth path. On pure BLE mesh they are **not** suppor
 
 **Normative:** Livestream media keys are derived from the community/channel MLS epoch exporter + per-stream random. SFUs and gateways MUST NOT receive media keys. Viewers who are not community members cannot decrypt.
 
-**Signalling:** WebRTC-style offers/answers carried as OMCP content-type `0x50 application/omcp-rtc-signal` (E2EE).
+**Signalling:** WebRTC-style offers/answers carried as OMCP content-type `0x50 application/omcp-rtc-signal` (E2EE). Body: `0x50 ‖ key_epoch (u32 BE) ‖ XChaCha20-Poly1305(stream key, CBOR {stream_id, from, to, kind, body})` with kinds `Offer, Answer, Ice, Bye, Join, Assign`. Viewers send every signal to the host, which keeps the viewer tree and relays only between tree neighbours (`Join` → `Assign` to the parent, `Bye "parked"` when no slot). Video frames are E2EE with a key derived from the stream secret (SFrame base key, RFC 9605 key schedule; docs/LIVE.md).
 
 **Recording:** Local-only or E2EE cloud blob with Content Key wrapped to chosen recipients; default off.
 

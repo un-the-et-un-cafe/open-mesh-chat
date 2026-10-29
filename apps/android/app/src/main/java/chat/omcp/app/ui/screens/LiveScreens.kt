@@ -48,11 +48,16 @@ import chat.omcp.app.ui.components.Callout
 import chat.omcp.app.ui.components.CalloutKind
 import chat.omcp.app.ui.theme.LocalOmcpColors
 import chat.omcp.app.ui.vm.LiveViewModel
+import chat.omcp.app.live.VideoState
+import chat.omcp.app.live.WebRtcPeers
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.viewinterop.AndroidView
 
 /** Live tab: who's live, listen, or go live (audio over the mesh; REQUIREMENTS "Live"). */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun LiveTabScreen(vm: LiveViewModel, contacts: List<Contact>, hasInternet: () -> Boolean) {
+fun LiveTabScreen(vm: LiveViewModel, contacts: List<Contact>, rtc: WebRtcPeers?, hasInternet: () -> Boolean) {
     val c = LocalOmcpColors.current
     val ctx = LocalContext.current
     val s by vm.state.collectAsState()
@@ -64,11 +69,13 @@ fun LiveTabScreen(vm: LiveViewModel, contacts: List<Contact>, hasInternet: () ->
     }
     val go = { vm.goLive(title, picked.toList(), hasInternet()) }
     // Microphone: asked the first time the user goes live, never at start-up.
-    val mic = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
+    val mic = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { res ->
+        val ok = res[Manifest.permission.RECORD_AUDIO] ?: (ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED)
         micDenied = !ok
-        if (ok) go()
+        if (ok) go() // without CAMERA the host still goes live, audio only
     }
     val online = hasInternet()
+    val wantCamera = online && rtc != null
     Scaffold(topBar = { TopAppBar(title = { Text(stringResource(R.string.tab_live)) }) }) { padding ->
         LazyColumn(Modifier.fillMaxSize().padding(padding), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             item {
@@ -84,6 +91,7 @@ fun LiveTabScreen(vm: LiveViewModel, contacts: List<Contact>, hasInternet: () ->
                         Column(Modifier.padding(16.dp)) {
                             LiveBadge()
                             Text(h.title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 6.dp))
+                            if (rtc != null && s.video == VideoState.Hosting) VideoView(rtc)
                             Text(stringResource(R.string.live_you_are_live, s.stats.listeners), color = c.ink2,
                                 modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
                             Button(onClick = vm::stopLive, modifier = Modifier.padding(top = 8.dp)) { Text(stringResource(R.string.live_stop)) }
@@ -100,7 +108,8 @@ fun LiveTabScreen(vm: LiveViewModel, contacts: List<Contact>, hasInternet: () ->
             }
             items(s.streams, key = { it.streamIdHex }) { st ->
                 StreamCard(st, contacts, s.hosting == null, onListen = { vm.listen(st.streamIdHex, online) }, onLeave = vm::leave,
-                    lossPct = if (st.listening) LiveViewModel.lossPercent(s.stats) else null)
+                    lossPct = if (st.listening) LiveViewModel.lossPercent(s.stats) else null,
+                    video = if (st.listening) s.video else VideoState.Off, rtc = rtc, online = online)
             }
             if (s.hosting == null) {
                 item {
@@ -121,7 +130,9 @@ fun LiveTabScreen(vm: LiveViewModel, contacts: List<Contact>, hasInternet: () ->
                             Button(
                                 onClick = {
                                     val granted = ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
-                                    if (granted) go() else mic.launch(Manifest.permission.RECORD_AUDIO)
+                                                    val camOk = !wantCamera || ContextCompat.checkSelfPermission(ctx, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+                                    if (granted && camOk) go() else mic.launch(
+                                        if (wantCamera) arrayOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.CAMERA) else arrayOf(Manifest.permission.RECORD_AUDIO))
                                 },
                                 enabled = picked.isNotEmpty(),
                                 modifier = Modifier.padding(top = 8.dp),
@@ -148,6 +159,9 @@ private fun StreamCard(
     onListen: () -> Unit,
     onLeave: () -> Unit,
     lossPct: Int?,
+    video: VideoState,
+    rtc: WebRtcPeers?,
+    online: Boolean,
 ) {
     val c = LocalOmcpColors.current
     val host = contacts.firstOrNull { it.id == st.hostContactId }?.displayName ?: ("omcp1:" + st.hostContactId.take(4) + "…")
@@ -156,11 +170,17 @@ private fun StreamCard(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 LiveBadge()
                 Spacer(Modifier.width(8.dp))
-                AssistChip(onClick = {}, label = { Text(stringResource(R.string.live_audio_badge)) })
+                AssistChip(onClick = {}, label = {
+                    Text(stringResource(if (st.video && online && rtc != null) R.string.live_video_badge else R.string.live_audio_badge))
+                })
             }
             Text(st.title, style = MaterialTheme.typography.titleMedium)
             Text(host, color = c.ink2)
             if (st.listening) {
+                if (rtc != null && video == VideoState.Watching) VideoView(rtc)
+                videoMessage(video)?.let { m ->
+                    Text(stringResource(m), color = c.ink2, modifier = Modifier.padding(top = 4.dp).semantics { liveRegion = LiveRegionMode.Polite })
+                }
                 Text(stringResource(R.string.live_listening, lossPct ?: 0), color = c.ink2,
                     modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
                 OutlinedButton(onClick = onLeave, modifier = Modifier.padding(top = 8.dp)) { Text(stringResource(R.string.live_leave)) }
@@ -168,5 +188,32 @@ private fun StreamCard(
                 Button(onClick = onListen, enabled = canListen, modifier = Modifier.padding(top = 8.dp)) { Text(stringResource(R.string.live_join)) }
             }
         }
+    }
+}
+
+/** User-facing video status (null = nothing to say). */
+fun videoMessage(v: VideoState): Int? = when (v) {
+    VideoState.Connecting -> R.string.live_video_connecting
+    VideoState.NoDirectPath -> R.string.live_video_no_path
+    VideoState.NoSlot -> R.string.live_video_full
+    else -> null
+}
+
+@Composable
+private fun VideoView(rtc: WebRtcPeers) {
+    val view = remember { mutableStateOf<org.webrtc.SurfaceViewRenderer?>(null) }
+    AndroidView(
+        factory = { ctx ->
+            org.webrtc.SurfaceViewRenderer(ctx).also {
+                it.init(rtc.egl.eglBaseContext, null)
+                it.setScalingType(org.webrtc.RendererCommon.ScalingType.SCALE_ASPECT_FIT)
+                rtc.setSink(it)
+                view.value = it
+            }
+        },
+        modifier = Modifier.fillMaxWidth().aspectRatio(4f / 3f).padding(top = 8.dp),
+    )
+    DisposableEffect(Unit) {
+        onDispose { rtc.setSink(null); view.value?.release() }
     }
 }

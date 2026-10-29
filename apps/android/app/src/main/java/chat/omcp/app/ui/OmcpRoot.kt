@@ -201,9 +201,12 @@ fun OmcpRoot(
                     chat.omcp.app.ui.vm.LiveViewModel(
                         repo.core,
                         chat.omcp.app.live.LiveAudioEngine(repo.core) { repo.kick?.kick("") },
+                        if (chat.omcp.app.ui.vm.LiveViewModel.VIDEO_ENABLED) runCatching {
+                            chat.omcp.app.live.WebRtcLiveVideo(chat.omcp.app.live.WebRtcPeers(ctx, repo.core), repo.core)
+                        }.getOrNull() else null,
                     )
                 }
-                LiveTabScreen(liveVm, contacts) {
+                LiveTabScreen(liveVm, contacts, liveVm.webRtc) {
                     val cm = ctx.getSystemService(android.net.ConnectivityManager::class.java)
                     cm?.getNetworkCapabilities(cm.activeNetwork)
                         ?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true
