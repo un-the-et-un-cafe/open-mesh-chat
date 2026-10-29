@@ -96,6 +96,9 @@ public final class MeshRepository {
     public private(set) var restoredAtMs: Int64?
     public var onChange: (() -> Void)?
     public var genericBody = "New message"
+    /// Localized "{host} is live in {community}" / "{title} · Tap to listen" (set by the app).
+    public var liveTitleFormat: (String, String) -> String = { "\($0) is live in \($1)" }
+    public var liveBodyFormat: (String) -> String = { "\($0) · Tap to listen" }
     private let clock: () -> Int64
     /// Encrypted local store (Rust core). nil = everything in memory (tests, previews).
     private let dbPath: String?
@@ -429,8 +432,13 @@ public final class MeshRepository {
 
     /// Community lives announced since the last step: generic lock-screen notification.
     public func notifyLiveStarts() {
-        for (sid, _) in core.liveTakeStarted() {
-            notifier?.post(NotificationPolicy.liveStartedContent(store, genericBody: genericBody), id: "live-" + sid)
+        for (sid, cid) in core.liveTakeStarted() {
+            let community = core.communities().first { $0.id == cid }?.name ?? ""
+            let st = core.liveStreams().first { $0.streamIdHex == sid }
+            let host = st.flatMap { s in core.communityMembers(communityId: cid).first { $0.peerId == s.hostContactId }?.name } ?? ""
+            notifier?.post(NotificationPolicy.liveStartedContent(
+                store, communityId: cid, title: liveTitleFormat(host, community), body: liveBodyFormat(st?.title ?? ""),
+                genericBody: genericBody), id: "live-" + sid)
         }
     }
 

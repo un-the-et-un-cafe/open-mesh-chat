@@ -42,6 +42,14 @@ class LiveViewModel(
         val video: VideoState = VideoState.Off,
         /** "taken_down" after a team takedown stopped our stream. */
         val notice: String? = null,
+        /** The takedown hit our own stream (host sees reason + Appeal, §5.123). */
+        val noticeMine: Boolean = false,
+        /** §23.9 reason code of a takedown of our stream. */
+        val noticeReason: Int? = null,
+        /** Rekey toast after Remove from live: (name, people who got the new key). */
+        val removedToast: Pair<String, Int>? = null,
+        /** PeerIDs removed from the current live (cumulative, like the signed Rekey). */
+        val removedViewers: Set<String> = emptySet(),
     )
 
     /** For the renderer (WebRTC builds only). */
@@ -56,7 +64,12 @@ class LiveViewModel(
         val ended = core.liveTakeEnded()
         if (ended.isNotEmpty()) {
             audio?.stop(); stopVideo(); wasListening = false
-            _state.value = _state.value.copy(notice = ended.first().reason)
+            val e = ended.first()
+            _state.value = _state.value.copy(
+                notice = e.reason, noticeMine = e.mine,
+                noticeReason = if (e.mine) core.moderationLiveRemovedReason(e.streamIdHex) else null,
+                removedViewers = emptySet(),
+            )
         }
         val all = core.liveStreams()
         _state.value = _state.value.copy(
@@ -89,7 +102,7 @@ class LiveViewModel(
         leave()
         val id = core.liveStartCommunity(communityId, title.ifBlank { "Live" }, video = hasInternet && VIDEO_ENABLED)
         if (id == null) { _state.value = _state.value.copy(error = "start"); return false }
-        _state.value = _state.value.copy(notice = null)
+        _state.value = _state.value.copy(notice = null, noticeMine = false, noticeReason = null, removedViewers = emptySet())
         audio?.startHosting()
         if (hasInternet && video != null) startVideo { it.startHosting() }
         refresh()
@@ -97,13 +110,25 @@ class LiveViewModel(
     }
 
     /** Host: remove a viewer. The key rotates; the removed person can't decrypt new frames. */
-    fun removeViewer(peerId: String) {
+    fun removeViewer(peerId: String) { removeFromLive(peerId, "", emptyList()) }
+
+    /**
+     * Host: Remove from live (DESIGN §5.122, after the confirm sheet). [memberIds]
+     * = everyone in the community; the toast counts who got the new key (all
+     * members except us and everyone removed so far).
+     */
+    fun removeFromLive(peerId: String, name: String, memberIds: List<String>, me: String? = null) {
         if (_state.value.hosting == null) return
         core.liveRemoveListener(peerId)
+        val removed = _state.value.removedViewers + peerId
+        val n = memberIds.count { it != me && it !in removed }
+        _state.value = _state.value.copy(removedViewers = removed, removedToast = name to n)
         refresh()
     }
 
-    fun dismissNotice() { _state.value = _state.value.copy(notice = null) }
+    fun dismissToast() { _state.value = _state.value.copy(removedToast = null) }
+
+    fun dismissNotice() { _state.value = _state.value.copy(notice = null, noticeMine = false, noticeReason = null) }
 
     fun stopLive() {
         audio?.stop()

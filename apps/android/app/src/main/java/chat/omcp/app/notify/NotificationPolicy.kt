@@ -70,4 +70,30 @@ object NotificationPolicy {
             NotificationContent(caller, genericCall, true, false, vis, appName, genericCall)
         }
     }
+
+    /**
+     * A community live started (DESIGN §5.124). Default mode: the unlocked shade
+     * shows "{host} is live in {community}" + title. The lock screen ALWAYS gets
+     * the generic public version "Hopla · New message" (visibility PRIVATE),
+     * whatever the lock-screen setting. Private mode (global, or per community
+     * keyed by its id): generic everywhere (§5.36).
+     */
+    fun liveContent(
+        store: AppStore,
+        communityId: String,
+        host: String,
+        community: String,
+        liveTitle: String,
+        appName: String,
+        genericBody: String,
+        titleFmt: (String, String) -> String,
+        bodyFmt: (String) -> String,
+    ): NotificationContent {
+        val private = isPrivate(store, communityId)
+        return if (private) {
+            NotificationContent(appName, genericBody, false, true, LockVisibility.PRIVATE, appName, genericBody)
+        } else {
+            NotificationContent(titleFmt(host, community), bodyFmt(liveTitle), false, false, LockVisibility.PRIVATE, appName, genericBody)
+        }
+    }
 }

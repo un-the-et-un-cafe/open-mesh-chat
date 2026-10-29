@@ -10,6 +10,7 @@ final class LocalNotifier: Notifier {
     static let categoryMessage = "omcp.message"
     static let categoryMessageHidden = "omcp.message.hidden"
     static let categoryCall = "omcp.call"
+    static let categoryLive = "omcp.live"
 
     static func registerCategories() {
         let placeholder = L("notif_new_message")
@@ -20,7 +21,12 @@ final class LocalNotifier: Notifier {
                                             hiddenPreviewsBodyPlaceholder: placeholder, options: [])
         let call = UNNotificationCategory(identifier: categoryCall, actions: [], intentIdentifiers: [],
                                           hiddenPreviewsBodyPlaceholder: L("notif_incoming_call"), options: [])
-        UNUserNotificationCenter.current().setNotificationCategories([normal, hidden, call])
+        // Live start (§5.124): Listen opens the app; no title when previews are hidden,
+        // so the lock screen reads "Hopla · New message". No Mute action (provisional).
+        let listen = UNNotificationAction(identifier: "omcp.live.listen", title: L("live_notif_listen"), options: [.foreground])
+        let live = UNNotificationCategory(identifier: categoryLive, actions: [listen], intentIdentifiers: [],
+                                          hiddenPreviewsBodyPlaceholder: placeholder, options: [])
+        UNUserNotificationCenter.current().setNotificationCategories([normal, hidden, call, live])
     }
 
     static func request(_ c: NotificationContent, id: String) -> UNNotificationRequest {
@@ -28,7 +34,7 @@ final class LocalNotifier: Notifier {
         n.title = c.title
         n.body = c.body
         n.threadIdentifier = c.threadId
-        n.categoryIdentifier = c.hideOnLockScreen ? categoryMessageHidden : categoryMessage
+        n.categoryIdentifier = c.kind == "live" ? categoryLive : (c.hideOnLockScreen ? categoryMessageHidden : categoryMessage)
         n.sound = .default
         // No avatar attachment / communication intent when private.
         return UNNotificationRequest(identifier: id, content: n, trigger: nil)

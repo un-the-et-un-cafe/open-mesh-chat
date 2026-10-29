@@ -24,6 +24,8 @@ final class AppModel: ObservableObject {
         // Chat backup (CB1–CB5) in iCloud: private DB, zone HoplaBackupV1 (REQUIREMENTS v0.1.4a).
         repo.chatBackup = ChatBackupSync(core: core, blobs: RecordChatBlobStore(backend: CloudKitChatRecordBackend()))
         repo.genericBody = L("notif_new_message")
+        repo.liveTitleFormat = { String(format: L("live_notif_title"), $0, $1) }
+        repo.liveBodyFormat = { String(format: L("live_notif_body"), $0) }
         // Flow steps may run off the main thread (cloud I/O); always publish on main.
         repo.onChange = { [weak self] in
             Task { @MainActor in

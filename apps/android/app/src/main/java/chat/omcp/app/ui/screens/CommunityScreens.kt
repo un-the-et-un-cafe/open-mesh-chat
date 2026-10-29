@@ -12,6 +12,17 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.disabled
+import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -55,23 +66,37 @@ fun CommunitiesHomeScreen(core: OmcpCore, onOpenLive: () -> Unit, onOpen: (Strin
     val c = LocalOmcpColors.current
     var list by remember { mutableStateOf(listOf<CommunityUi>()) }
     var invites by remember { mutableStateOf(listOf<CommunityInviteUi>()) }
+    var liveNow by remember { mutableStateOf(listOf<chat.omcp.app.core.LiveStreamUi>()) }
     var name by remember { mutableStateOf("") }
     val contacts = remember { core.contacts() }
     LaunchedEffect(Unit) {
         while (true) {
             list = core.communities(); invites = core.communityInvites()
+            liveNow = core.liveStreams().filter { it.communityId.isNotEmpty() && !it.mine }
             kotlinx.coroutines.delay(1_000)
         }
     }
     Scaffold(topBar = { TopAppBar(title = { Text(stringResource(R.string.tab_communities)) }) }) { padding ->
         LazyColumn(Modifier.fillMaxSize().padding(padding), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             item { TextButton(onClick = onOpenLive, modifier = Modifier.padding(horizontal = 8.dp)) { Text(stringResource(R.string.live_entry)) } }
+            // §5.120: one card per active community live on top.
+            items(liveNow, key = { "l" + it.streamIdHex }) { st ->
+                Card(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+                    Column(Modifier.padding(16.dp)) {
+                        Text(stringResource(R.string.live_badge), color = c.danger, style = MaterialTheme.typography.labelMedium)
+                        Text(st.title, style = MaterialTheme.typography.titleMedium)
+                        Text(list.firstOrNull { it.id == st.communityId }?.name ?: "", color = c.ink2)
+                        Button(onClick = { onOpen(st.communityId) }, Modifier.padding(top = 8.dp).heightIn(min = 48.dp)) { Text(stringResource(R.string.live_join)) }
+                    }
+                }
+            }
             items(invites, key = { "i" + it.communityId }) { inv ->
                 val from = contacts.firstOrNull { it.id == inv.fromContactId }?.displayName ?: ("omcp1:" + inv.fromContactId.take(4) + "…")
                 Card(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
                     Column(Modifier.padding(16.dp)) {
                         Text(stringResource(R.string.community_invite_t, inv.name), style = MaterialTheme.typography.titleMedium)
                         Text(stringResource(R.string.community_invite_from, from), color = c.ink2)
+                        Text(stringResource(R.string.community_inv_note), color = c.ink2, style = MaterialTheme.typography.bodySmall)
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
                             Button(onClick = { core.communityAccept(inv.communityId); invites = core.communityInvites() }) { Text(stringResource(R.string.community_accept)) }
                             OutlinedButton(onClick = { core.communityDecline(inv.communityId); invites = core.communityInvites() }) { Text(stringResource(R.string.community_decline)) }
@@ -143,27 +168,47 @@ fun CommunityDetailScreen(
     val removed = k?.removedReason != null
     val lives = core.liveStreams().filter { it.communityId == communityId && !it.mine }
     val hostingHere = s.hosting?.communityId == communityId
-    Scaffold(topBar = {
+    val snack = remember { SnackbarHostState() }
+    var confirmRemove by remember { mutableStateOf<CommunityMemberUi?>(null) }
+    var report by remember { mutableStateOf<String?>(null) }
+    var learn by remember { mutableStateOf(false) }
+    val toastText = s.removedToast?.let { (n, k) -> stringResource(R.string.live_rm_done, n, k) }
+    LaunchedEffect(toastText) { if (toastText != null) { snack.showSnackbar(toastText); vm.dismissToast() } }
+    confirmRemove?.let { m ->
+        RemoveFromLiveDialog(m.name, onConfirm = {
+            vm.removeFromLive(m.peerId, m.name, members.map { it.peerId }, members.firstOrNull { it.isMe }?.peerId)
+            confirmRemove = null
+        }, onDismiss = { confirmRemove = null })
+    }
+    report?.let { ReportLiveDialog(it) { report = null } }
+    if (learn) InfoDialog(stringResource(R.string.mod_learn), stringResource(R.string.mod_learn_d)) { learn = false }
+    Scaffold(snackbarHost = { SnackbarHost(snack) }, topBar = {
         TopAppBar(title = { Text(k?.name ?: "") }, navigationIcon = {
             IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.back)) }
         })
     }) { padding ->
         LazyColumn(Modifier.fillMaxSize().padding(padding), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             if (removed) {
-                item { Callout(stringResource(R.string.community_removed_body), CalloutKind.Warn, Modifier.padding(horizontal = 16.dp)) }
+                item {
+                    Column(Modifier.padding(horizontal = 16.dp)) {
+                        Callout(stringResource(R.string.community_removed) + "\n" + stringResource(R.string.community_removed_body), CalloutKind.Danger)
+                        TextButton(onClick = { learn = true }, Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.mod_learn)) }
+                    }
+                }
             }
             if (s.notice == "taken_down") {
                 item {
-                    Callout(stringResource(R.string.live_taken_down), CalloutKind.Warn,
-                        Modifier.padding(horizontal = 16.dp).semantics { liveRegion = LiveRegionMode.Polite })
+                    LiveTakedownNotice(s.noticeMine, s.noticeReason, onOk = vm::dismissNotice,
+                        modifier = Modifier.padding(horizontal = 16.dp).semantics { liveRegion = LiveRegionMode.Polite })
                 }
             }
             s.hosting?.takeIf { hostingHere }?.let { h ->
                 item {
                     Card(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
                         Column(Modifier.padding(16.dp)) {
-                            Text(stringResource(R.string.live_badge), color = c.danger, style = MaterialTheme.typography.labelMedium)
+                            Text(stringResource(R.string.live_host_t) + " · " + stringResource(R.string.live_badge), color = c.danger, style = MaterialTheme.typography.labelMedium)
                             Text(h.title, style = MaterialTheme.typography.titleMedium)
+                            Text(stringResource(R.string.live_listeners, members.count { !it.isMe && it.peerId !in s.removedViewers }), color = c.ink2)
                             Text(stringResource(R.string.community_live_host_note), color = c.ink2, style = MaterialTheme.typography.bodySmall)
                             Button(onClick = vm::stopLive, modifier = Modifier.padding(top = 8.dp)) { Text(stringResource(R.string.live_stop)) }
                         }
@@ -179,6 +224,7 @@ fun CommunityDetailScreen(
                         Text(stringResource(R.string.live_badge), color = c.danger, style = MaterialTheme.typography.labelMedium)
                         Text(st.title, style = MaterialTheme.typography.titleMedium)
                         Text(host, color = c.ink2)
+                        TextButton(onClick = { report = st.streamIdHex }, Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.live_report)) }
                         if (st.listening) {
                             Text(stringResource(R.string.live_listening, LiveViewModel.lossPercent(s.stats)), color = c.ink2)
                             OutlinedButton(onClick = vm::leave, modifier = Modifier.padding(top = 8.dp)) { Text(stringResource(R.string.live_leave)) }
@@ -189,7 +235,7 @@ fun CommunityDetailScreen(
                     }
                 }
             }
-            if (s.hosting == null && !removed) {
+            if (s.hosting == null) {
                 item {
                     Card(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
                         Column(Modifier.padding(16.dp)) {
@@ -197,7 +243,7 @@ fun CommunityDetailScreen(
                             Text(stringResource(R.string.community_live_body), color = c.ink2, style = MaterialTheme.typography.bodySmall)
                             OutlinedTextField(title, { title = it.take(120) }, Modifier.fillMaxWidth().padding(top = 8.dp),
                                 label = { Text(stringResource(R.string.live_title_hint)) }, singleLine = true)
-                            Button(onClick = { vm.goLiveCommunity(communityId, title, online) }, modifier = Modifier.padding(top = 8.dp)) {
+                            Button(onClick = { vm.goLiveCommunity(communityId, title, online) }, enabled = !removed, modifier = Modifier.padding(top = 8.dp)) {
                                 Text(stringResource(R.string.live_go))
                             }
                         }
@@ -208,21 +254,45 @@ fun CommunityDetailScreen(
             items(members, key = { it.peerId }) { m ->
                 Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(if (m.isMe) stringResource(R.string.community_you) else m.name, Modifier.weight(1f))
-                    if (hostingHere && !m.isMe) {
-                        TextButton(onClick = { vm.removeViewer(m.peerId) }) { Text(stringResource(R.string.live_remove_viewer)) }
+                    if (hostingHere && m.isMe) Text(stringResource(R.string.live_host_label), color = c.ink3)
+                    if (hostingHere && !m.isMe && m.peerId !in s.removedViewers) {
+                        // §5.122: visible button + ⋯ menu, no swipe-only path (WCAG 2.5.7).
+                        OutlinedButton(onClick = { confirmRemove = m }, Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.live_remove_viewer)) }
+                        var menu by remember { mutableStateOf(false) }
+                        IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, stringResource(R.string.live_more_for, m.name)) }
+                        DropdownMenu(menu, { menu = false }) {
+                            DropdownMenuItem(text = { Text(stringResource(R.string.live_remove_viewer)) }, onClick = { menu = false; confirmRemove = m })
+                        }
                     }
                 }
             }
             if (k?.founderIsMe == true && !removed) {
                 val memberIds = members.map { it.peerId }.toSet()
                 val invitable = contacts.filter { it.id !in memberIds }
+                val full = members.size >= COMMUNITY_MAX
+                item {
+                    Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(stringResource(R.string.community_invite_h), style = MaterialTheme.typography.titleSmall)
+                        Text(stringResource(R.string.community_counter, members.size), color = if (full) c.danger else c.ink2)
+                        LinearProgressIndicator(
+                            progress = { members.size / COMMUNITY_MAX.toFloat() },
+                            modifier = Modifier.fillMaxWidth().semantics {
+                                progressBarRangeInfo = ProgressBarRangeInfo(members.size.toFloat(), 0f..COMMUNITY_MAX.toFloat())
+                            },
+                            color = if (full) c.danger else MaterialTheme.colorScheme.primary,
+                        )
+                        Text(stringResource(R.string.community_founder_only), color = c.ink3, style = MaterialTheme.typography.bodySmall)
+                        if (full) Callout(stringResource(R.string.community_full_t) + "\n" + stringResource(R.string.community_full_d), CalloutKind.Warn)
+                    }
+                }
                 if (invitable.isNotEmpty()) {
-                    item { Text(stringResource(R.string.community_invite_h), style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(horizontal = 16.dp)) }
                     items(invitable, key = { "c" + it.id }) { ct ->
                         var sent by remember { mutableStateOf(false) }
                         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                             Text(ct.displayName, Modifier.weight(1f))
-                            TextButton(onClick = { sent = core.communityInvite(communityId, ct.id) }, enabled = !sent) {
+                            // Full: still focusable so the reason is read out (aria-disabled, §5.121).
+                            TextButton(onClick = { if (!full) sent = core.communityInvite(communityId, ct.id) }, enabled = !sent,
+                                modifier = Modifier.heightIn(min = 48.dp).semantics { if (full) disabled() }) {
                                 Text(stringResource(if (sent) R.string.community_invited else R.string.community_invite))
                             }
                         }
