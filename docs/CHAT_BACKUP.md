@@ -40,3 +40,25 @@ Implements REQUIREMENTS "Encrypted chat backup" (CB1–CB5) and "Restore indicat
 14. **Restored device dials first.** A restored device has a new X25519 key. Its contacts only have the old one, so they can't open a link to it until it dials them (the notice then shows) or they scan its new QR.
 15. **Manifest index.** The iCloud `manifest` record's blob is a JSON index of core blob names (opaque seqs/keyed hashes) to record names; it isn't encrypted separately.
 16. ~~(e)/(f) on hold.~~ Implemented in v0.1.4b (see 7 and 10).
+
+## Android: Drive sign-in and the OAuth client (v0.1.21)
+
+Google matches an **Android** OAuth client by **package name + signing-certificate SHA-1**. If
+they don't match a client in the Google Cloud project, Google Play services returns
+`INTERNAL_ERROR [code 8]` ("unregistered on API console") or `DEVELOPER_ERROR [code 10]`, and both
+the identity backup and the chat backup fail before any Drive call is made.
+
+| Build | Package | Needs an Android OAuth client for |
+|---|---|---|
+| `assembleDebug` | `chat.omcp.app.debug` | `chat.omcp.app.debug` + debug key SHA-1 |
+| `assembleRelease` | `chat.omcp.app` | `chat.omcp.app` + the SHA-1 of the key that signs it |
+| `assembleRelease -POMCP_RELEASE_APP_ID_SUFFIX=.debug` (sideload APKs) | `chat.omcp.app.debug` | same client as debug builds |
+
+The app shows its own package and SHA-1 in Drive error messages and its commit in You › About,
+so a mismatch can be read off the phone. `GOOGLE_OAUTH_CLIENT_ID` must be set at build time (in
+`~/.gradle/gradle.properties` or the environment, never in the repo); without it Drive backup is
+reported as "not configured".
+
+Restore keeps the original conversation order (order of first appearance in the backup stream),
+covered by `roundtrip_backup_wipe_restore_from_24_words_is_identical` (Rust) and
+`DriveBackupRoundTripTest` (Kotlin Drive layer against an in-memory Drive REST fake).

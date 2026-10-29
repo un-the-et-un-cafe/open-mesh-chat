@@ -53,6 +53,7 @@ class OmcpApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        chat.omcp.app.backup.DriveAuthErrors.appIdentity = AppIdentity.describe(this)
         registerActivityLifecycleCallbacks(chat.omcp.app.security.ScreenSecurity.Callbacks())
         // Encrypted local store (Rust core); its key is sealed with the Android Keystore.
         repository = MeshRepository(RustOmcpCore(), PrefsAppStore(this), getDatabasePath("omcp-store.db").apply { parentFile?.mkdirs() }.path)

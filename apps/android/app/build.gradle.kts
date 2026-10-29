@@ -7,6 +7,20 @@ val googleOAuthClientId: String =
         ?: System.getenv("GOOGLE_OAUTH_CLIENT_ID")?.trim().orEmpty()
 require(googleOAuthClientId.all { it.isLetterOrDigit() || it in ".-_" }) { "GOOGLE_OAUTH_CLIENT_ID has unexpected characters" }
 
+// Traceability: the commit an APK was built from, shown in You › About (never a secret).
+val gitCommit: String = runCatching {
+    val p = ProcessBuilder("git", "rev-parse", "--short=7", "HEAD").directory(rootDir).redirectErrorStream(true).start()
+    val out = p.inputStream.bufferedReader().readText().trim()
+    val dirty = ProcessBuilder("git", "status", "--porcelain", "--untracked-files=no").directory(rootDir).start()
+        .inputStream.bufferedReader().readText().isNotBlank()
+    if (p.waitFor() == 0 && out.isNotEmpty()) out + (if (dirty) "-dirty" else "") else "unknown"
+}.getOrDefault("unknown")
+// Sideloaded release APKs can carry the ".debug" package so they match the Android OAuth client
+// registered for chat.omcp.app.debug (package + signing SHA-1). Release builds without it use
+// "chat.omcp.app", which needs its own Android OAuth client in Google Cloud.
+val releaseAppIdSuffix: String = (findProperty("OMCP_RELEASE_APP_ID_SUFFIX") as String?)?.trim().orEmpty()
+require(releaseAppIdSuffix.all { it.isLetterOrDigit() || it in "._" }) { "bad OMCP_RELEASE_APP_ID_SUFFIX" }
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -21,8 +35,8 @@ android {
         applicationId = "chat.omcp.app"
         minSdk = 31 // Android 12+
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0-beta"
+        versionCode = 21
+        versionName = "0.1.21"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
@@ -31,10 +45,13 @@ android {
         // Drive backup is live only when a client id is configured at build time.
         buildConfigField("String", "GOOGLE_OAUTH_CLIENT_ID", "\"$googleOAuthClientId\"")
         buildConfigField("boolean", "SIMULATED_DRIVE_BACKUP", "false")
+        buildConfigField("String", "GIT_COMMIT", "\"$gitCommit\"")
+        buildConfigField("String", "DESIGN_VERSION", "\"0.1.21\"")
     }
 
     buildTypes {
         release {
+            if (releaseAppIdSuffix.isNotEmpty()) applicationIdSuffix = releaseAppIdSuffix
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),

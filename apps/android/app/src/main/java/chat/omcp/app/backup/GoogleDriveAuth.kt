@@ -54,6 +54,9 @@ class DriveConsentBroker {
 
 /** User-facing text for a Google Play services failure, always including Google's status code. */
 object DriveAuthErrors {
+    /** "package …, SHA-1 …" of the running app (set at startup) so the fix is copy-pasteable. */
+    @Volatile var appIdentity: String? = null
+
     fun statusName(code: Int): String = when (code) {
         4 -> "SIGN_IN_REQUIRED"
         7 -> "NETWORK_ERROR"
@@ -69,8 +72,9 @@ object DriveAuthErrors {
 
     fun forStatus(code: Int, detail: String? = null): String {
         val hint = when (code) {
-            10 -> " — the OAuth client doesn't match this app. In Google Cloud the Android client " +
-                "needs this package name and signing SHA-1, and the Drive API must be enabled."
+            8, 10 -> " — the OAuth client doesn't match this app (\"unregistered on API console\"). " +
+                "In Google Cloud the Android client needs this package name and signing SHA-1, and " +
+                "the Drive API must be enabled." + (appIdentity?.let { " This app: $it." } ?: "")
             16 -> " — the Google screen was closed before access was granted."
             7 -> " — check the Internet connection."
             else -> ""
