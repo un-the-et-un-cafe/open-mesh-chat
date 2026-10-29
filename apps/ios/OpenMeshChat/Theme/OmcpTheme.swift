@@ -1,5 +1,6 @@
 import SwiftUI
 
+/// Design tokens v0.1.21 (DESIGN_SPEC §2.1, §5.102 dark, §5.104 light). WCAG AA.
 struct OmcpColors {
     let bg: Color
     let surface: Color
@@ -8,6 +9,11 @@ struct OmcpColors {
     let ink2: Color
     let ink3: Color
     let line: Color
+    let lineStrong: Color
+    /// Text/icons on solid brand/ok/danger fills (§5.102: never hard-code white).
+    let brandInk: Color
+    /// Focus ring ≥ 3 pt (§5S 2.4.11).
+    let focus: Color
     let brand: Color
     let brandSoft: Color
     let ok: Color
@@ -30,9 +36,12 @@ struct OmcpColors {
         surface: Color(hex: 0xFFFFFF),
         surface2: Color(hex: 0xEEF1F5),
         ink: Color(hex: 0x0F1B2D),
-        ink2: Color(hex: 0x4A5B70),
-        ink3: Color(hex: 0x6B7C90),
-        line: Color(hex: 0xD8DEE8),
+        ink2: Color(hex: 0x3B495A),
+        ink3: Color(hex: 0x515E6D),
+        line: Color(hex: 0x73849A),
+        lineStrong: Color(hex: 0x617289),
+        brandInk: Color(hex: 0xFFFFFF),
+        focus: Color(hex: 0x0A66C2),
         brand: Color(hex: 0x0B6E6A),
         brandSoft: Color(hex: 0xE0F3F1),
         ok: Color(hex: 0x0F6B3A),
@@ -56,9 +65,12 @@ struct OmcpColors {
         surface: Color(hex: 0x151D28),
         surface2: Color(hex: 0x1C2633),
         ink: Color(hex: 0xE8EEF5),
-        ink2: Color(hex: 0xA3B1C2),
-        ink3: Color(hex: 0x7A8A9C),
-        line: Color(hex: 0x2A3646),
+        ink2: Color(hex: 0xB4C0CE),
+        ink3: Color(hex: 0x95A3B4),
+        line: Color(hex: 0x687990),
+        lineStrong: Color(hex: 0x7A8BA1),
+        brandInk: Color(hex: 0x062624),
+        focus: Color(hex: 0x8EC8FF),
         brand: Color(hex: 0x3DBDB6),
         brandSoft: Color(hex: 0x143836),
         ok: Color(hex: 0x5DCA8E),
@@ -102,5 +114,34 @@ extension Color {
             blue: Double(hex & 0xFF) / 255,
             opacity: opacity
         )
+    }
+}
+
+/// You › Appearance: follow the system, or force light / dark.
+enum ThemeMode: String, CaseIterable, Identifiable {
+    case system, light, dark
+    var id: String { rawValue }
+    var colorScheme: ColorScheme? {
+        switch self {
+        case .system: return nil
+        case .light: return .light
+        case .dark: return .dark
+        }
+    }
+    var labelKey: String { "theme_" + rawValue }
+}
+
+extension View {
+    /// WCAG 2.5.8 + platform guidance: keep the visual size, extend the hit area to ≥ 44 pt.
+    func omcpHitTarget() -> some View {
+        frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+    }
+
+    /// §5S glass bars: opaque surface-coloured tab/nav bars so labels keep 4.5:1 over any content.
+    func omcpOpaqueBars(_ c: OmcpColors) -> some View {
+        toolbarBackground(c.surface, for: .tabBar)
+            .toolbarBackground(.visible, for: .tabBar)
+            .toolbarBackground(c.surface, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
     }
 }

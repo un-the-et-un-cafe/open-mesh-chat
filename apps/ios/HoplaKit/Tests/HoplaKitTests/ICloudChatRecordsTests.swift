@@ -32,7 +32,8 @@ final class ICloudChatRecordsTests: XCTestCase {
         XCTAssertEqual(Set(backend.records.keys), ["snap-202643", "seg-2", "media-" + Blake2b256.hex(Data([3])), "manifest"])
         XCTAssertEqual(backend.records["manifest"]?.type, "BackupManifest")
         // A fresh device reads the same records back by core name.
-        let other = RecordChatBlobStore(backend: backend)
+        // Same fixed clock: the snapshot record name depends on the ISO week (test was date-dependent).
+        let other = RecordChatBlobStore(backend: backend, clock: { 1_792_800_000_000 })
         XCTAssertEqual(try other.list(prefix: ChatBackupSync.chatPrefix),
                        ["hopla-chat-0000000000000001-snap.bin", "hopla-chat-0000000000000002-log.bin"])
         XCTAssertEqual(try other.get("hopla-media-aa.bin"), Data([3]))

@@ -4,6 +4,14 @@ import SwiftUI
 struct YouView: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.omcpColors) private var c
+    @AppStorage("omcp.themeMode") private var themeMode = ThemeMode.system.rawValue
+
+    private var buildLine: String {
+        let info = Bundle.main.infoDictionary
+        let v = info?["CFBundleShortVersionString"] as? String ?? "?"
+        let commit = info?["OMCPGitCommit"] as? String ?? "dev"
+        return L("about_version", v, "0.1.21") + " · " + commit
+    }
 
     var body: some View {
         let _ = model.revision
@@ -27,7 +35,17 @@ struct YouView: View {
                     NavigationLink { PrivacySettingsView() } label: { row(L("privacy_title"), L("privacy_row_desc")) }
                     NavigationLink { GatewaySettingsView() } label: { row(L("gateway_title"), L("gateway_row_desc")) }
                 }
-                Section { row(L("about"), L("about_desc")) }
+                Section(L("appearance")) {
+                    Picker(L("appearance"), selection: $themeMode) {
+                        ForEach(ThemeMode.allCases) { m in Text(L(m.labelKey)).tag(m.rawValue) }
+                    }
+                    .pickerStyle(.inline)
+                    .labelsHidden()
+                }
+                Section {
+                    row(L("about"), L("about_desc"))
+                    Text(buildLine).font(.caption.monospaced()).foregroundStyle(c.ink2)
+                }
             }
             .navigationTitle(L("tab_you"))
         }
