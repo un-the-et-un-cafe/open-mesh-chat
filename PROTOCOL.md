@@ -72,7 +72,7 @@ Each peer generates a long-term **Identity Key Pair**:
 | Identity PQ hybrid (optional, recommended) | Ed25519 + ML-DSA-65 (Dilithium3) | Dual signatures during transition |
 | Identity encryption / KEM long-term | X25519 + ML-KEM-768 hybrid | Used for sealed addressing and initial contact |
 
-**PeerID** = `BLAKE2b-256(identity_signing_public_key)` (32 bytes; v0.1.4a, replaces the earlier "multihash" wording), encoded as `omcp1:<base32>` for display. Contacts are keyed by PeerID. The X25519 Noise static key is **per device** and certified by the identity key (§3.4); it is not the PeerID.
+**PeerID** = `multihash(identity_signing_public_key)` truncated to 32 bytes, encoded as `omcp1:<base32>` for display.
 
 Peers MAY rotate Identity Keys. Rotation requires signing a **Successor Statement** with the old key and publishing it to contacts over authenticated channels.
 
@@ -90,24 +90,6 @@ Each installation holds:
 - First contact uses an **out-of-band verification** (QR code with PeerID + short authentication string, or NFC tap).
 - Safety number: `SHA3-256(sorted(PeerID_A || PeerID_B))` displayed as 60 decimal digits in 12 groups of 5.
 - Trust is local: each peer maintains its own contact book with verification state (`unverified`, `verified`, `revoked`).
-- From v0.1.4 the safety number also covers each side's current device key (§3.4); see the reference `safety_number_v2`.
-
-### 3.4 Device certificates and the restore indicator (v0.1.4)
-
-Normative for clients that implement apps/REQUIREMENTS.md "Restore indicator (security)" (RS1) and "Re-verification after restore" (RS2). Reference: `omcp-core::device`.
-
-- **Identity signing key.** Ed25519, derived from the 24-word master seed: `HKDF-SHA-384(salt = "OMCP-Identity-Seed-v1", ikm = seed, info = "ed25519")`. It survives a restore.
-- **Device key.** Each installation generates a random Ed25519 device key. A restore from the 24 words (or from a cloud backup) MUST generate a new one; it is never restored.
-- **Certificate v2** (209 bytes, big-endian, v0.1.4a): `ver u8 = 2 | peer_id [32] | identity_sign_pub [32] | device_pub [32] | dh_pub [32] | created_ms u64 | restored_at_ms u64 (0 = not a restore) | sig [64]`, where `sig = Ed25519(identity_sign, "OMCP-DeviceCert-v2" || all preceding fields)`. `peer_id` MUST equal `BLAKE2b-256(identity_sign_pub)`; `dh_pub` is the device's X25519 Noise static key. (v1, 177 bytes without `dh_pub`, is no longer sent.)
-- **Transport and device binding.** Every link's Noise handshake payload (initiator msg 1, responder msg 2) is `"omcp-ffi-v1" || 0x01 || cert || 0x02 || bind`, with `bind = Ed25519(device_key, "OMCP-DeviceBind-v1" || h)` where `h` is the Noise handshake hash at the moment the payload is encrypted. The receiver MUST check the certificate, `cert.dh_pub == remote static key`, and `bind` over its own `h`, and MUST fail the handshake if the certificate or binding is missing or invalid, or the device key is superseded. A replayed old certificate therefore can't be used to suppress the restore notice. Unknown extension tags MUST be ignored.
-- **Dialing.** The initiator dials the contact's certified `dh_pub`. Advertisements carry the PeerID prefix (legacy installs: their X25519 prefix). A restored device has a new `dh_pub`, so its contacts can reach it only after it dials them or they scan its new QR.
-- **Migration from v0.1.4.** Earlier builds keyed contacts by the seed-derived X25519 key. Such installs keep that X25519 as their device `dh_pub`; legacy contacts (key = X25519) are re-keyed to the PeerID, in the store and in memory, on the first verified handshake. Identity backups now carry each contact's `dh`; older backups without it restore legacy-keyed contacts that migrate the same way.
-- **Receiver rules** (the restored device can't suppress them):
-  1. The first `identity_sign_pub` seen for a contact over the authenticated channel is pinned; a different one MUST be rejected.
-  2. A certificate whose `device_pub` differs from the pinned one, one with `restored_at_ms ≠ 0` for a new device, or a missing certificate after one was pinned, MUST raise the in-chat system notice ("<name> restored Hopla on a new device · <date>"), show a "Restored" badge for 7 days from `restored_at`, clear the contact's "Verified" state ("Restored, not verified"), and mark the previous device key **superseded**.
-  3. A superseded device key MUST NOT be accepted again (the link is refused).
-- **Safety number v2.** `BLAKE2b-512("OMCP-Safety-v2" || lo(peer || device) || hi(peer || device))`, iterated and grouped like v1, ordered by the 64-byte concatenation. When either device key is unknown (older peer) clients fall back to v1.
-- **QR v3** (v0.1.4a). `omcp:3:<peer_id hex>:<identity_sign_pub hex>:<device_pub hex>:<dh_pub hex>:<display name>`; `peer_id` MUST equal `BLAKE2b-256(identity_sign_pub)`. Verifying by QR MUST fail when the code's device key isn't the contact's current one (e.g. a QR shown before a restore). `omcp:2:`/`omcp:1:` codes are still accepted as legacy contacts.
 
 ---
 
@@ -209,20 +191,6 @@ All algorithms are named in the handshake and MAY be upgraded via negotiation.
 4. Mesh peers MAY cache encrypted chunks (LRU). Gateways MAY cache for Internet recipients. Caches never hold Content Keys unless they are intended recipients.
 5. Integrity: recipient verifies `BLAKE3(plaintext)` after decrypt.
 
-### 7.1 Media re-fetch by locator and hash (v0.1.4)
-
-After a chat-backup restore (apps/REQUIREMENTS.md "Encrypted chat backup", CB3), media come back as placeholders that keep the **locator** (the 16-byte `transfer_id` of the original offer, also the message id) and the `content_hash`. Three encrypted `InnerV1` control messages (outer content type `0x02` like every inner message, never with a `burn` header), each `type u8 | locator [16] | content_hash [32]`:
-
-| Type | Name | Meaning |
-|------|------|---------|
-| `0x31` | `MEDIA_REQUEST` | Sent automatically when a link to the partner comes up, or on tap. |
-| `0x32` | `MEDIA_UNAVAILABLE` | Reply: "I no longer have it" (also sent for unknown or burn items). |
-| `0x33` | `MEDIA_RESEND_ASK` | User-confirmed "Ask to resend"; the partner sees a prompt. v0.1.4b: MAY be followed by an optional UTF-8 note (≤ 280 bytes) — `type | locator | content_hash | note`. It is the **only** message sent; clients MUST NOT send a separate text. |
-
-The holder answers a request by re-sending the file as a normal §7 transfer under the **same** `transfer_id`. The requester MUST verify `BLAKE3(plaintext) == content_hash` from its placeholder before replacing it, and treats a mismatch as an integrity failure. Requests carry nothing beyond what the original offer already told the partner (plus the user's optional note on `0x33`). Over a gateway, re-downloads are Wi-Fi only by default.
-
-**Kept sent media (v0.1.4b).** The sender keeps a local copy of every non-burn file it sent, sealed in its encrypted store like every other row, for 90 days or up to 2 GB by default (oldest evicted first; both limits user-configurable). Burn-after-read and view-once media MUST NOT be kept or served. A `MEDIA_REQUEST` for a kept item is answered from the copy automatically, after checking its hash; otherwise the app is asked, and failing that `MEDIA_UNAVAILABLE` is sent.
-
 ---
 
 ## 8. BLE mesh transport
@@ -323,12 +291,6 @@ EnvelopeV1 {
 7. **Padding:** Optional traffic padding profiles (`off`, `low`, `medium`) to mitigate size side channels on gateways.
 8. **Screenshots / notifications:** Clients SHOULD show sender and preview by default and MUST offer a "Private notifications" mode that shows only a generic "New message" (no sender, no content). Payloads are decrypted on-device only; gateways and push relays never see plaintext.
 9. **Backups:** Encrypted backups only; recovery key is 24-word BIP-39-like phrase or platform secure recovery; cloud backup is optional and E2EE (client-side encrypted before upload; see apps/REQUIREMENTS.md "Onboarding & recovery backup").
-
-### 11.1 Encrypted chat backup (v0.1.4)
-
-Reference: `omcp-core::chat_backup`. Key: `HKDF-SHA-256(salt = none, ikm = 24-word master seed, info = "hopla/chat-backup/v1")`. Blob: `"HCB1" | kind u8 (0 snapshot, 1 log, 2 media) | seq u64 BE | nonce [24] | XChaCha20-Poly1305(ct)` with AAD `"hopla/chat-backup/v1" | kind | seq` (media: `| content_hash`). The plaintext is `len u32 BE | CBOR | zero padding` so the blob length is a multiple of 64 KiB. Logs carry changed and deleted messages since the previous upload; a snapshot (at most weekly) carries everything, after which lower `seq` blobs MAY be deleted. Burn-after-read and view-once content MUST NOT be included. Media blobs are only written when the user enables media backup; their names are a keyed hash of the content hash.
-
-**iCloud records (v0.1.4a).** CloudKit private database, custom zone `HoplaBackupV1`. Record types: `ChatLogSegment` (name `seg-<seq, lowercase hex>`), `ChatSnapshot` (`snap-<YYYYWW>`, ISO-8601 week of upload, UTC; a newer snapshot in the same week replaces it), `MediaBlob` (`media-<hex BLAKE2b-256 of the blob>`) and one `BackupManifest` (`manifest`). Every record has exactly `blob` (CKAsset), `seq` (Int64) and `created` (ms, Int64); no plaintext fields. The manifest's blob is the index from the core blob names (sequence numbers and keyed hashes, already opaque) to record names. Google Drive keeps the core names in appDataFolder.
 
 ---
 
@@ -474,64 +436,29 @@ omcp/
 | Version | Date | Notes |
 |---------|------|-------|
 | 0.1 | 2026-10-23 | Initial specification for Proggy / Pipely handoff |
-| 0.1.3 | 2026-10-24 | §19.1 burn after read (`burn` inner header, `OPENED` receipt) |
-| 0.1.4 | 2026-10-24 | §3.4 device certificates, restore indicator, safety number v2, QR v2; §7.1 media re-fetch controls `0x31`–`0x33`; §11.1 chat backup format |
-| 0.1.4b | 2026-10-24 | §7.1 one-message Ask to resend with optional note; kept sent media served to re-requests (RS3) |
-| 0.1.4a | 2026-10-24 | §3.1 PeerID = BLAKE2b-256(identity key), per-device X25519; §3.4 certificate v2, handshake device binding, QR v3, migration; §11.1 iCloud records |
 
 **Next editors:** Implementers SHOULD open PRs against this file for any wire-format change. Semantic versioning: breaking wire changes → 1.0 major after first production interop; until then 0.x may break with explicit changelog entries.
-
-### 19.1 Burn after read: inner `burn` header (v0.1.3)
-
-This section is normative for clients that implement burn after read (apps/REQUIREMENTS.md "Burn after read (v0.1.3)"). Reference: `omcp-core::burn`.
-
-**Inner header (encrypted).** The AEAD plaintext of an application message starts with an inner header tag:
-
-```
-InnerV1 {
-  tag:   u8          // 0x00 = no inner header, 0x01 = burn
-  burn:  BurnHeader  // present iff tag == 0x01
-  inner_ct: u8       // 0x01 text (UTF-8), 0x02 media (mime_len u8 | mime | bytes), 0x30 OPENED control
-  body:  [..]
-}
-BurnHeader {         // 9 bytes, big-endian
-  mode:       u8     // 0 = on_open (view once), 1 = timer
-  secs:       u32    // on_open: 0; timer: one of 10, 60, 3600
-  unread_ttl: u32    // seconds; one of 3600 (1 h), 86400 (24 h), 604800 (7 d)
-}
-```
-
-The outer `header_aad` content type for every `InnerV1` message is `0x02` (inner v1), whether it's text, media, burn or control, so relays can't tell them apart. (`0x01` plain text from M2 is still accepted on receive.) `OPENED` MUST NOT carry a burn header, and receivers MUST ignore an `OPENED` that doesn't come from the message's recipient. The `burn` header is inside the ciphertext, so relays, gateways and store-and-forward nodes MUST NOT be able to tell that a message is ephemeral. Receivers MUST reject headers with values outside the sets above.
-
-**Alignment with the envelope expiry.** The sender MUST set the outer expiry (`expiry` / `expires_at` of the opaque envelope, §9 item 2, `OpaqueEnvelope.expiry_ms` in the reference) to `sent_ms + unread_ttl × 1000`. Relays and store-and-forward nodes (§8.4) MUST drop the opaque envelope at or after `expires_at` and MUST NOT store an envelope that has already expired. The receiver MUST delete an unopened burn message at the same instant. `expires_at` is the only outer signal; every message type SHOULD carry one, so its presence doesn't reveal burn.
-
-**Lifecycle.**
-1. *on_open*: content is shown once; it is deleted when the viewer closes. *timer*: deletion happens `secs` after opening (or on close, whichever comes first).
-2. **Single-use media key.** For burn media, the Content Key (§7) MUST be used for exactly one decryption. The receiver deletes it once the media is viewed, and the encrypted blob is deleted from the relay and the local cache.
-3. **`OPENED` receipt.** On first open, the receiver sends an encrypted control message `OPENED { type = 0x30 u8, msg_id [16]u8, opened_ms u64 BE }`. When the sender receives it, it MUST delete its local copy of the media key, and it SHOULD delete its own copy of the content when the timer runs out.
-4. **Crypto-shredding.** Burnable content at rest MUST be encrypted under a per-message key that is held only in memory (or in a separate encrypted table), and deletion MUST zeroize that key.
-5. **Groups.** Each member burns independently after they open the message. Burn MUST NOT be offered in groups or channels with more than 256 members.
-
-Burnable content MUST be excluded from notification previews, backups, search indexes and share sheets.
 
 ---
 
 ## 20. Application features — communities and livestreams (v0.2 target)
 
-Inspired by familiar messenger patterns (channels, communities, live video), implemented without weakening E2EE or mesh-first rules. v0.1 MVP stays 1:1 + small MLS groups; this section defines the next product layer so Proggy can plan capacity and Pipely can stage releases.
+Inspired by familiar messenger patterns (channels, communities, live video), implemented without weakening E2EE for private chats or mesh-first rules. Communities are open and not end-to-end encrypted (decided 2026-10-29, §20.1). v0.1 MVP stays 1:1 + small MLS groups; this section defines the next product layer so Proggy can plan capacity and Pipely can stage releases.
 
 ### 20.1 Communities
 
-A **Community** is a signed container of related conversations:
+A **Community** is a signed container of related, **open** conversations. Community content is **not end-to-end confidential**: anyone who joins, and any node that stores or relays it, can read it. It still travels in OMCP envelopes over the mesh and gateways (§10, §22), and every post is signed by its author, so it is authenticated but public. Private 1:1 chats and private groups stay end-to-end encrypted with MLS.
 
-| Object | E2EE | Mesh notes |
+| Object | Confidentiality | Mesh notes |
 |--------|------|------------|
-| Community roster + roles | Encrypted to members; public communities MAY publish a cleartext name/description only | Roster sync via MLS-like epoch or per-community group |
-| Announcement channel | E2EE to members; optional sealed public preview for public communities | Large fan-out via gateway + chunked store-and-forward |
-| Topic channels / forums | Each topic is its own MLS group (or subgroup) | Prefer lazy join; invite links are signed capability tokens |
-| Voice chat rooms (optional later) | Separate media SFrame/MLS keys | BLE unsuitable for many-way audio; Internet or Wi‑Fi Direct required |
+| Community roster + roles | Public to members; signed by the community identity key | Roster sync via the community's signed state |
+| Announcement channel | Open (signed, not E2E encrypted) | Large fan-out via gateway + chunked store-and-forward |
+| Topic channels / forums | Open (signed, not E2E encrypted); each topic has its own tag | Prefer lazy join; invite links are signed capability tokens |
+| Voice chat rooms (optional later) | Open; media keys shared with all participants | BLE unsuitable for many-way audio; Internet or Wi‑Fi Direct required |
 
-**Roles:** `owner`, `admin`, `moderator`, `member`, `guest`. Capability tokens are signed by the community identity key. Moderation actions are control frames inside the encrypted community; there is no plaintext moderation API on relays.
+**User-facing note (normative).** Apps MUST tell users, on the community join screen and in the post composer, that community posts are public: "Posts in communities are public. Anyone in the community can read them, and they are not end-to-end encrypted." Private groups and 1:1 chats MUST be visibly marked as end-to-end encrypted, so the two are never confused.
+
+**Roles:** `owner`, `admin`, `moderator`, `member`, `guest`. Capability tokens are signed by the community identity key. Moderation actions are signed control frames in the community; there is no moderation API on relays.
 
 **Discovery:** Invite link / QR first. Optional public index stores only `{ community_id, name, description, member_count_bucket, join_policy }` — never message content.
 
@@ -539,7 +466,7 @@ A **Community** is a signed container of related conversations:
 
 - One-to-many with admin-controlled send rights.
 - Recipients verify admin signatures on posts.
-- Comments/reactions are separate E2EE threads keyed per channel epoch.
+- Comments/reactions are separate signed threads keyed per channel epoch (open, like the channel, §20.1).
 - Forwarding preserves original signature when the sender allows “signed forwards”.
 
 ### 20.3 Livestreams
@@ -548,15 +475,13 @@ Livestreams NEED a high-bandwidth path. On pure BLE mesh they are **not** suppor
 
 | Mode | Transport | Security |
 |------|-----------|----------|
-| `mesh-beacon` | BLE | Encrypted title/status to community; no video |
+| `mesh-beacon` | BLE | Title/status (open in communities, E2EE in private groups); no video |
 | `lan-relay` | Wi‑Fi / local IP discovered via OMCP | SFrame (RFC 9605) or Insertable Streams keys distributed via MLS exporter |
 | `internet-sfu` | Gateway or user-chosen SFU | E2EE with SFU seeing only encrypted media; keys never on SFU |
 
-**Normative:** Livestream media keys are derived from the community/channel MLS epoch exporter + per-stream random. SFUs and gateways MUST NOT receive media keys. Viewers who are not community members cannot decrypt.
+**Normative:** In private groups, livestream media keys are derived from the group's MLS epoch exporter + per-stream random. In communities (open, §20.1), the per-stream key is given to every viewer who joins, so community Live is not end-to-end confidential and MUST be presented as public. In both cases SFUs and gateways MUST NOT receive media keys.
 
-**Community live key (v0.2, normative):** `exporter = MLS-Exporter("OMCP-live-v1", community_id ‖ stream_id, 32)`, `secret = HKDF-SHA-256(salt = nonce[32], ikm = exporter, info = "OMCP-community-live-v1" ‖ community_id ‖ stream_id)` = stream key epoch 0. The random `nonce` and the host's Ed25519 identity key travel in an MLS application message of the community group (`CommunityLive`). The host key MUST hash to the MLS sender's PeerID. Removing a viewer rotates to a random secret (`key_epoch + 1`) sent as a host-signed `Rekey` over pairwise E2EE, never to the excluded PeerIDs. Mesh audio packets are version 2: `… ‖ ciphertext ‖ Ed25519(host identity key, "OMCP-live-audio-sig-v1" ‖ header-without-hop ‖ nonce ‖ ciphertext)`. Receivers MUST drop packets that aren't signed by the host. Team takedowns of a live use §23.9 kinds `3 TAKEDOWN_LIVE` / `4 RESTORE_LIVE` with target `stream_id ‖ 0[16]` (docs/LIVE.md, docs/MODERATION.md).
-
-**Signalling:** WebRTC-style offers/answers carried as OMCP content-type `0x50 application/omcp-rtc-signal` (E2EE). Body: `0x50 ‖ key_epoch (u32 BE) ‖ XChaCha20-Poly1305(stream key, CBOR {stream_id, from, to, kind, body})` with kinds `Offer, Answer, Ice, Bye, Join, Assign`. Viewers send every signal to the host, which keeps the viewer tree and relays only between tree neighbours (`Join` → `Assign` to the parent, `Bye "parked"` when no slot). Video frames are E2EE with a key derived from the stream secret (SFrame base key, RFC 9605 key schedule; docs/LIVE.md).
+**Signalling:** WebRTC-style offers/answers carried as OMCP content-type `0x50 application/omcp-rtc-signal` (E2EE).
 
 **Recording:** Local-only or E2EE cloud blob with Content Key wrapped to chosen recipients; default off.
 
@@ -796,7 +721,8 @@ Computed per community, and per stream host, from **participant attestations**:
 | `0x54` | `mailbox_tag` | 8 | §22.1 |
 | `0x56` | `recipient_subtags` | 8·n | §22.7(9) |
 | `0x58` | `outer_expiry` | 4 | §22.8(2) |
-| `0x55`, `0x57`, `0x59`–`0x7F` | unassigned (extension process §16) | — | — |
+| `0x5A` | `team_mod` | 1 | §23.10.7 |
+| `0x55`, `0x57`, `0x59`, `0x5B`–`0x7F` | unassigned (extension process §16) | — | — |
 | `0x80`–`0xFF` | experimental / private use | — | — |
 
 
@@ -808,6 +734,172 @@ Computed per community, and per stream host, from **participant attestations**:
 | `0x03` | `MESH_FRAME` (link PDU; inner frame `0x44` DATA, `0x45` DELIVERY_ACK, `0x64` DIGEST_DELTA) | var | §22.8(2) |
 | `0x04` | `MLS_SETUP` (link PDU; KEY_PACKAGE, WELCOME, JOINED for 2-member MLS) | var | §22.8(1) |
 | other | unassigned (extension process §16) | — | — |
+
+### 23.9 App-team moderation (v0.2.3, draft)
+An app can name a small team allowed to delete communities. In the Hopla reference app this is the Hopla team. Other OMCP apps can ship their own list or none, so the protocol stays open.
+1. **Whitelist.** The app ships a list of team PeerID hashes (BLAKE2b-256 of the Ed25519 identity key, §22). The list is part of the signed app release and changes only with an app update, never over the mesh.
+2. **Takedown.** `TAKEDOWN{community_id, reason_code, note, epoch, sigs[]}` is gossiped like a moderation list (§23.1(4)) at high priority, with an outer expiry of 30 d (re-sent while it stays in force).
+3. **Signature threshold.** The app ships a threshold `k` with the whitelist: a takedown is valid with signatures from `k` different whitelisted keys. Hopla v0.2 ships `k = 1` with a single key held by the maintainer. An AI moderator can later be added as another whitelisted key; the app can then raise `k` (for example AI plus a human) without a protocol change.
+4. **Effect on compliant clients.** The community disappears from lists, search and Nearby; its posts, media and invite links are deleted from the device; joins and new posts are refused; relays drop its envelopes. Members see "This community was removed by the Hopla team" with the reason. Members' private 1:1 and group chats are never touched by a community action. Private groups (never 1:1 chats) can only be affected by a `GROUP_TAKEDOWN` (§23.10.2), and no team action ever reads a private chat.
+5. **Transparency.** Every takedown is shown in a public in-app log (community name, reason, date, which team keys signed), so the team's actions can be checked.
+6. **Reversal.** `RESTORE{community_id, epoch, sigs[]}` with `k` team signatures undoes a takedown. The owner can appeal through the jury process (§23.5); a ⅔ "fine" result is shown next to the takedown in the log, and the team must review it.
+7. **Reasons.** `reason_code`: 1 hate speech or incitement, 2 illegal content, 3 terrorism or violent extremism, 4 coordinated harassment, 5 spam or scam, 9 other (note required).
+8. **Key loss.** A compromised team key is removed in the next app release. With `k = 1` the key must be kept offline (hardware key or the device's secure enclave), and the transparency log makes misuse visible.
+
+Acceptance tests:
+- MR7: A takedown signed by `k` whitelisted keys removes the community on all compliant clients within 10 min of gossip.
+- MR8: A takedown with fewer than `k` team signatures, or from a non-whitelisted key, is ignored.
+- MR9: Every takedown and restore appears in the transparency log.
+- MR10: A community takedown never deletes or reads private chats; no team action ever touches a 1:1 chat or reads any private chat (group takedowns: §23.10.2, MR14).
+
+### 23.10 Moderation of private groups and outside reports (v0.3, draft; maintainer decisions 2026-10-30)
+This section extends §23.9 to private end-to-end encrypted groups, adds reports from outside parties, a decision log, and finer takedowns for open communities. Terms used here:
+- **Private group**: an MLS group (§22.7(5)) whose messages only members can decrypt. 1:1 chats are 2-member private groups.
+- **Community**: an open, joinable space (§20.1) with posts, topics and an optional Live stream.
+- **Team key**: an Ed25519 key on the app's whitelist (§23.9(1)). **Moderator** means anyone holding a team key, human or AI.
+- **Sender signature**: the signature MLS already puts on every message (RFC 9420 `FramedContentTBS`, signed with the sender's leaf signature key). A member can export it to prove who sent a message and that it was not changed.
+- **Group reference** (`group_ref`): `BLAKE2b-256("OMCP-group-ref-v1" || 0x00 || group_id)`, a fingerprint that names a group without revealing anything about it.
+- **Evidence file**: the file a member's app exports for a report (§23.10.3).
+
+> **Hard rule (normative).** Moderators can never read a private group, join it, or see its members. They only ever get what a reporter chooses to submit. Nothing in this section gives a team key any MLS role, key, or credential. See §23.10.5.
+
+#### 23.10.1 Verifying reported messages with MLS sender signatures
+OMCP adds no extra seal. Report verification uses the signature MLS already puts on every private-group message (OMCP MLS profile, §22.7(5), §22.8(1)).
+
+1. **What is signed.** For an application message from a member, the sender signs `FramedContentTBS = {version, wire_format, FramedContent{group_id, epoch, sender (leaf index), authenticated_data, content_type, application_data}, GroupContext}` with its leaf signature key. The leaf's credential binds that signature key to the sender's OMCP Ed25519 identity key.
+2. **What receivers keep.** A receiving client MUST keep, with each stored message, the bytes needed to re-check the signature: the serialized `FramedContent`, the `GroupContext` of that epoch (stored once per epoch), the signature, and the sender's `LeafNode` for that epoch. They are deleted with the message (including by disappearing timers) and on takedown (§23.10.2).
+3. **No plaintext group metadata (profile rule).** So that evidence holds only hashes and random values: the OMCP `group_id` MUST be 32 random bytes with no meaning, and `GroupContext` extensions MUST NOT carry a group name, description, avatar or any other human-readable metadata; those travel only inside encrypted application messages. `authenticated_data` MUST NOT hold plaintext metadata either. With this rule the GroupContext holds only the random group ID, epoch, tree hash, confirmed transcript hash and capability extensions.
+4. **Verification by the team.** For each reported message in an evidence file, the verifier MUST:
+   a. rebuild `FramedContentTBS` from the submitted `FramedContent` and `GroupContext` and verify the submitted signature with the signature key in the submitted `LeafNode`;
+   b. verify that the `LeafNode` is validly self-signed and that its credential binds that key to the identity key whose BLAKE2b-256 hash is the submitted `sender_id`;
+   c. check that `group_id` and `epoch` agree between `FramedContent` and `GroupContext`, that `BLAKE2b-256(GroupContext)` equals the submitted `group_context_hash`, and that `BLAKE2b-256("OMCP-group-ref-v1" || 0x00 || group_id)` equals the file's `group_ref`;
+   d. check that the submitted `body` equals the `application_data` in the signed `FramedContent`.
+   Only if all four pass is the message marked **verified genuine**. Any failure marks it **unverified**; the team MAY still consider it but MUST record that in the log (§23.10.4).
+5. **Scope (stated plainly).** A verified message proves who sent it and that it was not altered. It does **not** prove the group's membership, or anything about the group beyond what is signed (the random group ID, the epoch, and the tree and transcript hashes). It does not prove that anyone received the message, or when it was sent (MLS does not sign the sender's clock). Reported messages lose deniability: anyone holding the evidence can prove who sent them. This applies to every message, old or new, for which a member still has the stored signature data. Users MUST be told this in the app (Settings > Privacy and the group info screen): "Members can report a message to the Hopla team and prove you sent it."
+
+#### 23.10.2 Private-group takedown and restore
+0. **1:1 chats are never affected.** A 1:1 chat (a 2-member MLS group created as a 1:1 chat, §22.7(5)) is never a target. Apps MUST NOT apply a `GROUP_TAKEDOWN` or `GROUP_RESTORE` to a 1:1 chat, even if its `group_ref` matches, and do not offer evidence export there (§23.10.3(2)). This keeps §23.9(4), MR10 and REQUIREMENTS TM4 true: no team action ever touches a 1:1 chat, and no team action ever reads any private chat.
+1. **Actions.** Two new team actions use the §23.9 signed-action format with new `kind` values: `3 GROUP_TAKEDOWN` and `4 GROUP_RESTORE`. They apply only to private groups that are not 1:1 chats. The 32-byte target is `group_ref` (§23.10 terms), so the action does not reveal the raw MLS group ID to relays. Fields: `GROUP_TAKEDOWN{group_ref, reason_code, evidence_hash, note, epoch, sigs[]}`, `GROUP_RESTORE{group_ref, epoch, sigs[]}` (§23.10.7 gives the byte layout).
+2. **Spread.** Gossiped exactly like a community TAKEDOWN (§23.9(2)): well-known team-moderation tag, `PRIORITY`, outer expiry 30 d, re-sent while in force. Relays cannot tell which group is meant without knowing its `group_id`.
+3. **Effect on compliant members' apps (full erasure).** A member's app computes `group_ref` for each of its groups. On a valid `GROUP_TAKEDOWN` with a higher moderation epoch than the last applied one, it MUST, within the same run of the app: (a) delete every message, reaction, draft and media file of the group, including cached thumbnails and search-index entries; (b) delete the group's MLS state: ratchet tree, epoch secrets, exporter secrets, pending proposals, and its KeyPackages and mailbox/sub-tags; (c) delete queued and relayed envelopes for the group's tags; (d) record a **tombstone** `{group_ref, takedown epoch, reason_code}` and refuse any future MLS Welcome, commit or envelope whose group ID hashes to that `group_ref`; and (e) show a single notice "A group was removed by the Hopla team" with the reason, without the group's name or content. It MUST NOT send anything about the group to the team. Deletion means the data is unrecoverable by the app: rows deleted and the database vacuumed, files removed, and keys erased from the keystore.
+4. **Backups.** The group's portion of every encrypted chat backup MUST be erased too. The next backup after a takedown MUST NOT contain the group, and MUST contain the tombstone list. On restore, the app MUST first apply all tombstones it knows (from the device, from the backup being restored, and from team actions received since) and drop every group whose `group_ref` matches, before anything is written to the chat store. An app restoring a backup older than a takedown therefore does not bring the group back, provided the takedown or tombstone is known to it; until it has synced team actions from the mesh after a restore (at least one full digest exchange, §22.7(11)), it MUST NOT show restored groups. Tombstones are kept for as long as the takedown is in force and MUST be kept for at least 2 years after it.
+4a. **Restore.** Content is erased, so a valid `GROUP_RESTORE` with a higher epoch can never bring content back. It only lifts the ban on the `group_ref`: the tombstone is removed and members may re-form the group or rejoin it (a new MLS group or a fresh Welcome), starting empty. Members are told "This group is no longer blocked; earlier messages were erased and cannot be restored".
+5. **Limits (stated plainly).** A takedown cannot erase screenshots, exported files (including evidence files), copies made by a modified app, or devices that never receive the action; a modified app can ignore it entirely. Evidence a reporter already submitted stays in the team's private store under its retention period (§23.10.4(4)). A takedown only reaches members whose apps are online on the mesh or gateway. It is a measure for compliant apps, not a guarantee of erasure.
+
+#### 23.10.3 Reports from outside parties and the evidence file (REQUIRED before v1.0)
+1. **Who can report.** Any member of a private group, or an outside party (for example law enforcement) who has obtained an evidence file from a member's phone. A report is the evidence file, which names the group only by its `group_ref`. The team decides on the evidence alone, after verifying sender signatures (§23.10.1(4)).
+2. **Export.** The app offers "Report to Hopla team" on a message (long-press), on a multi-select of messages, and in group info, in private groups only (never in 1:1 chats, §23.10.2(0)). The reporter picks exactly which messages to include; nothing else is added. The app MUST show what will be included before export.
+3. **Evidence file format.** Deterministic CBOR (RFC 8949 §4.2.1 core deterministic encoding), file extension `.omcp-evidence`, media type `application/vnd.omcp.evidence+cbor`. Top level is a map with integer keys:
+```
+EvidenceFileV1 = {
+  0: 1,                       ; version (uint)
+  1: bstr .size 32,           ; group_ref (§23.10 terms); never a group name or other metadata
+  2: uint,                    ; export_ms (unix ms, reporter's clock)
+  3: [+ ReportedMessage],     ; 1..500 messages, in the order the reporter chose
+  4: uint,                    ; reason_code (§23.10.4 categories)
+  ? 5: tstr,                  ; reporter note (≤ 2000 bytes UTF-8)
+  ? 6: ReporterContact,       ; optional
+  ? 7: [* MemberDisclosure],  ; optional, only members the reporter chooses to name
+  8: bstr .size 32,           ; reporter_key: Ed25519 public key that signs this file
+  9: bstr .size 64            ; reporter_sig over the file with key 9 removed
+}
+ReportedMessage = {
+  0: bstr .size 32,           ; sender_id (BLAKE2b-256 of the sender's identity key)
+  1: bstr,                    ; framed_content (TLS-encoded MLS FramedContent, exactly as signed)
+  2: bstr .size 32,           ; group_context_hash: BLAKE2b-256 of key 3
+  3: bstr,                    ; group_context (TLS-encoded; random ID, epoch and hashes only, §23.10.1(3))
+  4: bstr,                    ; sender MLS signature
+  5: bstr,                    ; sender LeafNode (TLS-encoded, credential + signature key)
+  6: bstr,                    ; body: the application_data as the app encodes it (must equal the signed one)
+  ? 7: [* MediaItem]          ; optional attached media the body references
+}
+MediaItem = { 0: tstr, 1: bstr, 2: bstr .size 32 } ; mime, bytes, BLAKE2b-256 of bytes as referenced in body
+ReporterContact = { ? 0: tstr, ? 1: tstr, ? 2: tstr } ; name or organisation, email, phone; all optional
+MemberDisclosure = { 0: bstr .size 32, ? 1: tstr }    ; sender_id, optional label
+```
+   `reporter_sig = Ed25519(reporter_key, "OMCP-evidence-v1" || 0x00 || CBOR(file without key 9))`. `reporter_key` is the reporter's identity key by default; the reporter MAY choose a fresh one-off key to stay pseudonymous. The signature proves the file was not changed after export; it does not by itself prove who the reporter is. The file MUST NOT contain the group name, description, avatar or any other group metadata in plaintext; the group appears only as `group_ref`, the random group ID inside the signed bytes, and context hashes. Files over 50 MB are refused at export. `evidence_hash = BLAKE2b-256(whole file bytes)`.
+4. **No member list.** The file MUST NOT contain the group's member list, roster, ratchet tree, group secrets, epoch secrets or any private key. The only members named are the senders of reported messages (key 0 and the LeafNode of each message) and those the reporter adds under key 7.
+5. **Intake channel.** There is no server, so the maintainer personally runs one intake point: an email address `<INTAKE_EMAIL — to be set by the maintainer>` and/or a web form at `<INTAKE_URL — to be set by the maintainer>` that accepts `.omcp-evidence` files. Both MUST be published in the app (Settings > Help > Report to the Hopla team, and on the report screen) and on the project website. The web form MUST use HTTPS. Stored reports MUST be encrypted at rest by the intake operator (the maintainer) with a key held locally by the operator. This is operational and outside the protocol: OMCP defines no team encryption key, and the team's Ed25519 keys are used only for signing. Plaintext copies MUST NOT be kept beyond what is needed to review a report. 1:1 chats are excluded from reporting (§23.10.2(0)); the group's random ID inside evidence is acceptable because it is meaningless random bytes (§23.10.1). This is the only centralized point in OMCP moderation; it holds no user data beyond the reports people submit, and it has no access to the mesh, to groups, or to keys. Other OMCP apps run their own intake or none.
+6. **Decision.** The team verifies every message (§23.10.1(4)), records the decision in the log (§23.10.4), and, if upheld, issues a `GROUP_TAKEDOWN` (or a community action, §23.10.6). The team MAY reply to the reporter's optional contact. The team never contacts the group.
+
+#### 23.10.4 Takedown log (REQUIRED before v1.0)
+1. **Every decision is logged**: each TAKEDOWN, RESTORE, GROUP_TAKEDOWN, GROUP_RESTORE and community item action (§23.10.6), and each report that was rejected.
+2. **Public log entry** (extends §23.9(5)): `{decision_id, action kind, target (community_id, item id, or group_ref), reason_category, evidence_hash (32 B, or all-zero if the decision was not based on a report), verified (number of messages verified genuine / total), date, team keys that signed}`. It holds only the fingerprint of the evidence, never the evidence. For private groups the target is `group_ref`, never the group name or members.
+3. **Reason categories** (fixed list; same codes as `reason_code` in §23.9(7), extended): `1` hate speech or incitement, `2` illegal content (other), `3` terrorism or violent extremism, `4` coordinated harassment, `5` spam or scam, `6` child sexual abuse material, `7` threats of violence, `8` restore after review or appeal, `9` other (note required).
+4. **Private evidence store.** The evidence file itself is kept in the team's private, encrypted store, access-logged and limited to team members. Default retention: **90 days** from the decision, unless the law requires longer or an authority has asked to preserve it. Then it MUST be deleted; the public hash stays.
+5. **Never republished.** Evidence MUST never be republished, attached to the log, gossiped over the mesh, or shared beyond what the law requires, because it may itself be illegal material. Child sexual abuse material is handled only as the law of the team's jurisdiction requires (for example reporting to the competent body) and never stored longer than needed for that.
+6. **Checkable.** Anyone holding an evidence file (for example the reporter) can hash it and find the matching log entry.
+
+#### 23.10.5 Moderators cannot see into private groups (hard rule)
+1. A team key MUST NOT appear in any MLS credential, LeafNode, KeyPackage, Welcome or Add proposal. Clients MUST reject any Add or Welcome whose credential identity hash is on the team whitelist, and MUST reject any GROUP_* action that tries to carry MLS material.
+2. `GROUP_TAKEDOWN` and `GROUP_RESTORE` carry only the fields in §23.10.7. They MUST NOT carry a member list, sender IDs, epochs or any group secret.
+3. Evidence files follow §23.10.3(4).
+4. Members' apps never send anything to the team on their own. Only the user can export and submit a report.
+
+#### 23.10.6 Community takedowns (open communities)
+Communities are open and not end-to-end encrypted (§20.1, decided 2026-10-29), so team actions can target finer items. New `kind` values in the §23.9 format:
+| kind | Name | Target (`target_id`, `item_id`) | Effect on compliant clients |
+|---|---|---|---|
+| 1 | `TAKEDOWN` (community) | community_id, zero | §23.9(4) |
+| 2 | `RESTORE` (community) | community_id, zero | §23.9(6) |
+| 5 | `POST_TAKEDOWN` | community_id, post_id | the post and its media and replies are deleted and replaced by "Removed by the Hopla team" with the reason; relays drop it |
+| 6 | `TOPIC_TAKEDOWN` | community_id, topic_id | the topic is hidden and its posts deleted; new posts to it are refused |
+| 7 | `LIVE_TAKEDOWN` | community_id, stream_id | the stream ends for all viewers, new viewers are refused, the host cannot restart Live in that community for 24 h |
+| 8 | `ITEM_RESTORE` | community_id, item_id of the earlier action | lifts the ban from kind 5, 6 or 7 on that item; erased content is not brought back |
+**Erasure (also applies to kind 1).** Every takedown of a community, topic, post or Live stream is a full erasure with the same rules as §23.10.2(3)–(4): content, media, cached copies, the community's or topic's keys and state, and its portion of chat backups are deleted; a tombstone keyed by `(community_id, item_id)` is recorded, kept in backups, and applied before any backup restore. `RESTORE` (kind 2) and `ITEM_RESTORE` (kind 8) only lift the ban, so the community, topic or stream can be used again; they never bring erased content back. (This replaces the "if content is still held" wording and clarifies §23.9(4) and (6).)
+
+`post_id`, `topic_id` and `stream_id` are the 32-byte IDs the community already uses (§20); if an ID is shorter it is left-padded with zeros. Community limits that clients enforce and that bound what a takedown must remove: **about 5,000 members per community** (joins beyond 5,000 are refused), **4 KB per post** (UTF-8 text plus inline metadata; media are separate chunks, §7), and history kept **30 days or up to 50 MB per community, whichever is reached first** (oldest posts evicted first).
+
+Community history (30 days or 50 MB per community) is budgeted separately and does not count toward the relay budget in §22.4.
+
+#### 23.10.7 Wire format of team actions (v2)
+Existing kinds 1 and 2 keep the v1 body from §23.9 (`"OMCP-team-mod-v1" || 0x00 || kind u8 || community_id[32] || epoch u64 || reason_code u8 || note_len u16 || note`). Kinds 3–8 use a v2 body:
+```
+TeamActionV2 {
+  domain:        "OMCP-team-mod-v2" || 0x00   // in signed body only, not on the wire
+  kind:          u8      // 3 GROUP_TAKEDOWN, 4 GROUP_RESTORE, 5 POST_TAKEDOWN, 6 TOPIC_TAKEDOWN, 7 LIVE_TAKEDOWN, 8 ITEM_RESTORE
+  target_id:     [32]u8  // group_ref for 3/4, community_id for 5–8
+  item_id:       [32]u8  // zero for 3/4; post_id/topic_id/stream_id for 5–8
+  epoch:         u64     // big-endian; per (target_id, item_id) moderation epoch, highest wins
+  reason_code:   u8      // §23.10.4(3); 0 for restores
+  evidence_hash: [32]u8  // §23.10.3(3); all-zero if none
+  note_len:      u16     // big-endian, ≤ 512
+  note:          [..]    // UTF-8
+  n:             u8      // number of signatures
+  sigs:          n × (public_key[32] || ed25519_signature[64])
+}
+```
+Signatures are over the domain plus all fields up to `note`. Validity follows §23.9(3) (k distinct whitelisted keys) and the epoch rule of §23.9 (strictly greater than the last applied epoch for the same target). Envelope: same as §23.9 (public, team-moderation tag, `RELAY_OK | STORE_OK | PRIORITY`, outer expiry 30 d), with `header_aad` TLV `0x5A` `team_mod` (len 1, value = body version, 1 or 2).
+
+> **Open question for the maintainer (W-1).** The implementation on the team-moderation branch marks team-moderation envelopes with TLV `0x8F` (experimental range). This section registers `0x5A` for it; the code should move to `0x5A` before v1.0. Also, the code comments refer to `config/team_moderation.json` while the shipped file is `config/team_moderation.conf`.
+
+#### 23.10.8 Keys before v1.0
+The real moderator key only arrives in v1.0. Until then: **debug builds** ship a published development key (clearly labelled, never used for real moderation) with `k = 1`, so these features can be tested; **release builds** ship an empty whitelist and MUST NOT enforce any TAKEDOWN, RESTORE or GROUP_*/item action (they ignore them, as `config/team_moderation.conf` already does with no key). Release builds MUST still implement evidence export once it ships.
+
+#### 23.10.9 Registry additions
+- Team action `kind`: `3` GROUP_TAKEDOWN, `4` GROUP_RESTORE, `5` POST_TAKEDOWN, `6` TOPIC_TAKEDOWN, `7` LIVE_TAKEDOWN, `8` ITEM_RESTORE; `9`–`255` unassigned (§16).
+- `header_aad` TLV `0x5A` `team_mod` (len 1) — added to §21.8.
+- Media type `application/vnd.omcp.evidence+cbor`, file extension `.omcp-evidence`.
+- Domain strings: `"OMCP-group-ref-v1"`, `"OMCP-team-mod-v2"`, `"OMCP-evidence-v1"`.
+
+#### 23.10.10 Acceptance tests
+- MR11: A reported message whose framed content, body, sender, group ID or epoch is changed by one bit fails verification; an unchanged one passes all four steps of §23.10.1(4).
+- MR12: Verifying one reported message never requires, and the evidence file never contains, any other message, group secret, ratchet tree, or plaintext group name or metadata (only `group_ref`, the random group ID and context hashes).
+- MR13: *Withdrawn* (was a franking test; franking was dropped).
+- MR14: A GROUP_TAKEDOWN whose `group_ref` matches a 1:1 chat leaves that chat untouched. A valid GROUP_TAKEDOWN erases the group on all compliant members' apps within 10 min of gossip; a valid later GROUP_RESTORE lets members re-form or rejoin it, empty, and never brings content back.
+- MR15: A GROUP_* action with fewer than `k` signatures, a non-whitelisted key, or an epoch not higher than the last applied is ignored.
+- MR16 (hard rule): A moderator key cannot open group keys: given every team key, a test harness cannot decrypt any private-group message or derive any epoch secret.
+- MR17 (hard rule): A moderator key cannot add itself as a member: Add proposals, KeyPackages and Welcomes carrying a whitelisted identity are rejected by every compliant client.
+- MR18 (hard rule): GROUP_TAKEDOWN and GROUP_RESTORE encodings never contain a member list, sender ID or group secret (checked by fuzzing the encoder and by field-by-field parsing).
+- MR19 (hard rule): An exported evidence file contains no member identity beyond the senders of the selected messages and the members the reporter explicitly added.
+- MR20: The evidence file is byte-identical when exported twice from the same selection (deterministic CBOR), and a one-bit change breaks `reporter_sig`.
+- MR21: Every decision appears in the public log with its `evidence_hash` and reason category; no log entry contains evidence content.
+- MR22: POST_, TOPIC_ and LIVE_TAKEDOWN erase only the named item on compliant clients within 10 min; ITEM_RESTORE lifts the ban but brings back no erased content.
+- MR23: Clients refuse a community's 5,001st member, posts over 4 KB, and evict history older than 30 days or beyond 50 MB.
+- MR24: Release builds before v1.0 ignore all team actions; debug builds enforce actions signed by the dev key.
+- MR25 (erasure): After a GROUP_TAKEDOWN or community/item takedown, a forensic scan of the app's storage (database including free pages, files, caches, search index, keystore) finds nothing from the target; a fresh backup contains nothing from it and contains its tombstone; restoring a backup made before the takedown, on a clean device, does not resurrect it (the group or item never appears, and its MLS state is not reloaded).
+- MR26: The intake operator stores reports only encrypted at rest with a locally held key (operational, outside the protocol; no protocol team encryption key exists), and no plaintext copy is kept beyond review.
+- MR27: The community join screen and post composer show the "posts are public" note (§20.1), and private groups and 1:1 chats are marked end-to-end encrypted.
 
 ### 23.8 Clarifications (v0.2.1)
 1. **Hash matching scope and governance.**

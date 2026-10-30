@@ -1,22 +1,23 @@
-//! Communities (PROTOCOL §20.1, minimal v0.2 cut) and Live inside a community.
+//! Private groups (PROTOCOL §20.1, §23.10; REQUIREMENTS TM4–TM9): end-to-end
+//! encrypted MLS groups (OpenMLS), up to [`MAX_PRIVATE_GROUP_MEMBERS`]
+//! members, where only the founder invites. Until v0.1.24 this code was
+//! (wrongly) used for Communities; open communities now live in
+//! `open_community.rs`. The FFI keeps the old `community_*` names as legacy
+//! aliases so the current Android/iOS UI still builds until the §5U UI pack
+//! lands; new code calls the `private_group_*` names.
 //!
-//! A community is an MLS group (OpenMLS, up to 32 members in this build).
+//! The MLS group ID is 32 random bytes; the group name and roster travel only
+//! inside pairwise E2EE messages, never in the GroupContext or authenticated
+//! data (§23.10.1(3)).
+//!
 //! Control traffic travels as pairwise E2EE app messages between contacts
-//! (`application/omcp-community`, no chat row):
+//! (`application/omcp-community`, no chat row): `Invite`, `Join`
+//! (KeyPackage), `Welcome`, `Commit`, `Group` (MLS application message,
+//! forwarded unchanged to the sender's contacts in the roster) and `Rekey`.
 //!
-//! - `Invite` (founder → contact), `Join` (KeyPackage back), `Welcome`
-//!   (founder → new member) and `Commit` (founder → existing members). Only
-//!   the founder adds members, so the founder is a contact of everyone.
-//! - `Group`: an MLS application message of the community group (live
-//!   start/end). MLS authenticates the sender; any member forwards it unchanged
-//!   to its own contacts in the roster, so members who are not the host's
-//!   contacts still hear about the live. Duplicates are dropped by hash.
-//! - `Rekey`: a host-signed new stream key after "Remove viewer", forwarded the
-//!   same way but never to the excluded PeerIDs.
-//!
-//! Team moderation (§23.9): a taken-down community is hidden, its lives can't
-//! be started or joined, and its announcements are neither applied nor
-//! forwarded (client side of `relay_allows`).
+//! Hard rule (§23.10.5, MR17): KeyPackages and Welcomes carrying a team
+//! identity are refused. A valid `GROUP_TAKEDOWN` erases the group (MLS
+//! state, roster, invites) and its `group_ref` stays tombstoned.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -32,6 +33,8 @@ use crate::{invalid, now_ms, parse_id, FfiError, NodeState, OmcpNode};
 pub const COMMUNITY_MIME: &str = "application/omcp-community";
 const STATE_KEY: &[u8] = b"communities-v1";
 const MAX_NAME: usize = 60;
+/// Private groups hold up to 32 members.
+pub const MAX_PRIVATE_GROUP_MEMBERS: usize = omcp_core::mls::MAX_SMALL_GROUP_MEMBERS;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 enum CMsg {
@@ -213,8 +216,40 @@ impl NodeState {
         Ok(())
     }
 
+    /// Whether a team `GROUP_TAKEDOWN` is in force for this group.
     fn removed(&self, id: &[u8; 32]) -> bool {
-        self.mesh.moderation.is_removed(id)
+        self.mesh
+            .community
+            .list
+            .get(id)
+            .and_then(|c| c.member.moderation_group_ref().ok())
+            .map(|r| self.mesh.moderation.is_group_removed(&r))
+            .unwrap_or(false)
+    }
+
+    /// Full erasure of taken-down private groups (§23.10.2(3)): MLS state,
+    /// roster and pending invites. 1:1 chats are never touched.
+    pub(crate) fn enforce_group_moderation(&mut self) -> Result<(), FfiError> {
+        let gone: Vec<[u8; 32]> = self
+            .mesh
+            .community
+            .list
+            .keys()
+            .filter(|id| self.removed(id))
+            .copied()
+            .collect();
+        if gone.is_empty() {
+            return Ok(());
+        }
+        for id in &gone {
+            if let Some(mut c) = self.mesh.community.list.remove(id) {
+                c.member.erase_group();
+            }
+            self.mesh.community.invites.remove(id);
+            self.mesh.community.joining.remove(id);
+            self.mesh.community.invited.retain(|(g, _)| g != id);
+        }
+        self.save_communities()
     }
 
     /// Our contacts in the roster, minus `skip`.
@@ -317,12 +352,19 @@ impl NodeState {
                     .get(&peer)
                     .map(|c| c.name.clone())
                     .unwrap_or_default();
+                let team = self.mesh.team.clone();
                 let (commit, welcome, roster, others, cname, founder) = {
                     let Some(c) = self.mesh.community.list.get_mut(&id) else {
                         return Ok(());
                     };
+                    if c.roster.len() >= MAX_PRIVATE_GROUP_MEMBERS {
+                        return Ok(());
+                    }
                     let kp = c.member.parse_key_package(&kp).map_err(mls)?;
-                    let (commit, welcome) = c.member.add_members(&[kp]).map_err(mls)?;
+                    let (commit, welcome) = c
+                        .member
+                        .add_members_excluding_team(&team, &[kp])
+                        .map_err(mls)?;
                     let others: Vec<[u8; 32]> = c.roster.keys().copied().collect();
                     c.roster.insert(peer, name);
                     let roster: Vec<_> = c.roster.iter().map(|(a, b)| (*a, b.clone())).collect();
@@ -366,7 +408,17 @@ impl NodeState {
                 let Some((_, mut member)) = self.mesh.community.joining.remove(&id) else {
                     return Ok(());
                 };
-                member.join_from_welcome(&welcome).map_err(mls)?;
+                member
+                    .join_from_welcome_excluding_team(&self.mesh.team, &welcome)
+                    .map_err(mls)?;
+                let tomb = member
+                    .moderation_group_ref()
+                    .map(|r| self.mesh.moderation.is_group_removed(&r))
+                    .unwrap_or(true);
+                if tomb {
+                    member.erase_group();
+                    return Ok(()); // tombstoned group_ref: refuse the Welcome
+                }
                 self.mesh.community.list.insert(
                     id,
                     Community {
@@ -613,6 +665,9 @@ impl OmcpNode {
             if c.founder != self.me() {
                 return Err(invalid("only the founder invites"));
             }
+            if c.roster.len() >= MAX_PRIVATE_GROUP_MEMBERS {
+                return Err(invalid("private groups hold up to 32 members"));
+            }
             let msg = CMsg::Invite {
                 id,
                 name: c.name.clone(),
@@ -776,5 +831,47 @@ impl OmcpNode {
             .into_iter()
             .filter(|s| s.community_id_hex == want)
             .collect()
+    }
+}
+
+/// New names for private groups. The `community_*` names above are legacy
+/// aliases kept for the current app UI.
+#[uniffi::export]
+impl OmcpNode {
+    pub fn private_group_create(&self, name: String) -> Result<CommunityInfo, FfiError> {
+        self.community_create(name)
+    }
+    pub fn private_group_invite(
+        &self,
+        group_id_hex: String,
+        contact_id: String,
+    ) -> Result<(), FfiError> {
+        self.community_invite(group_id_hex, contact_id)
+    }
+    pub fn private_group_invites(&self) -> Vec<CommunityInviteInfo> {
+        self.community_invites()
+    }
+    pub fn private_group_accept(&self, group_id_hex: String) -> Result<(), FfiError> {
+        self.community_accept(group_id_hex)
+    }
+    pub fn private_group_decline(&self, group_id_hex: String) -> Result<(), FfiError> {
+        self.community_decline(group_id_hex)
+    }
+    pub fn private_groups(&self) -> Vec<CommunityInfo> {
+        self.communities()
+    }
+    pub fn private_group_members(&self, group_id_hex: String) -> Vec<CommunityMember> {
+        self.community_members(group_id_hex)
+    }
+    /// Private groups and 1:1 chats are end-to-end encrypted (MR27 marker).
+    pub fn private_group_is_e2ee(&self) -> bool {
+        true
+    }
+    /// `group_ref` (hex) of a private group, the only name the team ever sees.
+    pub fn private_group_ref(&self, group_id_hex: String) -> Option<String> {
+        let id = parse_cid(&group_id_hex).ok()?;
+        let st = self.inner.lock();
+        let c = st.mesh.community.list.get(&id)?;
+        c.member.moderation_group_ref().ok().map(hex::encode)
     }
 }

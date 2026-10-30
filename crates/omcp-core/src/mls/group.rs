@@ -260,10 +260,16 @@ impl OmcpMlsMember {
             .max_past_epochs(MESH_MAX_PAST_EPOCHS)
             .padding_size(MESH_PADDING)
             .build();
-        let group = MlsGroup::new(
+        // §23.10.1(3): the group ID is 32 random bytes with no meaning, and
+        // the GroupContext carries no readable metadata (names travel only
+        // inside encrypted application messages).
+        let mut gid = [0u8; 32];
+        getrandom::getrandom(&mut gid).map_err(|_| OmcpError::Mls("rng"))?;
+        let group = MlsGroup::new_with_group_id(
             &self.provider,
             &self.signer,
             &config,
+            GroupId::from_slice(&gid),
             self.credential_with_key.clone(),
         )
         .map_err(|_| OmcpError::Mls("create group"))?;
@@ -273,6 +279,16 @@ impl OmcpMlsMember {
 
     fn group_ref(&self) -> Result<&MlsGroup> {
         self.group.as_ref().ok_or(OmcpError::Mls("no group"))
+    }
+
+    /// The MLS group ID (32 random bytes for groups created here).
+    pub fn group_id(&self) -> Result<Vec<u8>> {
+        Ok(self.group_ref()?.group_id().as_slice().to_vec())
+    }
+
+    /// `group_ref` of this group (PROTOCOL §23.10).
+    pub fn moderation_group_ref(&self) -> Result<[u8; 32]> {
+        Ok(crate::moderation::group_ref(&self.group_id()?))
     }
 
     /// Current epoch number.
@@ -508,6 +524,49 @@ impl OmcpMlsMember {
         let (ext, secrets) = encapsulate_to_members(epoch, others)?;
         let hybrid = self.hybrid_exporter(&secrets)?;
         Ok((ext.encode()?, secrets, hybrid))
+    }
+
+    /// Hard rule (§23.10.5(1), MR17): add members only if no KeyPackage
+    /// carries a whitelisted team identity.
+    pub fn add_members_excluding_team(
+        &mut self,
+        policy: &crate::moderation::TeamPolicy,
+        key_packages: &[KeyPackage],
+    ) -> Result<(Vec<u8>, Vec<u8>)> {
+        policy
+            .reject_team_identities(
+                key_packages
+                    .iter()
+                    .map(|k| k.leaf_node().credential().serialized_content()),
+            )
+            .map_err(|_| OmcpError::Mls("team key may not join a group"))?;
+        self.add_members(key_packages)
+    }
+
+    /// Hard rule (MR17): join only if no member of the welcomed group is a
+    /// whitelisted team identity; otherwise the group state is dropped.
+    pub fn join_from_welcome_excluding_team(
+        &mut self,
+        policy: &crate::moderation::TeamPolicy,
+        welcome_bytes: &[u8],
+    ) -> Result<()> {
+        self.join_from_welcome(welcome_bytes)?;
+        let ids = self.member_identities()?;
+        if policy
+            .reject_team_identities(ids.iter().map(|(_, i)| i.as_slice()))
+            .is_err()
+        {
+            self.erase_group();
+            return Err(OmcpError::Mls("team key may not be a group member"));
+        }
+        Ok(())
+    }
+
+    /// Erase the group's MLS state from this member (takedown, §23.10.2(3b)).
+    pub fn erase_group(&mut self) {
+        if let Some(mut g) = self.group.take() {
+            let _ = g.delete(self.provider.storage());
+        }
     }
 
     /// Collect (leaf_index, identity) for debugging/tests.
