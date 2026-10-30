@@ -347,10 +347,16 @@ impl NodeState {
     /// the host stops broadcasting, viewers stop playing, relays stop forwarding.
     pub(crate) fn enforce_live_moderation(&mut self) {
         let m = &self.mesh.moderation;
+        // A private group erased by a GROUP_TAKEDOWN takes its lives with it.
+        let groups: std::collections::HashSet<[u8; 32]> =
+            self.mesh.community.list.keys().copied().collect();
+        let ok = |s: &[u8; 16], c: Option<&[u8; 32]>| {
+            m.live_allowed(s, c) && c.map(|c| groups.contains(c)).unwrap_or(true)
+        };
         let lv = &mut self.mesh.live;
         lv.blocked_tags = m.removed_live_tags();
         if let Some(h) = lv.host.as_ref() {
-            if !m.live_allowed(&h.stream_id(), h.community_id.as_ref()) {
+            if !ok(&h.stream_id(), h.community_id.as_ref()) {
                 lv.ended.push(LiveEnded {
                     stream_id_hex: hex::encode(h.stream_id()),
                     reason: "taken_down".into(),
@@ -365,7 +371,7 @@ impl NodeState {
         }
         if let Some(l) = lv.listening.as_ref() {
             let i = &l.invite;
-            if !m.live_allowed(&i.key.stream_id, i.community_id.as_ref()) {
+            if !ok(&i.key.stream_id, i.community_id.as_ref()) {
                 lv.ended.push(LiveEnded {
                     stream_id_hex: hex::encode(i.key.stream_id),
                     reason: "taken_down".into(),
@@ -376,7 +382,7 @@ impl NodeState {
             }
         }
         lv.known
-            .retain(|id, (_, i)| m.live_allowed(id, i.community_id.as_ref()));
+            .retain(|id, (_, i)| ok(id, i.community_id.as_ref()));
     }
 }
 

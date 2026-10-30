@@ -43,7 +43,7 @@ fn tampered_or_forged_signature_is_rejected() {
     let p = TeamPolicy::from_public_keys(&[pk(&team)], 1);
     let mut st = ModerationState::default();
     let mut a = signed(TeamAction::takedown(C, Reason::Spam, "", 1), &team);
-    a.community_id = [9u8; 32]; // body changed after signing
+    a.target_id = [9u8; 32]; // body changed after signing
     assert_eq!(st.apply(&p, &a, 0), Err(Rejected::BadSignature));
     let mut b = signed(TeamAction::takedown(C, Reason::Spam, "", 1), &team);
     b.sigs[0].signature[0] ^= 1;
@@ -206,18 +206,20 @@ fn state_survives_serialization() {
     assert_eq!(back.current_actions().len(), 1);
 }
 
-// ---- Live takedown: same team keys, separate target kind ----
+// ---- Live takedown (v2 kind 7 / ITEM_RESTORE 8) ----
 
 const S: [u8; 16] = [9u8; 16];
 
 #[test]
-fn live_takedown_and_restore_use_the_team_key_with_own_epochs() {
+fn live_takedown_and_item_restore_use_the_team_key_with_own_epochs() {
     let team = key();
     let p = TeamPolicy::from_public_keys(&[pk(&team)], 1);
     let mut st = ModerationState::default();
-    let td = signed(TeamAction::takedown_live(S, Reason::Terror, "", 1), &team);
-    let wire = td.encode().unwrap();
-    let back = TeamAction::decode(&wire).unwrap();
+    let td = signed(
+        TeamAction::live_takedown(C, S, Reason::Terror, "", 1),
+        &team,
+    );
+    let back = TeamAction::decode(&td.encode().unwrap()).unwrap();
     assert_eq!(back, td);
     st.apply(&p, &back, 1).unwrap();
     assert!(st.is_live_removed(&S));
@@ -225,43 +227,41 @@ fn live_takedown_and_restore_use_the_team_key_with_own_epochs() {
     assert!(st
         .removed_live_tags()
         .contains(&crate::live::stream_tag(&S)));
-    // Live epochs don't collide with community epochs.
-    assert!(!st.is_removed(&live_target(&S)));
+    assert!(!st.is_removed(&C)); // only the item
     let c1 = signed(TeamAction::takedown(C, Reason::Spam, "", 1), &team);
     st.apply(&p, &c1, 2).unwrap();
-    // A live in a removed community is blocked too.
     assert!(!st.live_allowed(&[1; 16], Some(&C)));
     assert!(st.live_allowed(&[1; 16], Some(&[3; 32])));
-    // Replay is ignored, restore with a higher epoch lifts it.
     assert_eq!(st.apply(&p, &back, 3), Err(Rejected::Replay));
-    let rs = signed(TeamAction::restore_live(S, 2), &team);
+    let rs = signed(TeamAction::item_restore(C, pad_id(&S), 2), &team);
     st.apply(&p, &rs, 4).unwrap();
-    assert!(st.live_allowed(&S, None));
+    assert!(!st.is_live_removed(&S));
     assert_eq!(st.apply(&p, &back, 5), Err(Rejected::Replay));
-    assert_eq!(st.current_actions().len(), 2);
-    assert_eq!(st.log()[0].kind, ActionKind::RestoreLive);
+    assert_eq!(st.log()[0].kind, ActionKind::ItemRestore);
 }
 
 #[test]
-fn unsigned_foreign_or_reinterpreted_live_takedowns_are_rejected() {
+fn unsigned_foreign_or_reinterpreted_v2_actions_are_rejected() {
     let team = key();
     let p = TeamPolicy::from_public_keys(&[pk(&team)], 1);
     let mut st = ModerationState::default();
-    let unsigned = TeamAction::takedown_live(S, Reason::Spam, "", 1);
+    let unsigned = TeamAction::live_takedown(C, S, Reason::Spam, "", 1);
     assert_eq!(st.apply(&p, &unsigned, 1), Err(Rejected::BelowThreshold));
-    let foreign = signed(TeamAction::takedown_live(S, Reason::Spam, "", 1), &key());
+    let foreign = signed(TeamAction::live_takedown(C, S, Reason::Spam, "", 1), &key());
     assert_eq!(st.apply(&p, &foreign, 1), Err(Rejected::NotWhitelisted));
-    // A signature on a community action can't be re-used as a live action.
+    // A post takedown signature can't be re-used as a topic or group action.
     let mut c = signed(
-        TeamAction::takedown(live_target(&S), Reason::Spam, "", 1),
+        TeamAction::post_takedown(C, [4; 32], Reason::Spam, "", 1),
         &team,
     );
-    c.kind = ActionKind::TakedownLive;
+    c.kind = ActionKind::TopicTakedown;
     assert_eq!(st.apply(&p, &c, 1), Err(Rejected::BadSignature));
-    // The live target must be stream_id ‖ zeros.
-    let mut bad = TeamAction::takedown_live(S, Reason::Spam, "", 1);
-    bad.community_id[31] = 1;
+    // Item kinds need an item; group kinds must not have one.
+    let mut bad = TeamAction::post_takedown(C, [0; 32], Reason::Spam, "", 1);
     bad.sign(&team);
+    assert!(bad.encode().is_err());
+    let mut bad = TeamAction::group_restore(C, 1);
+    bad.item_id = [1; 32];
     assert!(bad.encode().is_err());
     assert!(!st.is_live_removed(&S));
 }

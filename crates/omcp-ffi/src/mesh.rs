@@ -183,11 +183,17 @@ pub(crate) struct MeshState {
     pub news: crate::news::NewsState,
     /// Team moderation (§23.9): shipped policy and applied actions.
     pub team: omcp_core::moderation::TeamPolicy,
+    /// `team` is the DEV/TEST key (debug builds only).
+    pub team_dev: bool,
     pub moderation: omcp_core::moderation::ModerationState,
     /// Live audio (never persisted).
     pub live: crate::live::LiveState,
     /// Communities (MLS groups) and their control outbox.
-    pub community: crate::community::CommunityState,
+    pub community: crate::private_group::CommunityState,
+    /// Open communities (forum-style, signed, not E2EE).
+    pub open: omcp_core::community::CommunityStore,
+    /// Genesis frames (invite links) of open communities.
+    pub open_genesis: std::collections::BTreeMap<[u8; 32], Vec<u8>>,
 }
 
 impl MeshState {
@@ -202,9 +208,12 @@ impl MeshState {
             status: Vec::new(),
             news: Default::default(),
             team: crate::moderation::shipped_policy(),
+            team_dev: crate::moderation::shipped_policy_is_dev(),
             moderation: Default::default(),
             live: Default::default(),
             community: Default::default(),
+            open: Default::default(),
+            open_genesis: Default::default(),
         }
     }
 
@@ -366,6 +375,7 @@ impl NodeState {
         self.mesh = mesh;
         self.load_moderation()?;
         self.load_communities()?;
+        self.load_open_communities()?;
         self.enforce_live_moderation();
         self.load_news(now)
     }
@@ -571,6 +581,14 @@ pub(crate) fn refresh_wants(st: &mut NodeState, now: u64) -> Result<(), FfiError
     wants.extend(st.mesh.news.tags());
     // Team moderation actions (§23.9) are wanted by every compliant client.
     wants.insert(omcp_core::moderation::team_mod_tag());
+    // Open communities we belong to: one public tag each.
+    wants.extend(
+        st.mesh
+            .open
+            .communities
+            .keys()
+            .map(omcp_core::community::community_tag),
+    );
     st.mesh.tags = tags;
     st.mesh.tags_for = Some((epoch, fp));
     let ev = st.mesh.engine.set_wants(wants, now);
@@ -822,6 +840,9 @@ impl MeshLink {
         for (tag, env, ack_of) in node.route(ev)? {
             if node.on_team_mod_envelope(&env)? {
                 continue; // public team action: verified and applied, never a chat
+            }
+            if node.on_open_community_envelope(&env)? {
+                continue; // public community post / control frame, never a chat
             }
             if omcp_core::news::is_news_envelope(&env) {
                 // Public news (already checked by the engine): no ack, no chat.

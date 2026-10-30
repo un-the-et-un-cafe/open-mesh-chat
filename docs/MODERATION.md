@@ -56,7 +56,7 @@ timestamp in seconds).
 ## Propagation
 
 Actions travel as public envelopes (`flags = RELAY_OK | STORE_OK | PRIORITY`) on one well-known
-mailbox tag (`BLAKE2b-64("OMCP-team-mod-tag-v1\0")`) that every compliant client wants, with TLV `0x8F`
+mailbox tag (`BLAKE2b-64("OMCP-team-mod-tag-v1\0")`) that every compliant client wants, with TLV `0x5A` (`team_mod`, value = body version 1 or 2; §21.8, §23.10.7)
 and a 30-day outer expiry (§23.9(2)). Relays keep them for at most 7 days (the relay store cap), so the
 publishing phone keeps them in its carry store and re-offers them at every encounter while they are in
 force. Every receiving node verifies, applies, logs and relays them. Invalid actions are dropped and
@@ -141,3 +141,26 @@ only appears in builds that ship a team. If a key is compromised, remove it in t
 - The jury appeal (§23.5) and the ⅔ "fine" result next to a takedown are not implemented.
 - MR7's 10-minute bound is not measured. Actions spread at the next encounter like other high-priority
   envelopes.
+
+
+## v0.1.24: private groups, item takedowns, evidence (PROTOCOL §23.10)
+
+- **Communities** are open (signed, not end-to-end encrypted): `omcp-core::community`.
+  About 5,000 members, 4 KB posts, history 30 days or 50 MB per community (oldest
+  dropped first, budgeted separately from the relay cap). Only the founder appoints
+  moderators; a moderator removal needs a reason and hides the post from everyone.
+- **Private groups** are the end-to-end encrypted MLS groups (up to 32 members,
+  founder invites), with 32-byte random group IDs and no readable metadata in the
+  GroupContext or authenticated data.
+- **Team actions v2** (TLV `0x5A`): 3 GROUP_TAKEDOWN, 4 GROUP_RESTORE, 5 POST_TAKEDOWN,
+  6 TOPIC_TAKEDOWN, 7 LIVE_TAKEDOWN, 8 ITEM_RESTORE. Every takedown erases the item on
+  the device and leaves a tombstone that is applied before any backup restore.
+  Restores only lift the ban. 1:1 chats are never affected.
+- **Hard rule**: team keys can never read, join or list a private group; Adds and
+  Welcomes with a team identity are refused; takedowns and reports carry no member list.
+- **Evidence** (`.omcp-evidence`, deterministic CBOR, ≤ 500 messages, reporter-signed,
+  anonymous one-off key): `omcp-core::moderation::evidence`. Verified with the MLS
+  sender signatures (no franking). Not offered for 1:1 chats.
+- **Known limits**: a takedown cannot erase screenshots, exported copies or devices
+  that never receive it, and a modified app can ignore it.
+- `team_mod v2 …` (example tool) signs v2 actions offline.

@@ -18,6 +18,8 @@ required-features = ["bindgen"]
 
 [features]
 bindgen = ["uniffi/cli"]
+# DEV/TEST moderation public key from env OMCP_DEV_MOD_KEY (debug builds only).
+dev-mod-key = []
 
 [dependencies]
 omcp-core = { path = "../omcp-core" }

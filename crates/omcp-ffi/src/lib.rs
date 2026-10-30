@@ -56,13 +56,14 @@ use zeroize::Zeroizing;
 uniffi::setup_scaffolding!();
 
 mod chatbackup;
-mod community;
 mod files;
 mod live;
 mod mesh;
 mod moderation;
 mod news;
+mod open_community;
 mod persist;
+mod private_group;
 pub use chatbackup::{
     ChatBackupBlob, ChatBackupSummary, DeviceInfo, KeptMediaSettings, KeptMediaUsage,
     MediaBackupItem, MediaBackupSettings, MediaRequestEvent, MediaUpdate, RestoreNotice,
@@ -72,10 +73,11 @@ pub use live::{
     live_audio_bitrate, live_frame_ms, live_stun_servers, LivePlayout, LiveStats, LiveStreamInfo,
 };
 pub use mesh::{mesh_max_links, mesh_relay_cap_bytes, MeshStats, MAX_MESH_LINKS};
-pub use moderation::{TeamActionResult, TeamLogEntry};
+pub use moderation::{EvidenceCheck, EvidenceMessage, TeamActionResult, TeamLogEntry};
 pub use news::{
     news_fetch_interval_ms, news_lang_codes, news_topic_codes, NewsPrefs, NewsStatus, NewsStory,
 };
+pub use open_community::{OpenCommunityInfo, OpenCommunityPost, OpenCommunityTopic};
 pub use persist::{
     ChatSummary, MessageStatus, StoredBurnState, StoredFile, StoredFileState, StoredMessage,
 };
@@ -1875,7 +1877,7 @@ impl MeshLink {
                 rt.text = t;
                 out.received.push(rt);
             }
-            (None, AppContent::Media { mime, bytes }) if mime == community::COMMUNITY_MIME => {
+            (None, AppContent::Media { mime, bytes }) if mime == private_group::COMMUNITY_MIME => {
                 // Community control / live announcement; no chat row.
                 node.on_community_msg(peer, &bytes)?;
             }

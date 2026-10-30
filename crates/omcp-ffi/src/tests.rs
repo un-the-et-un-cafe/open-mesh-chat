@@ -2975,7 +2975,7 @@ fn injected_unsigned_frames_are_rejected_by_listeners() {
 }
 
 #[test]
-fn community_takedown_blocks_its_lives_and_announcements() {
+fn group_takedown_erases_private_group_and_stops_its_lives() {
     use omcp_core::moderation::{Reason, TeamAction};
     let team = team_key();
     let (a, b) = (node("A"), node("B"));
@@ -2990,8 +2990,14 @@ fn community_takedown_blocks_its_lives_and_announcements() {
         .unwrap();
     settle(&links);
     b.live_join(sid.clone(), false).unwrap();
-    let cb: [u8; 32] = hex::decode(&cid).unwrap().try_into().unwrap();
-    let td = team_hex(TeamAction::takedown(cb, Reason::Hate, "", 1), &team);
+    let mls_1to1_before = a.inner.lock().mesh.mls.len();
+    assert!(mls_1to1_before > 0);
+    let gref = omcp_core::moderation::hex32(&a.private_group_ref(cid.clone()).unwrap()).unwrap();
+    assert_eq!(b.private_group_ref(cid.clone()).unwrap(), hex::encode(gref));
+    let td = team_hex(
+        TeamAction::group_takedown(gref, Reason::Hate, [0; 32], "", 1),
+        &team,
+    );
     assert_eq!(b.moderation_publish(td).unwrap(), TeamActionResult::Applied);
     settle(&links);
     // Host refuses to keep broadcasting, the viewer stops, nothing can restart.
@@ -3004,7 +3010,14 @@ fn community_takedown_blocks_its_lives_and_announcements() {
     assert!(a
         .live_start_community(cid.clone(), "again".into(), false)
         .is_err());
-    assert_eq!(a.communities()[0].removed_reason, Some(1));
+    // 1:1 chats are never touched by a team action (TM4, MR10, MR14).
+    assert_eq!(a.inner.lock().mesh.mls.len(), mls_1to1_before);
+    // Fully erased on both members (MR14), also after a restart.
+    assert!(a.private_groups().is_empty() && b.private_groups().is_empty());
+    assert_eq!(
+        a.moderation_group_removed_reason(hex::encode(gref)),
+        Some(1)
+    );
     down(&ab);
 }
 
@@ -3029,7 +3042,10 @@ fn live_takedown_stops_host_viewer_and_relay() {
 
     // 1) Only the relay B runs the team policy: it stops forwarding.
     with_team(&b, &team);
-    let td = team_hex(TeamAction::takedown_live(s, Reason::Terror, "", 1), &team);
+    let td = team_hex(
+        TeamAction::live_takedown([0xCC; 32], s, Reason::Terror, "", 1),
+        &team,
+    );
     assert_eq!(
         b.moderation_publish(td.clone()).unwrap(),
         TeamActionResult::Applied
@@ -3051,7 +3067,10 @@ fn live_takedown_stops_host_viewer_and_relay() {
     // 2) Host and viewer run it too: the takedown reaches them over the mesh.
     with_team(&a, &team);
     with_team(&c, &team);
-    let td2 = team_hex(TeamAction::takedown_live(s, Reason::Terror, "", 2), &team);
+    let td2 = team_hex(
+        TeamAction::live_takedown([0xCC; 32], s, Reason::Terror, "", 2),
+        &team,
+    );
     assert_eq!(
         b.moderation_publish(td2).unwrap(),
         TeamActionResult::Applied
@@ -3067,7 +3086,7 @@ fn live_takedown_stops_host_viewer_and_relay() {
     assert!(c.live_streams().is_empty());
     assert!(c.live_media_key().is_none(), "no key left for WebRTC");
     assert!(c.live_join(sid.clone(), false).is_err());
-    assert!(a.moderation_log().iter().any(|e| e.kind == "takedown_live"));
+    assert!(a.moderation_log().iter().any(|e| e.kind == "live_takedown"));
     for l in [&ab, &bc] {
         down(l);
     }
@@ -3090,7 +3109,7 @@ fn unsigned_foreign_or_replayed_live_takedowns_are_ignored() {
     c.live_join(sid.clone(), false).unwrap();
     let s: [u8; 16] = hex::decode(&sid).unwrap().try_into().unwrap();
     let unsigned = hex::encode(
-        TeamAction::takedown_live(s, Reason::Spam, "", 1)
+        TeamAction::live_takedown([0xCC; 32], s, Reason::Spam, "", 1)
             .encode()
             .unwrap(),
     );
@@ -3099,7 +3118,7 @@ fn unsigned_foreign_or_replayed_live_takedowns_are_ignored() {
         TeamActionResult::BelowThreshold
     );
     let foreign = team_hex(
-        TeamAction::takedown_live(s, Reason::Spam, "", 1),
+        TeamAction::live_takedown([0xCC; 32], s, Reason::Spam, "", 1),
         &team_key(),
     );
     assert_eq!(
@@ -3107,12 +3126,18 @@ fn unsigned_foreign_or_replayed_live_takedowns_are_ignored() {
         TeamActionResult::NotWhitelisted
     );
     // A valid takedown then restore; replaying the old takedown changes nothing.
-    let td = team_hex(TeamAction::takedown_live(s, Reason::Spam, "", 1), &team);
+    let td = team_hex(
+        TeamAction::live_takedown([0xCC; 32], s, Reason::Spam, "", 1),
+        &team,
+    );
     assert_eq!(
         c.moderation_publish(td.clone()).unwrap(),
         TeamActionResult::Applied
     );
-    let rs = team_hex(TeamAction::restore_live(s, 2), &team);
+    let rs = team_hex(
+        TeamAction::item_restore([0xCC; 32], omcp_core::moderation::pad_id(&s), 2),
+        &team,
+    );
     assert_eq!(c.moderation_publish(rs).unwrap(), TeamActionResult::Applied);
     assert_eq!(c.moderation_publish(td).unwrap(), TeamActionResult::Replay);
     settle(&links);
@@ -3164,4 +3189,193 @@ fn news_ingests_real_google_news_fr_response() {
         .news_ingest_rss(url.into(), xml.into(), newest + 60_000)
         .unwrap();
     assert!(added > 0, "real FR feed yields stories");
+}
+
+// ---- v0.1.24: communities, private groups, team takedowns ----
+
+#[test]
+fn dev_key_policy_only_without_production_key_and_release_ignores_actions() {
+    // MR24
+    use crate::moderation::policy_for;
+    use omcp_core::moderation::{Reason, TeamAction};
+    let dev = team_key();
+    let dev_hex = hex::encode(dev.verifying_key().to_bytes());
+    let shipped = include_str!("../../../config/team_moderation.conf");
+    let (p, is_dev) = policy_for(shipped, None);
+    assert!(p.members.is_empty() && !is_dev);
+    let (p, is_dev) = policy_for(shipped, Some(&dev_hex));
+    assert_eq!(p.members.len(), 1);
+    assert!(is_dev);
+    let prod = team_key();
+    let cfg = format!(
+        "k = 1\nteam_key = {}\n",
+        hex::encode(prod.verifying_key().to_bytes())
+    );
+    let (p, is_dev) = policy_for(&cfg, Some(&dev_hex));
+    assert!(!is_dev);
+    assert_eq!(
+        p,
+        omcp_core::moderation::TeamPolicy::from_public_keys(&[prod.verifying_key().to_bytes()], 1)
+    );
+    assert!(policy_for(shipped, Some("zz")).0.members.is_empty());
+
+    let n = node("N");
+    assert_eq!(n.moderation_status(), "disabled");
+    let cid = [0x51u8; 32];
+    let td = team_hex(TeamAction::takedown(cid, Reason::Spam, "", 1), &dev);
+    assert_eq!(
+        n.moderation_publish(td.clone()).unwrap(),
+        TeamActionResult::NoTeam
+    );
+    assert_eq!(n.moderation_removed_reason(hex::encode(cid)), None);
+    {
+        let mut st = n.inner.lock();
+        st.set_team_policy(policy_for(shipped, Some(&dev_hex)).0);
+        st.mesh.team_dev = true;
+    }
+    assert_eq!(n.moderation_status(), "dev");
+    assert_eq!(n.moderation_publish(td).unwrap(), TeamActionResult::Applied);
+    assert_eq!(n.moderation_removed_reason(hex::encode(cid)), Some(5));
+    n.moderation_drop_dev_key();
+    assert_eq!(n.moderation_status(), "disabled");
+    assert!(!n.moderation_has_team());
+}
+
+#[test]
+fn open_community_topics_posts_roles_and_public_flag() {
+    let n = node("N");
+    assert!(n.open_community_posts_are_public());
+    let c = n.open_community_create("Climbers".into()).unwrap();
+    assert!(c.posts_are_public && c.is_founder && c.is_moderator);
+    assert!(!c.invite_hex.is_empty());
+    let t = n
+        .open_community_new_topic(c.community_id_hex.clone(), "Routes".into())
+        .unwrap();
+    let p = n
+        .open_community_post(c.community_id_hex.clone(), t.clone(), None, "hello".into())
+        .unwrap();
+    n.open_community_post(
+        c.community_id_hex.clone(),
+        t.clone(),
+        Some(p.clone()),
+        "reply".into(),
+    )
+    .unwrap();
+    assert!(n
+        .open_community_post(
+            c.community_id_hex.clone(),
+            t.clone(),
+            None,
+            "x".repeat(4097)
+        )
+        .is_err());
+    assert_eq!(
+        n.open_community_posts(c.community_id_hex.clone(), t.clone())
+            .len(),
+        2
+    );
+    assert!(n
+        .open_community_remove_post(c.community_id_hex.clone(), p.clone(), " ".into())
+        .is_err());
+    n.open_community_remove_post(c.community_id_hex.clone(), p.clone(), "off-topic".into())
+        .unwrap();
+    let posts = n.open_community_posts(c.community_id_hex.clone(), t.clone());
+    let removed = posts.iter().find(|x| x.post_id_hex == p).unwrap();
+    assert!(removed.body.is_empty());
+    assert_eq!(removed.removed_reason.as_deref(), Some("off-topic"));
+    assert!(n.open_community_can_join_live(c.community_id_hex.clone()));
+    // Another node joins from the invite.
+    let m = node("M");
+    let j = m.open_community_join(c.invite_hex.clone()).unwrap();
+    assert_eq!(j.community_id_hex, c.community_id_hex);
+    assert!(!j.is_founder && !j.is_moderator);
+}
+
+#[test]
+fn takedowns_erase_and_stay_erased_after_restart() {
+    // MR22 / MR25 at the app layer.
+    use omcp_core::moderation::{hex32, Reason, TeamAction};
+    let team = team_key();
+    let phrase = generate_recovery_phrase().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let (cid, gid) = {
+        let n = open_node(&phrase, "N", dir.path());
+        with_team(&n, &team);
+        let c = n.open_community_create("Doomed".into()).unwrap();
+        let t = n
+            .open_community_new_topic(c.community_id_hex.clone(), "T".into())
+            .unwrap();
+        let keep = n.open_community_create("Kept".into()).unwrap();
+        let kt = n
+            .open_community_new_topic(keep.community_id_hex.clone(), "K".into())
+            .unwrap();
+        let bad = n
+            .open_community_post(
+                keep.community_id_hex.clone(),
+                kt.clone(),
+                None,
+                "BAD".into(),
+            )
+            .unwrap();
+        n.open_community_post(
+            keep.community_id_hex.clone(),
+            kt.clone(),
+            None,
+            "GOOD".into(),
+        )
+        .unwrap();
+        n.open_community_post(c.community_id_hex.clone(), t, None, "MARKER".into())
+            .unwrap();
+        let g = n.private_group_create("Secret".into()).unwrap();
+        let gref = hex32(&n.private_group_ref(g.community_id_hex.clone()).unwrap()).unwrap();
+        let cb = hex32(&c.community_id_hex).unwrap();
+        let kb = hex32(&keep.community_id_hex).unwrap();
+        for a in [
+            TeamAction::takedown(cb, Reason::Illegal, "", 1),
+            TeamAction::group_takedown(gref, Reason::Illegal, [7; 32], "", 1),
+            TeamAction::post_takedown(kb, hex32(&bad).unwrap(), Reason::Spam, "", 1),
+        ] {
+            assert_eq!(
+                n.moderation_publish(team_hex(a, &team)).unwrap(),
+                TeamActionResult::Applied
+            );
+        }
+        assert_eq!(n.open_communities().len(), 1);
+        let posts = n.open_community_posts(keep.community_id_hex.clone(), kt);
+        assert_eq!(posts.len(), 1);
+        assert_eq!(posts[0].body, "GOOD");
+        assert!(n.private_groups().is_empty());
+        // The log keeps only the evidence fingerprint and reason category.
+        let log = n.moderation_log();
+        assert!(log
+            .iter()
+            .any(|e| e.kind == "group_takedown" && e.evidence_hash_hex == hex::encode([7u8; 32])));
+        (c.community_id_hex, g.community_id_hex)
+    };
+    let n = open_node(&phrase, "N", dir.path());
+    assert!(n
+        .open_communities()
+        .iter()
+        .all(|c| c.community_id_hex != cid));
+    assert!(n.private_groups().iter().all(|g| g.community_id_hex != gid));
+    let st = n.inner.lock();
+    let mut b = Vec::new();
+    ciborium::into_writer(&st.mesh.open, &mut b).unwrap();
+    assert!(!b.windows(6).any(|w| w == b"MARKER") && !b.windows(3).any(|w| w == b"BAD"));
+}
+
+#[test]
+fn evidence_export_only_for_private_groups_and_verify_rejects_garbage() {
+    let n = node("N");
+    // Unknown id / a 1:1 chat is not a private group: no report option.
+    assert!(n
+        .report_export_evidence(hex::encode([1u8; 32]), vec![], 1, None)
+        .is_err());
+    let g = n.private_group_create("G".into()).unwrap();
+    assert!(n.private_group_is_e2ee());
+    // No messages selected → refused (1..500).
+    assert!(n
+        .report_export_evidence(g.community_id_hex, vec![], 1, None)
+        .is_err());
+    assert!(n.evidence_verify(vec![0xa0]).is_err());
 }

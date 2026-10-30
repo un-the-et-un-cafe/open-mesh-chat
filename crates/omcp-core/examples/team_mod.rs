@@ -3,19 +3,19 @@
 //! ```text
 //! team_mod keygen <secret-file>              # writes a new secret key file (0600), prints the PUBLIC key
 //! team_mod pub <secret-file>                 # prints the public key
-//! team_mod takedown <secret-file> <community_id_hex> <reason 1|2|3|4|5|9> <epoch> [note]
+//! team_mod takedown <secret-file> <community_id_hex> <reason 1-7|9> <epoch> [note]
 //! team_mod restore  <secret-file> <community_id_hex> <epoch>
-//! team_mod takedown-live <secret-file> <stream_id_hex (32 chars)> <reason> <epoch> [note]
-//! team_mod restore-live  <secret-file> <stream_id_hex> <epoch>
+//! team_mod v2 <secret-file> <kind 3-8> <target_hex> <item_hex|0> <reason|0> <evidence_hash_hex|0> <epoch> [note]
 //! ```
-//! Live actions use the same team key and log; the stream id is shown to
-//! reporters in the app (Live screen, "Report").
+//! v2 kinds (PROTOCOL §23.10.7): 3 GROUP_TAKEDOWN / 4 GROUP_RESTORE (target =
+//! group_ref, item 0), 5 POST_, 6 TOPIC_, 7 LIVE_TAKEDOWN, 8 ITEM_RESTORE
+//! (target = community_id, item = post/topic/stream id, left-padded).
 //! `takedown` / `restore` print the signed action as hex, to paste into the
 //! app's "Publish team action" field (debug builds) or hand to a gateway.
 //! Keep the secret file offline, never in the repository.
 
 use ed25519_dalek::SigningKey;
-use omcp_core::moderation::{hex32, Reason, TeamAction};
+use omcp_core::moderation::{hex32, pad_id, ActionKind, Reason, TeamAction};
 
 fn load(path: &str) -> SigningKey {
     let s = std::fs::read_to_string(path).expect("read secret file");
@@ -61,18 +61,26 @@ fn main() {
             act.sign(&k);
             println!("{}", hex::encode(act.encode().expect("valid action")));
         }
-        "takedown-live" | "restore-live" => {
+        "v2" => {
             let k = load(arg(1));
-            let sid: [u8; 16] = hex::decode(arg(2))
-                .ok()
-                .and_then(|b| b.try_into().ok())
-                .expect("stream id: 32 hex chars");
-            let mut act = if arg(0) == "takedown-live" {
-                let r = Reason::from_code(arg(3).parse().expect("reason")).expect("reason code");
-                let epoch = arg(4).parse().expect("epoch");
-                TeamAction::takedown_live(sid, r, a.get(5).map(String::as_str).unwrap_or(""), epoch)
-            } else {
-                TeamAction::restore_live(sid, arg(3).parse().expect("epoch"))
+            let kind = ActionKind::from_code(arg(2).parse().expect("kind")).expect("kind 3-8");
+            let h = |s: &str| {
+                if s == "0" {
+                    [0u8; 32]
+                } else {
+                    pad_id(&hex::decode(s).expect("hex"))
+                }
+            };
+            let rc: u8 = arg(5).parse().expect("reason");
+            let mut act = TeamAction {
+                kind,
+                target_id: h(arg(3)),
+                item_id: h(arg(4)),
+                reason: Reason::from_code(rc),
+                evidence_hash: h(arg(6)),
+                note: a.get(8).cloned().unwrap_or_default(),
+                epoch: arg(7).parse().expect("epoch"),
+                sigs: Vec::new(),
             };
             act.sign(&k);
             println!("{}", hex::encode(act.encode().expect("valid action")));

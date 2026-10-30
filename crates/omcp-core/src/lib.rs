@@ -31,6 +31,7 @@ pub mod backup;
 pub mod ble;
 pub mod burn;
 pub mod chat_backup;
+pub mod community;
 pub mod device;
 pub mod error;
 pub mod files;

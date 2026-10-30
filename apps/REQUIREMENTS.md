@@ -7,6 +7,12 @@ Derived from PROTOCOL.md §13. Implementers (Proggy) treat this as the product c
 - Android 12+ (API 31+), Kotlin UI, Rust core via JNI
 - iOS 17+, SwiftUI, Rust core via FFI
 
+## Languages & accessibility
+- UI languages: English, French and Hebrew (RTL, with full layout mirroring). Hebrew copy is a draft until reviewed by a native speaker.
+- Light and dark themes are a matched pair, and both meet WCAG 2.2 AA (text 4.5:1, icons and UI 3:1). Disabled controls are exempt.
+- L1: Every screen renders correctly in Hebrew RTL (navigation, bubbles, chevrons and swipes mirrored; media, numbers and the clock not mirrored).
+- L2: An automated contrast check passes for all frames in light and dark.
+
 ## Must-have features (MVP)
 
 1. Identity creation + 24-word recovery phrase, secured through the onboarding backup flow (see "Onboarding & recovery backup")
@@ -36,7 +42,7 @@ See PROTOCOL.md §13.6. All five scenarios must pass before beta tag.
 See PROTOCOL.md §20.
 
 - Communities with roles, announcement channel, topic channels
-- Livestream via LAN relay or Internet SFU with E2EE media keys; BLE mesh shows status only
+- Livestream: see "Live (v0.2, draft)" below
 - Stories/ephemeral, polls, stickers, threads in v0.2
 - Usernames and bots deferred to v0.3
 
@@ -47,7 +53,7 @@ Goal: a new user is chatting in under 60 seconds, and nobody loses their identit
 ### Flow
 1. **Welcome**: one screen with the value proposition and a "Get started" button. No account, phone number or email needed.
 2. **Profile**: display name (optional) and avatar (optional). The identity key and 24-word phrase are generated in the background.
-3. **Secure your account**: the user picks one or more backup methods. At least one is required before the user can leave onboarding, but there's a "Remind me later" option that allows 24 h of use with a persistent banner.
+3. **Secure your account**: the user picks one or more backup methods. A cloud backup (Google Drive or iCloud) saves the recovery phrase **and all chat text**, encrypted (see "Encrypted chat backup"). Writing the phrase down restores only the identity and contacts, not the chats. At least one is required before the user can leave onboarding, but there's a "Remind me later" option that allows 24 h of use with a persistent banner.
    - **Google Drive** (Android default; also available on iOS)
    - **iCloud** (iOS default)
    - **Write it down** (shows the 24 words, then a quiz on 3 random words)
@@ -186,8 +192,91 @@ Messages and images that delete themselves once they've been read.
    - The app tells users plainly (in Settings > Privacy) that a second camera can still photograph the screen.
    - Acceptance: SS1 with the toggle on (default), screenshots and recordings of every Hopla screen are black or blank; with it off, burn-after-read and view-once content still comes out black or blank, on Android 10–15 and iOS 17–26; SS2 the app switcher never shows chat content while Block screenshots is on; with it off, the preview is normal, but open burn-after-read and view-once screens stay hidden.
 
+## Hopla team moderation (v0.2, draft), maintainer decision 2026-10-24
+- TM1: The Hopla team can delete communities that spread hate speech or illegal content, using whitelisted team keys (PROTOCOL §23.9).
+- TM2: For now the maintainer moderates alone with one key; an AI moderator is planned later as an additional key. Each deletion shows its reason to members and is listed in a public in-app log ("Removed communities").
+- TM3: The team can undo a deletion; owners can appeal via the jury (§23.5).
+- TM4: Private chats are never read, and 1:1 chats are never affected by any team action; private groups can only be erased by a group takedown (TM6). Other OMCP apps decide their own team list.
+- TM5 (maintainer decision 2026-10-30): A member can prove a reported private-group message is genuine using the MLS sender signature every message already carries (PROTOCOL §23.10.1); there is no extra seal. The app tells users plainly that a reported message can be proven to come from them.
+- TM6: 1:1 chats are never affected. A signed group takedown fully erases a private group on members' devices (messages, media, keys, and its part of backups; an older backup restore does not bring it back). A restore only lifts the ban so members can re-form the group, empty. Community takedowns erase the same way. The app explains that screenshots, exported files and modified apps are out of reach (§23.10.2, §23.10.6).
+- TM7 (required before v1.0): Members can export selected messages as an evidence file and send it to the Hopla team's intake address or web form (§23.10.3). The maintainer runs the inbox and form (<INTAKE_EMAIL>, <INTAKE_URL>), shown in Settings > Help and on the report screen; the maintainer stores reports encrypted at rest with a locally held key (operational, outside the protocol). 1:1 chats offer no reporting. Evidence files name the group only by hashes, never by its name or other metadata.
+- TM8 (required before v1.0): Every decision is listed in the public log with only an evidence fingerprint and a reason category; evidence stays private for 90 days by default and is never republished (§23.10.4).
+- TM9 (hard rule): The Hopla team can never read, join or see the members of a private group (§23.10.5, tests MR16–MR19).
+- TM10: In communities the team can remove a single post, a topic, the whole community, or a Live stream; communities hold about 5,000 members, 4 KB per post, and 30 days or 50 MB of history (§23.10.6).
+- TM11: Until v1.0 debug builds use a development key and release builds ignore all team actions (§23.10.8).
+- TM12: Community posts are public. The join screen and post composer say "Posts in communities are public. Anyone in the community can read them, and they are not end-to-end encrypted." Private groups and 1:1 chats are marked end-to-end encrypted (PROTOCOL §20.1).
+
+## Live (v0.2, draft), maintainer decision 2026-10-24
+Offline: audio only. Online: video. The app picks the mode automatically from connectivity.
+
+### Offline audio live (no internet)
+- Transport: BLE mesh, plus Wi-Fi Direct/Aware (Android), Apple peer-to-peer Wi-Fi (iOS) or a local hotspot when available, for range and capacity.
+- Codec: Opus at 12 kbit/s mono with 20 ms frames (fallback 6 kbit/s; Codec2 3.2 kbit/s optional for weak links). Forward error correction on, no retransmission.
+- Spread: listeners re-broadcast the stream to the next hop, up to 3 hops by default, about 1–2 s of delay per hop. Frames are dropped, never queued, when a link is congested; chat traffic keeps priority.
+- Encryption: in chats and private groups, a per-stream group key from the MLS group, rotated when a listener is removed; relays can't decrypt. In communities (open, PROTOCOL §20.1) the stream key goes to every listener, so community live audio is public, and the app says so.
+- Late joiners start from the next frame; there's no recording unless the host turns it on and listeners are told.
+- Live audio frames are not stored by Relay (RL1–RL4); they expire after 5 s.
+
+### Online video live (no servers)
+- Transport: peer-to-peer WebRTC from the host's app directly to viewers' apps, with no media server. Signalling goes through the existing OMCP envelopes.
+- Scale: the host sends to up to 6 direct viewers. Each viewer forwards to up to 4 more, forming a tree, so the audience grows without a server. Viewers on weak links receive a lower-quality layer (simulcast/SVC).
+- Encryption: DTLS-SRTP plus SFrame with the stream's group key, so forwarding viewers can't alter the stream and non-members can't watch.
+- Connectivity: direct connections with ICE. Public STUN only reveals a phone's public address, and no media passes through it. TURN relaying is off by default; a phone that can't connect directly joins via another viewer instead.
+- Video up to 720p with adaptive bitrate; audio Opus 32 kbit/s.
+- If the host or a viewer loses internet, they drop to audio-only over the mesh without leaving the stream.
+
+### Permissions
+- The microphone is requested the first time the user records a voice message or goes live. The camera is already declared for QR codes and is reused for video.
+
+### Acceptance tests
+- LV1: With internet off, a host's audio reaches a listener 3 hops away over BLE with under 6 s total delay and under 5% lost frames at 12 kbit/s.
+- LV2: A live audio stream never raises chat p95 latency by more than 20%.
+- LV3: When the host goes offline mid-stream, listeners switch from video to audio within 5 s.
+- LV4: A relay phone that isn't a group member can't decrypt the stream.
+
 ## Relay (store and forward), maintainer decision 2026-10-24
 - RL1: Relay is always on, with no toggle and no contact/stranger split. Every phone carries all encrypted envelopes (messages and news) and passes them on, as §22 already does.
 - RL2: Automatic cap of 500 MB, lowered automatically when free storage is under 10%. When full, drop the oldest envelopes first. Priority order: own chats, then contacts' envelopes, then everything else, then news.
 - RL3: Envelopes are deleted once delivery is acknowledged or at outer expiry (max 7 d).
 - RL4: Settings show only "Storage used for relaying: X MB", for information.
+
+## Hopla News: aggregator over the mesh (v0.4, draft, revised 2026-10-24)
+Goal: everyone stays up to date on the newest news, whether they have internet or not.
+
+### How it works
+- **Sources.** v0.4 uses **Google News RSS** only (feeds by topic, language and place). An **X news RSS feed** is planned as a second source, built by the maintainer in a separate project; clients treat any source as an RSS feed URL so it can be added later without protocol changes. No other publishers or curators.
+- **Fetch when online.** Any Hopla phone with internet fetches the latest headlines from these two sources. No dedicated gateway role is needed.
+- **Relay like messages.** Each fetched story is packed into a small news item (headline, 2–3 sentence summary, source name, original link, time, language, topic, optional thumbnail ≤ 20 KB WebP; ≤ 2 KB without thumbnail). It is sent through the mesh in the same low-cost encrypted envelopes as messages, on a public news channel mailbox tag per topic, language and place, with Plumtree (§22.3).
+- **No per-story verification.** Clients do not check publisher signatures or query a trust service, to avoid extra traffic. The relaying phone's normal envelope signature is kept, so the app can show "via <contact or short PeerID>".
+- **Dedup.** Items are identified by a hash of source and original link, so the same story fetched by many phones is stored and relayed once.
+- **Priority and expiry.** News runs below chats, with an outer expiry of 48 h (emergency alerts 7 d). Each phone keeps ≤ 20 MB of news (configurable) and drops the oldest first.
+- **Works offline.** A phone offline for days catches up from the first neighbour it meets, via the same set reconciliation (§22) as messages.
+
+### In the app
+- A **News** tab in the bottom bar: Chats · News · Communities · Nearby · You. Live ("Coming in v0.2") moves to the top of Communities.
+- Top stories, Local, and topics (World, Politics, Tech, Sport, Health, Emergencies).
+- **Emergency alerts** are pinned at the top and notify by default; the user can turn this off.
+- A story opens a reader view with the summary and an "Open on X / Read on Google News" link.
+- Users pick topics and languages (EN, FR, HE), and can mute a topic.
+- **Share to chat or community** sends the story as a news card and starts a discussion thread there; community moderation (§23) applies.
+- **No citizen reports.** Users cannot publish into News. Discussion of topics happens in communities, to keep rumours and conspiracy theories out of the News feed.
+
+### Personalisation
+- Default: newest world headlines, out of the box.
+- City: typed in, or taken from the phone's location if the user allows it (the same permission the dating feature uses). Only the city name is used, to subscribe to that city's channel; the location is never sent.
+- Personalisation runs on the device; the phone subscribes only to matching channel tags.
+
+### Privacy
+- Reading is local; no tracking and no engagement ranking. Sorting is by recency, then by how many phones relayed the story.
+- Fetching phones call Google News directly, so those services see that phone's request, as with any app.
+
+### Acceptance tests
+- NW1: A phone offline for 72 h gets the current top stories within 60 s of meeting one up-to-date neighbour.
+- NW2: The same story fetched by many phones appears once and is relayed once per link.
+- NW3: News traffic never delays chat delivery (chat p95 latency unchanged in a mixed-load simulation).
+- NW4: News storage stays within the cap, and the idle budget (§22.7(11)) still holds.
+- NW5: Picking a city shows that city's stories within 60 s of a neighbour having them, without downloading other cities' channels.
+- NW6: A shared news card opens in chats and communities and its thread works like a normal post.
+
+### Open decisions
+- X news RSS feed: separate maintainer project, added as a source later.
