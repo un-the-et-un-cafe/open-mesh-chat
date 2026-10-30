@@ -371,6 +371,28 @@ interface OmcpCore {
     /** Streams stopped by a team takedown: stop mic/camera and close every WebRTC peer. */
     fun liveTakeEnded(): List<LiveEndedUi> = emptyList()
     fun moderationLiveRemovedReason(streamIdHex: String): Int? = null
+    /** MR29: 24 h after our Live was taken down here, we can't go live again. */
+    fun liveStartBlocked(communityId: String): Boolean = false
+
+    // Private groups (E2EE, MLS, ≤ 32): text messages and anonymous reports.
+    fun groupSend(groupId: String, text: String): String? = null
+    fun groupMessages(groupId: String): List<GroupMessageUi> = emptyList()
+    /** `.omcp-evidence` bytes for the picked messages (their real MLS signatures). */
+    fun groupReport(groupId: String, messageIds: List<String>, reason: Int, note: String?): ByteArray? = null
+
+    // Open communities (not E2EE): topics, threads, moderators.
+    fun openCommunities(): List<OpenCommunityUi> = emptyList()
+    fun openCommunityCreate(name: String): OpenCommunityUi? = null
+    /** Join with a community code (hex) someone shared. */
+    fun openCommunityJoin(code: String): OpenCommunityUi? = null
+    fun openTopics(communityId: String): List<OpenTopicUi> = emptyList()
+    fun openNewTopic(communityId: String, title: String): String? = null
+    fun openPosts(communityId: String, topicId: String): List<OpenPostUi> = emptyList()
+    fun openPost(communityId: String, topicId: String, parentId: String?, body: String): String? = null
+    fun openMembers(communityId: String): List<OpenMemberUi> = emptyList()
+    fun openMakeModerator(communityId: String, memberKey: String): Boolean = false
+    fun openRemovePost(communityId: String, postId: String, reason: String): Boolean = false
+    fun openReportPost(communityId: String, postId: String, reason: Int, note: String?): ByteArray? = null
 
     // Team moderation (PROTOCOL §23.9, TM1–TM4).
     /** Whether this build ships a moderation team (config/team_moderation.conf). */
@@ -466,7 +488,49 @@ data class CommunityUi(
     /** Team takedown reason code (§23.9), null if not removed. */
     val removedReason: Int? = null,
     val liveCount: Int = 0,
+    /** After a backup restore: "Checking…" until one digest exchange (MR30). */
+    val checking: Boolean = false,
 )
+
+data class GroupMessageUi(
+    val id: String,
+    val senderName: String,
+    val body: String,
+    val atMs: Long,
+    val mine: Boolean,
+    val reportable: Boolean,
+)
+
+data class OpenCommunityUi(
+    val id: String,
+    val name: String,
+    val members: Int,
+    val isFounder: Boolean,
+    val isModerator: Boolean,
+    /** Code others paste to join (hex). */
+    val code: String,
+)
+
+data class OpenTopicUi(val id: String, val title: String)
+
+data class OpenPostUi(
+    val id: String,
+    val parentId: String?,
+    val authorKey: String,
+    val createdMs: Long,
+    val body: String,
+    /** Set when a moderator removed it; the body is gone for everyone. */
+    val removedReason: String?,
+)
+
+/** [role]: "founder", "moderator" or "member". */
+data class OpenMemberUi(val key: String, val role: String, val isMe: Boolean)
+
+/** Post/limit constants shared by UI and tests. */
+object CommunityLimits {
+    const val POST_BYTES = 4096
+    const val GROUP_MAX = 32
+}
 
 data class CommunityInviteUi(val communityId: String, val name: String, val fromContactId: String)
 

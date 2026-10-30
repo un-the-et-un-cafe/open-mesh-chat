@@ -2,4 +2,6 @@
 <!-- Received files only (app-private, verified by Rust before saving). -->
 <paths>
     <files-path name="received" path="received/" />
+    <!-- Anonymous report files the user chose to share. -->
+    <cache-path name="reports" path="reports/" />
 </paths>

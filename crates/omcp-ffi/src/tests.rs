@@ -3379,3 +3379,123 @@ fn evidence_export_only_for_private_groups_and_verify_rejects_garbage() {
         .is_err());
     assert!(n.evidence_verify(vec![0xa0]).is_err());
 }
+
+// ---- v0.1.26: private-group text, signature storage, hold, migration ----
+
+#[test]
+fn group_text_is_received_with_signed_bytes_and_reportable_after_reload() {
+    let (a, b) = (node("A"), node("B"));
+    befriend_mls(&a, &b);
+    let ab = up(&a, &b);
+    let links = [(ab.0.clone(), ab.1.clone())];
+    let gid = community_of(&a, &[&b], &links);
+    let mid = a
+        .private_group_send(gid.clone(), "hello group".into())
+        .unwrap();
+    assert!(a.private_group_send(gid.clone(), "x".repeat(4097)).is_err());
+    settle(&links);
+    let got = b.private_group_messages(gid.clone());
+    assert_eq!(got.len(), 1, "{got:?}");
+    assert_eq!(got[0].message_id_hex, mid);
+    assert_eq!(got[0].body, "hello group");
+    assert!(got[0].reportable && !got[0].mine);
+    let mine = a.private_group_messages(gid.clone());
+    assert!(mine[0].mine && !mine[0].reportable);
+    // Signed bytes and messages are persisted: wipe memory, reload.
+    {
+        let mut st = b.inner.lock();
+        for c in st.mesh.community.list.values_mut() {
+            c.signed.clear();
+            c.msgs.clear();
+        }
+        st.load_communities().unwrap();
+        let c = st.mesh.community.list.values().next().unwrap();
+        assert_eq!((c.signed.len(), c.msgs.len()), (1, 1));
+    }
+    // The report verifies with A's real MLS signature.
+    let file = b
+        .private_group_report(gid.clone(), vec![mid], 1, None)
+        .unwrap();
+    let chk = b.evidence_verify(file).unwrap();
+    assert!(chk.reporter_sig_ok);
+    assert_eq!((chk.verified, chk.total), (1, 1));
+    assert!(b.private_group_report(gid, vec![], 1, None).is_err());
+    down(&ab);
+}
+
+#[test]
+fn post_restore_hold_hides_groups_until_a_full_digest_exchange() {
+    let (a, b) = (node("A"), node("B"));
+    befriend_mls(&a, &b);
+    let ab = up(&a, &b);
+    let links = [(ab.0.clone(), ab.1.clone())];
+    let gid = community_of(&a, &[&b], &links);
+    a.private_group_send(gid.clone(), "before".into()).unwrap();
+    settle(&links);
+    down(&ab);
+    // mark_restored sets the hold (it also rotates the device key, which
+    // needs contacts to re-verify, so the exchange below uses B's state).
+    let c = node("C");
+    c.mark_restored(now_ms()).unwrap();
+    assert!(c.inner.lock().mesh.restore_hold.is_some());
+    {
+        let mut st = b.inner.lock();
+        let base = st.mesh.engine.full_digests_received();
+        st.mesh.restore_hold = Some((base, false));
+    }
+    assert!(b.communities()[0].checking);
+    assert!(b.private_group_messages(gid.clone()).is_empty());
+    assert!(b.private_group_send(gid.clone(), "x".into()).is_err());
+    let ab = up(&a, &b);
+    settle(&[(ab.0.clone(), ab.1.clone())]);
+    assert!(!b.communities()[0].checking, "released after a digest");
+    assert_eq!(b.private_group_messages(gid).len(), 1);
+    down(&ab);
+}
+
+#[test]
+fn legacy_moderation_state_migrates_keeping_removed_communities() {
+    use crate::moderation::{LEGACY_MOD_KEY, MOD_KEY};
+    #[derive(serde::Serialize)]
+    struct Old {
+        epoch: u64,
+        removed: bool,
+        reason_code: u8,
+    }
+    #[derive(serde::Serialize)]
+    struct Legacy {
+        communities: std::collections::BTreeMap<[u8; 32], Old>,
+    }
+    let n = node("N");
+    let gone = [0x61u8; 32];
+    let mut m = std::collections::BTreeMap::new();
+    m.insert(
+        gone,
+        Old {
+            epoch: 3,
+            removed: true,
+            reason_code: 2,
+        },
+    );
+    m.insert(
+        [0x62; 32],
+        Old {
+            epoch: 1,
+            removed: false,
+            reason_code: 0,
+        },
+    );
+    let mut st = n.inner.lock();
+    st.db.put_meta(MOD_KEY, &()).unwrap();
+    st.db
+        .put_meta(LEGACY_MOD_KEY, &Legacy { communities: m })
+        .unwrap();
+    st.load_moderation().unwrap();
+    assert!(st.mesh.moderation.is_community_tombstoned(&gone));
+    assert!(!st.mesh.moderation.is_community_tombstoned(&[0x62; 32]));
+    // Legacy key cleared; v2 saved, so a second load keeps the same state.
+    let again: Option<omcp_core::moderation::ModerationState> = st.db.get_meta(MOD_KEY).unwrap();
+    assert!(again.unwrap().is_community_tombstoned(&gone));
+    st.load_moderation().unwrap();
+    assert!(st.mesh.moderation.is_community_tombstoned(&gone));
+}

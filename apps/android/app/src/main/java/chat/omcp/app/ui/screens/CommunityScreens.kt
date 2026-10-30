@@ -196,6 +196,10 @@ fun CommunityDetailScreen(
                     }
                 }
             }
+            item {
+                GroupChatSection(core, communityId, members.size, checking = k?.checking == true, removed = removed,
+                    modifier = Modifier.padding(horizontal = 16.dp))
+            }
             if (s.notice == "taken_down") {
                 item {
                     LiveTakedownNotice(s.noticeMine, s.noticeReason, onOk = vm::dismissNotice,
@@ -243,7 +247,9 @@ fun CommunityDetailScreen(
                             Text(stringResource(R.string.community_live_body), color = c.ink2, style = MaterialTheme.typography.bodySmall)
                             OutlinedTextField(title, { title = it.take(120) }, Modifier.fillMaxWidth().padding(top = 8.dp),
                                 label = { Text(stringResource(R.string.live_title_hint)) }, singleLine = true)
-                            Button(onClick = { vm.goLiveCommunity(communityId, title, online) }, enabled = !removed, modifier = Modifier.padding(top = 8.dp)) {
+                            val blocked = remember(s.notice) { core.liveStartBlocked(communityId) }
+                            if (blocked) Callout(stringResource(R.string.u_live_blocked), CalloutKind.Warn, Modifier.padding(top = 8.dp))
+                            Button(onClick = { vm.goLiveCommunity(communityId, title, online) }, enabled = !removed && !blocked && k?.checking != true, modifier = Modifier.padding(top = 8.dp)) {
                                 Text(stringResource(R.string.live_go))
                             }
                         }

@@ -68,6 +68,12 @@ private object Routes {
     const val Communities = "communities"
     const val Live = "live"
     const val Community = "community/{id}"
+    const val Open = "open/{id}"
+    fun open(id: String) = "open/$id"
+    const val OpenTopic = "open/{id}/t/{topic}"
+    fun openTopic(id: String, t: String) = "open/$id/t/$t"
+    const val OpenMembers = "open/{id}/members"
+    fun openMembers(id: String) = "open/$id/members"
     fun community(id: String) = "community/$id"
     const val News = "news"
     const val NewsStory = "news/{id}"
@@ -187,11 +193,27 @@ fun OmcpRoot(
                     backupGate = gate,
                     onOpenChat = { nav.navigate(Routes.thread(it)) },
                     onAddContact = { nav.navigate(Routes.ContactAdd) },
+                    core = repo.core,
+                    onOpenGroup = { nav.navigate(Routes.community(it)) },
+                    onOpenCommunity = { nav.navigate(Routes.open(it)) },
                     onBackup = { nav.navigate(Routes.Backup) },
                 )
             }
             composable(Routes.Communities) {
-                CommunitiesHomeScreen(repo.core, onOpenLive = { nav.navigate(Routes.Live) }, onOpen = { nav.navigate(Routes.community(it)) })
+                chat.omcp.app.ui.screens.OpenCommunitiesTab(repo.core, onOpen = { nav.navigate(Routes.open(it)) },
+                    onOpenGroup = { nav.navigate(Routes.community(it)) }, onOpenLive = { nav.navigate(Routes.Live) })
+            }
+            composable(Routes.Open) { e ->
+                val id = e.arguments?.getString("id").orEmpty()
+                chat.omcp.app.ui.screens.OpenCommunityScreen(repo.core, id, onTopic = { nav.navigate(Routes.openTopic(id, it)) },
+                    onMembers = { nav.navigate(Routes.openMembers(id)) }, onBack = { nav.popBackStack() })
+            }
+            composable(Routes.OpenTopic) { e ->
+                chat.omcp.app.ui.screens.OpenTopicScreen(repo.core, e.arguments?.getString("id").orEmpty(),
+                    e.arguments?.getString("topic").orEmpty(), onBack = { nav.popBackStack() })
+            }
+            composable(Routes.OpenMembers) { e ->
+                chat.omcp.app.ui.screens.OpenMembersScreen(repo.core, e.arguments?.getString("id").orEmpty(), onBack = { nav.popBackStack() })
             }
             composable(Routes.Community) { entry ->
                 val liveVm = vm {

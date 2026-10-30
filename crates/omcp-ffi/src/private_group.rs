@@ -89,6 +89,38 @@ pub(crate) struct Community {
     /// Received application messages with their MLS signed bytes (newest
     /// last), for reports. Erased with the group.
     pub signed: std::collections::VecDeque<KeptSigned>,
+    /// Text messages, oldest first (≤ [`MAX_KEPT_SIGNED`]).
+    pub msgs: std::collections::VecDeque<GroupText>,
+}
+
+/// One private-group text message.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub(crate) struct GroupText {
+    /// Same id as the kept signed bytes (first 16 bytes of the ciphertext hash).
+    pub id: [u8; 16],
+    pub sender: [u8; 32],
+    pub body: String,
+    pub ms: u64,
+}
+
+/// Prefix of a text message inside the MLS application data (anything else
+/// is a live announcement).
+const GROUP_TEXT_MAGIC: &[u8] = b"OMCP-gtext-v1\x00";
+/// Text message limit (bytes, UTF-8).
+pub const MAX_GROUP_TEXT: usize = 4096;
+const MSGS_KEY: &[u8] = b"group-msgs-v1";
+
+/// A private-group text message for the UI.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct GroupMessage {
+    pub message_id_hex: String,
+    pub sender_hex: String,
+    pub sender_name: String,
+    pub body: String,
+    pub at_ms: u64,
+    pub mine: bool,
+    /// Received with its MLS signed bytes, so it can be reported.
+    pub reportable: bool,
 }
 
 /// (message id, signed bytes, body).
@@ -189,6 +221,7 @@ impl NodeState {
                         roster: roster.into_iter().collect(),
                         member,
                         signed: Default::default(),
+                        msgs: Default::default(),
                     },
                 );
             }
@@ -207,6 +240,12 @@ impl NodeState {
         for (id, v) in kept {
             if let Some(k) = self.mesh.community.list.get_mut(&id) {
                 k.signed = v.into_iter().collect();
+            }
+        }
+        let msgs: Vec<([u8; 32], Vec<GroupText>)> = self.db.get_meta(MSGS_KEY)?.unwrap_or_default();
+        for (id, v) in msgs {
+            if let Some(k) = self.mesh.community.list.get_mut(&id) {
+                k.msgs = v.into_iter().collect();
             }
         }
         Ok(())
@@ -240,6 +279,13 @@ impl NodeState {
             .map(|(id, k)| (*id, k.signed.iter().cloned().collect()))
             .collect();
         self.db.put_meta(SIGNED_KEY, &kept)?;
+        let msgs: Vec<([u8; 32], Vec<GroupText>)> = c
+            .list
+            .iter()
+            .filter(|(_, k)| !k.msgs.is_empty())
+            .map(|(id, k)| (*id, k.msgs.iter().cloned().collect()))
+            .collect();
+        self.db.put_meta(MSGS_KEY, &msgs)?;
         Ok(())
     }
 
@@ -455,6 +501,7 @@ impl NodeState {
                         roster: roster.into_iter().collect(),
                         member,
                         signed: Default::default(),
+                        msgs: Default::default(),
                     },
                 );
                 self.save_communities()?;
@@ -510,6 +557,28 @@ impl NodeState {
             };
             (plain, sender)
         };
+        if let Some(text) = plain.strip_prefix(GROUP_TEXT_MAGIC) {
+            if let Ok(body) = std::str::from_utf8(text) {
+                if body.len() <= MAX_GROUP_TEXT {
+                    let c = self.mesh.community.list.get_mut(&id).expect("checked");
+                    c.msgs.push_back(GroupText {
+                        id: h[..16].try_into().expect("16"),
+                        sender,
+                        body: body.to_string(),
+                        ms: now_ms(),
+                    });
+                    while c.msgs.len() > MAX_KEPT_SIGNED {
+                        c.msgs.pop_front();
+                    }
+                }
+            }
+            self.save_communities()?;
+            let msg = CMsg::Group { id, ct };
+            for p in self.roster_contacts(&id, &[peer, sender]) {
+                self.post(p, &msg);
+            }
+            return Ok(());
+        }
         self.save_communities()?;
         let Ok(a) = CommunityLive::decode(&plain) else {
             return Ok(());
@@ -684,6 +753,7 @@ impl OmcpNode {
                 roster,
                 member,
                 signed: Default::default(),
+                msgs: Default::default(),
             },
         );
         st.save_communities()?;
@@ -925,5 +995,153 @@ impl OmcpNode {
         let st = self.inner.lock();
         let c = st.mesh.community.list.get(&id)?;
         c.member.moderation_group_ref().ok().map(hex::encode)
+    }
+
+    /// Send a text message to a private group (E2EE, MLS). ≤ 4 KB.
+    pub fn private_group_send(
+        &self,
+        group_id_hex: String,
+        text: String,
+    ) -> Result<String, FfiError> {
+        let id = parse_cid(&group_id_hex)?;
+        if text.trim().is_empty() || text.len() > MAX_GROUP_TEXT {
+            return Err(invalid("message must be 1..4096 bytes"));
+        }
+        let me = self.me();
+        let mid = {
+            let mut st = self.inner.lock();
+            if st.removed(&id) {
+                return Err(invalid("group removed"));
+            }
+            if st.mesh.restore_hold.is_some() {
+                return Err(invalid("checking after restore"));
+            }
+            let mut body = GROUP_TEXT_MAGIC.to_vec();
+            body.extend_from_slice(text.as_bytes());
+            let ct = {
+                let c = st
+                    .mesh
+                    .community
+                    .list
+                    .get_mut(&id)
+                    .ok_or_else(|| invalid("unknown group"))?;
+                c.member.encrypt_app_message(&body).map_err(mls)?
+            };
+            let h = h32(&[&ct]);
+            st.mesh.community.seen.insert(h);
+            let mid: [u8; 16] = h[..16].try_into().expect("16");
+            {
+                let c = st.mesh.community.list.get_mut(&id).expect("checked");
+                c.msgs.push_back(GroupText {
+                    id: mid,
+                    sender: me,
+                    body: text,
+                    ms: now_ms(),
+                });
+                while c.msgs.len() > MAX_KEPT_SIGNED {
+                    c.msgs.pop_front();
+                }
+            }
+            st.save_communities()?;
+            let msg = CMsg::Group { id, ct };
+            for p in st.roster_contacts(&id, &[]) {
+                st.post(p, &msg);
+            }
+            mid
+        };
+        self.drain_community_outbox();
+        Ok(hex::encode(mid))
+    }
+
+    /// Text messages of a private group, oldest first. Empty while the
+    /// post-restore hold is on (MR30).
+    pub fn private_group_messages(&self, group_id_hex: String) -> Vec<GroupMessage> {
+        let Ok(id) = parse_cid(&group_id_hex) else {
+            return Vec::new();
+        };
+        let me = self.me();
+        let st = self.inner.lock();
+        if st.mesh.restore_hold.is_some() || st.removed(&id) {
+            return Vec::new();
+        }
+        let Some(c) = st.mesh.community.list.get(&id) else {
+            return Vec::new();
+        };
+        c.msgs
+            .iter()
+            .map(|m| GroupMessage {
+                message_id_hex: hex::encode(m.id),
+                sender_hex: hex::encode(m.sender),
+                sender_name: c.roster.get(&m.sender).cloned().unwrap_or_default(),
+                body: m.body.clone(),
+                at_ms: m.ms,
+                mine: m.sender == me,
+                reportable: m.sender != me && c.signed.iter().any(|(k, _, _)| *k == m.id),
+            })
+            .collect()
+    }
+
+    /// Anonymous report of picked private-group messages: an
+    /// `.omcp-evidence` file built from their kept MLS signed bytes.
+    pub fn private_group_report(
+        &self,
+        group_id_hex: String,
+        message_ids_hex: Vec<String>,
+        reason_code: u8,
+        note: Option<String>,
+    ) -> Result<Vec<u8>, FfiError> {
+        let id = parse_cid(&group_id_hex)?;
+        let want: Vec<[u8; 16]> = message_ids_hex
+            .iter()
+            .filter_map(|h| hex::decode(h.trim()).ok()?.try_into().ok())
+            .collect();
+        let picked: Vec<crate::moderation::EvidenceMessage> = {
+            let st = self.inner.lock();
+            let c = st
+                .mesh
+                .community
+                .list
+                .get(&id)
+                .ok_or_else(|| invalid("unknown group"))?;
+            c.signed
+                .iter()
+                .filter(|(k, _, _)| want.contains(k))
+                .filter_map(|(_, sg, body)| {
+                    let r = omcp_core::moderation::evidence::ReportedMessage::from_signed(
+                        sg,
+                        // The signed application data, prefix included (step e).
+                        body.clone(),
+                    )
+                    .ok()?;
+                    Some(crate::moderation::EvidenceMessage {
+                        sender_id_hex: hex::encode(r.sender_id),
+                        framed_content: r.framed_content,
+                        group_context: r.group_context,
+                        signature: r.signature,
+                        leaf_node: r.leaf_node,
+                        wire_format: r.wire_format,
+                        body: r.body,
+                    })
+                })
+                .collect()
+        };
+        if picked.is_empty() {
+            return Err(invalid("no reportable message picked"));
+        }
+        self.report_export_evidence(group_id_hex, picked, reason_code, note)
+    }
+
+    /// MR29: whether we're blocked from going live in this group/community
+    /// (24 h after a Live takedown of ours there).
+    pub fn live_start_blocked(&self, community_id_hex: String) -> bool {
+        let Ok(id) = parse_cid(&community_id_hex) else {
+            return false;
+        };
+        let me = self.me();
+        self.inner
+            .lock()
+            .mesh
+            .moderation
+            .live_host_blocked(&id, &me, now_ms())
     }
 }

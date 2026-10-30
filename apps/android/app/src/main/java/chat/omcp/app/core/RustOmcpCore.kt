@@ -214,7 +214,40 @@ class RustOmcpCore : OmcpCore {
     override fun liveMediaKey(): LiveMediaKeyUi? = node?.liveMediaKey()?.let { LiveMediaKeyUi(it.baseKey, it.kid.toLong()) }
     override fun liveStunServers(): List<String> = chat.omcp.ffi.liveStunServers()
     private fun community(c: chat.omcp.ffi.CommunityInfo) =
-        CommunityUi(c.communityIdHex, c.name, c.members.toInt(), c.founderIsMe, c.removedReason?.toInt(), c.liveCount.toInt())
+        CommunityUi(c.communityIdHex, c.name, c.members.toInt(), c.founderIsMe, c.removedReason?.toInt(), c.liveCount.toInt(), c.checking)
+    override fun liveStartBlocked(communityId: String): Boolean = node?.liveStartBlocked(communityId) ?: false
+    override fun groupSend(groupId: String, text: String): String? =
+        runCatching { node?.privateGroupSend(groupId, text) }.getOrNull()
+    override fun groupMessages(groupId: String): List<GroupMessageUi> = node?.privateGroupMessages(groupId)?.map {
+        GroupMessageUi(it.messageIdHex, it.senderName, it.body, it.atMs.toLong(), it.mine, it.reportable)
+    } ?: emptyList()
+    override fun groupReport(groupId: String, messageIds: List<String>, reason: Int, note: String?): ByteArray? =
+        runCatching { node?.privateGroupReport(groupId, messageIds, reason.toUByte(), note) }.getOrNull()
+    private fun open(c: chat.omcp.ffi.OpenCommunityInfo) =
+        OpenCommunityUi(c.communityIdHex, c.name, c.members.toInt(), c.isFounder, c.isModerator, c.inviteHex)
+    override fun openCommunities(): List<OpenCommunityUi> = node?.openCommunities()?.map(::open) ?: emptyList()
+    override fun openCommunityCreate(name: String): OpenCommunityUi? =
+        runCatching { node?.openCommunityCreate(name)?.let(::open) }.getOrNull()
+    override fun openCommunityJoin(code: String): OpenCommunityUi? =
+        runCatching { node?.openCommunityJoin(code.trim())?.let(::open) }.getOrNull()
+    override fun openTopics(communityId: String): List<OpenTopicUi> =
+        node?.openCommunityTopics(communityId)?.map { OpenTopicUi(it.topicIdHex, it.title) } ?: emptyList()
+    override fun openNewTopic(communityId: String, title: String): String? =
+        runCatching { node?.openCommunityNewTopic(communityId, title) }.getOrNull()
+    override fun openPosts(communityId: String, topicId: String): List<OpenPostUi> =
+        node?.openCommunityPosts(communityId, topicId)?.map {
+            OpenPostUi(it.postIdHex, it.parentIdHex, it.authorHex, it.createdMs.toLong(), it.body, it.removedReason)
+        } ?: emptyList()
+    override fun openPost(communityId: String, topicId: String, parentId: String?, body: String): String? =
+        runCatching { node?.openCommunityPost(communityId, topicId, parentId, body) }.getOrNull()
+    override fun openMembers(communityId: String): List<OpenMemberUi> =
+        node?.openCommunityMembers(communityId)?.map { OpenMemberUi(it.keyHex, it.role, it.isMe) } ?: emptyList()
+    override fun openMakeModerator(communityId: String, memberKey: String): Boolean =
+        runCatching { node?.openCommunityAppointModerator(communityId, memberKey) != null }.getOrDefault(false)
+    override fun openRemovePost(communityId: String, postId: String, reason: String): Boolean =
+        runCatching { node?.openCommunityRemovePost(communityId, postId, reason) != null }.getOrDefault(false)
+    override fun openReportPost(communityId: String, postId: String, reason: Int, note: String?): ByteArray? =
+        runCatching { node?.openCommunityReportPost(communityId, postId, reason.toUByte(), note) }.getOrNull()
     override fun communities(): List<CommunityUi> = node?.communities()?.map(::community) ?: emptyList()
     override fun communityCreate(name: String): CommunityUi? =
         runCatching { node?.communityCreate(name)?.let(::community) }.getOrNull()

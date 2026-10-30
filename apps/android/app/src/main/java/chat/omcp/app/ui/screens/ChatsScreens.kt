@@ -65,6 +65,11 @@ import chat.omcp.app.ui.components.CalloutKind
 import androidx.compose.runtime.collectAsState
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.foundation.clickable
@@ -104,7 +109,20 @@ fun ChatsListScreen(
     onOpenChat: (String) -> Unit,
     onAddContact: () -> Unit,
     onBackup: () -> Unit,
+    core: chat.omcp.app.core.OmcpCore? = null,
+    onOpenGroup: (String) -> Unit = {},
+    onOpenCommunity: (String) -> Unit = {},
 ) {
+    var groupsOnly by remember { mutableStateOf(false) }
+    var chooser by remember { mutableStateOf(false) }
+    var groups by remember { mutableStateOf(listOf<chat.omcp.app.core.CommunityUi>()) }
+    var invites by remember { mutableStateOf(listOf<chat.omcp.app.core.CommunityInviteUi>()) }
+    if (core != null) LaunchedEffect(Unit) {
+        while (true) { groups = core.communities(); invites = core.communityInvites(); kotlinx.coroutines.delay(1_500) }
+    }
+    if (chooser && core != null) CreateChooserSheet(core, { chooser = false }) { k, id ->
+        chooser = false; if (k == "group") onOpenGroup(id) else onOpenCommunity(id)
+    }
     val status by vm.status.collectAsState()
     val contacts by vm.contacts.collectAsState()
     val messages by vm.messages.collectAsState()
@@ -135,7 +153,10 @@ fun ChatsListScreen(
                 title = { Text(stringResource(R.string.tab_chats)) },
                 actions = {
                     IconButton(onClick = onAddContact) {
-                        Icon(Icons.Default.Add, contentDescription = stringResource(R.string.contact_add_title))
+                        Icon(Icons.Default.PersonAdd, contentDescription = stringResource(R.string.contact_add_title))
+                    }
+                    if (core != null) IconButton(onClick = { chooser = true }) {
+                        Icon(Icons.Default.Add, contentDescription = stringResource(R.string.u_create_t))
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -164,14 +185,44 @@ fun ChatsListScreen(
                     PathChip(PathKind.Queued, if (status.queuedCount > 0) "${status.queuedCount} queued" else stringResource(R.string.path_queued))
                 }
             }
-            if (chats.isEmpty()) {
+            if (core != null) Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(!groupsOnly, { groupsOnly = false }, { Text(stringResource(R.string.u_chip_all)) })
+                FilterChip(groupsOnly, { groupsOnly = true }, { Text(stringResource(R.string.u_chip_groups)) },
+                    leadingIcon = { Icon(Icons.Default.Lock, null, Modifier.size(16.dp)) })
+            }
+            invites.forEach { inv ->
+                Card(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
+                    Column(Modifier.padding(12.dp)) {
+                        Text(stringResource(R.string.community_invite_t, inv.name), style = MaterialTheme.typography.titleMedium)
+                        Text(stringResource(R.string.u_grp_e2ee), style = MaterialTheme.typography.bodySmall)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(onClick = { core?.communityAccept(inv.communityId); invites = core?.communityInvites().orEmpty() }) { Text(stringResource(R.string.community_accept)) }
+                            OutlinedButton(onClick = { core?.communityDecline(inv.communityId); invites = core?.communityInvites().orEmpty() }) { Text(stringResource(R.string.community_decline)) }
+                        }
+                    }
+                }
+            }
+            if (groupsOnly && groups.isEmpty()) {
+                EmptyState(title = stringResource(R.string.u_e_groups), body = stringResource(R.string.u_e_groups_d))
+            } else if (chats.isEmpty() && groups.isEmpty()) {
                 EmptyState(
                     title = stringResource(R.string.chats_empty_title),
                     body = stringResource(R.string.chats_empty_body),
                 )
             } else {
                 LazyColumn {
-                    items(chats, key = { it.id }) { row ->
+                    items(groups, key = { "g" + it.id }) { g ->
+                        Row(Modifier.fillMaxWidth().heightIn(min = 64.dp).clickable { onOpenGroup(g.id) }.padding(horizontal = 16.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            GroupAvatar(g.name)
+                            Column(Modifier.weight(1f)) {
+                                Text(g.name, style = MaterialTheme.typography.titleMedium)
+                                Text(if (g.checking) stringResource(R.string.u_checking) else stringResource(R.string.u_grp_lbl, g.members),
+                                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
+                    if (!groupsOnly) items(chats, key = { it.id }) { row ->
                         ChatRow(row, onClick = { onOpenChat(row.id) })
                     }
                 }

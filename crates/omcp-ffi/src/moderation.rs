@@ -14,7 +14,7 @@ use omcp_core::EnvelopeV1;
 use crate::{invalid, now_ms, FfiError, NodeState, OmcpNode};
 
 /// 0.1.23 state, discarded on upgrade (tombstones kept, MR32).
-const LEGACY_MOD_KEY: &[u8] = b"team-mod-state";
+pub(crate) const LEGACY_MOD_KEY: &[u8] = b"team-mod-state";
 
 /// Re-encodes any stored CBOR value as raw CBOR bytes.
 mod serde_bytes_any {
@@ -30,7 +30,7 @@ mod serde_bytes_any {
 }
 
 /// v2: per-(target, item) state with tombstones (§23.10).
-const MOD_KEY: &[u8] = b"team-mod-state-v2";
+pub(crate) const MOD_KEY: &[u8] = b"team-mod-state-v2";
 const SHIPPED_POLICY: &str = include_str!("../../../config/team_moderation.conf");
 
 /// DEV/TEST ONLY. An Ed25519 *public* key compiled in from the build
@@ -121,7 +121,9 @@ impl From<Rejected> for TeamActionResult {
 
 impl NodeState {
     pub(crate) fn load_moderation(&mut self) -> Result<(), FfiError> {
-        self.mesh.moderation = match self.db.get_meta(MOD_KEY)? {
+        let v2: Option<Option<omcp_core::moderation::ModerationState>> =
+            self.db.get_meta(MOD_KEY)?;
+        self.mesh.moderation = match v2.flatten() {
             Some(m) => m,
             None => {
                 // MR32: 0.1.23 state (kinds 3/4 were Live) is discarded; its
