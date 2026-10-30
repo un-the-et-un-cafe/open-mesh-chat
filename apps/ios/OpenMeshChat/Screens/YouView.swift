@@ -31,6 +31,7 @@ struct YouView: View {
                     NavigationLink { BackupSettingsView() } label: { row(L("backup_title"), L("backup_row_desc")) }
                     NavigationLink { StorageSettingsView() } label: { row(L("storage_title"), L("storage_keep_title")) }
                     NavigationLink { MeshRelaySettingsView() } label: { row(L("relay_title"), L("relay_row_desc")) }
+                    NavigationLink { RemovedCommunitiesView() } label: { row(L("mod_log_title"), L("mod_log_desc")) }
                     NavigationLink { NotificationSettingsView() } label: { row(L("notif_title"), L("notif_row_desc")) }
                     NavigationLink { PrivacySettingsView() } label: { row(L("privacy_title"), L("privacy_row_desc")) }
                     NavigationLink { GatewaySettingsView() } label: { row(L("gateway_title"), L("gateway_row_desc")) }

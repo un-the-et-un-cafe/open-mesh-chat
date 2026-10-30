@@ -334,6 +334,16 @@ interface OmcpCore {
     fun newsSetPrefs(p: NewsPrefsUi): NewsPrefsUi = p
     /** Gateway-only vs any phone with internet: one flag in Rust (`NEWS_FETCH_GATEWAY_ONLY`). */
     fun newsMayFetch(gatewayEnabled: Boolean): Boolean = true
+
+    // Team moderation (PROTOCOL §23.9, TM1–TM4).
+    /** Whether this build ships a moderation team (config/team_moderation.conf). */
+    fun moderationHasTeam(): Boolean = false
+    /** Public "Removed communities" log, newest first. */
+    fun moderationLog(): List<TeamLogUi> = emptyList()
+    /** Verify, apply and gossip a signed TAKEDOWN/RESTORE (hex). Returns the outcome code. */
+    fun moderationPublish(actionHex: String): String = "no_team"
+    /** Reason code if the team removed this community, else null. */
+    fun moderationRemovedReason(communityIdHex: String): Int? = null
     fun newsFetchPlan(wifiOnly: Boolean, network: NetworkType, metered: Boolean, nowMs: Long): NewsFetchPlanUi = NewsFetchPlanUi()
     fun newsIngestRss(feedUrl: String, body: String, nowMs: Long): Int = 0
     fun newsTakeAlerts(): List<NewsStoryUi> = emptyList()
@@ -386,3 +396,14 @@ object OmcpGatt {
     /** Local name iPhones put in the (foreground) advertisement; Android scans for it too. */
     const val LOCAL_NAME = "OMCP"
 }
+
+/** One transparency-log line (§23.9(5)). kind = "takedown" | "restore"; reason 0 for restore. */
+data class TeamLogUi(
+    val kind: String,
+    val communityIdHex: String,
+    val reasonCode: Int,
+    val note: String,
+    val epoch: Long,
+    val signedBy: List<String>,
+    val appliedMs: Long,
+)

@@ -2521,6 +2521,117 @@ fn news_fetch_role_is_one_flag() {
     assert!(news_may_fetch(false));
 }
 
+// ---- Team moderation (PROTOCOL §23.9, TM1–TM4). Keys are generated at test time. ----
+
+fn team_key() -> ed25519_dalek::SigningKey {
+    let mut b = [0u8; 32];
+    getrandom::getrandom(&mut b).unwrap();
+    ed25519_dalek::SigningKey::from_bytes(&b)
+}
+
+fn with_team(n: &Arc<OmcpNode>, k: &ed25519_dalek::SigningKey) {
+    n.inner
+        .lock()
+        .set_team_policy(omcp_core::moderation::TeamPolicy::from_public_keys(
+            &[k.verifying_key().to_bytes()],
+            1,
+        ));
+}
+
+fn team_hex(a: omcp_core::moderation::TeamAction, k: &ed25519_dalek::SigningKey) -> String {
+    let mut a = a;
+    a.sign(k);
+    hex::encode(a.encode().unwrap())
+}
+
+#[test]
+fn tm_takedown_gossips_to_neighbour_and_restore_undoes_it() {
+    use omcp_core::moderation::{Reason, TeamAction};
+    let team = team_key();
+    let (a, b) = (node("Ana"), node("Ben"));
+    befriend(&a, &b);
+    with_team(&a, &team);
+    with_team(&b, &team);
+    let cid = [0x42u8; 32];
+    let cid_hex = hex::encode(cid);
+    let chats_before = b.chats().unwrap();
+    // Published while offline: carried and handed over at the next encounter.
+    let td = team_hex(TeamAction::takedown(cid, Reason::Hate, "", 1), &team);
+    assert_eq!(
+        a.moderation_publish(td.clone()).unwrap(),
+        TeamActionResult::Applied
+    );
+    let l = up(&a, &b);
+    assert_eq!(b.moderation_removed_reason(cid_hex.clone()), Some(1));
+    let log = b.moderation_log();
+    assert_eq!(log.len(), 1);
+    assert_eq!(log[0].kind, "takedown");
+    assert_eq!(log[0].signed_by.len(), 1);
+    // TM4 / MR10: private chats untouched.
+    assert_eq!(b.chats().unwrap(), chats_before);
+    down(&l);
+    // Replaying the same takedown is a no-op.
+    assert_eq!(b.moderation_publish(td).unwrap(), TeamActionResult::Replay);
+    let rs = team_hex(TeamAction::restore(cid, 2), &team);
+    assert_eq!(a.moderation_publish(rs).unwrap(), TeamActionResult::Applied);
+    let l = up(&a, &b);
+    assert_eq!(b.moderation_removed_reason(cid_hex), None);
+    assert_eq!(b.moderation_log().len(), 2);
+    down(&l);
+}
+
+#[test]
+fn tm_non_whitelisted_or_forged_action_is_ignored_and_not_gossiped() {
+    use omcp_core::moderation::{Reason, TeamAction};
+    let team = team_key();
+    let stranger = team_key();
+    let (a, b) = (node("Ana"), node("Ben"));
+    befriend(&a, &b);
+    with_team(&a, &team);
+    with_team(&b, &team);
+    let cid = [0x43u8; 32];
+    let bad = team_hex(TeamAction::takedown(cid, Reason::Spam, "", 1), &stranger);
+    assert_eq!(
+        a.moderation_publish(bad).unwrap(),
+        TeamActionResult::NotWhitelisted
+    );
+    let mut forged = TeamAction::takedown(cid, Reason::Spam, "", 1);
+    forged.sign(&team);
+    forged.epoch = 9;
+    let forged = hex::encode(forged.encode().unwrap());
+    assert_eq!(
+        a.moderation_publish(forged).unwrap(),
+        TeamActionResult::BadSignature
+    );
+    let l = up(&a, &b);
+    assert_eq!(b.moderation_removed_reason(hex::encode(cid)), None);
+    assert!(a.moderation_log().is_empty() && b.moderation_log().is_empty());
+    down(&l);
+}
+
+#[test]
+fn tm_moderation_state_survives_restart_and_shipped_policy_parses() {
+    use omcp_core::moderation::{Reason, TeamAction};
+    let _ = crate::moderation::shipped_policy();
+    assert!(omcp_core::moderation::TeamPolicy::from_config(include_str!(
+        "../../../config/team_moderation.conf"
+    ))
+    .is_ok());
+    let team = team_key();
+    let phrase = generate_recovery_phrase().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let cid = [0x44u8; 32];
+    {
+        let n = open_node(&phrase, "N", dir.path());
+        with_team(&n, &team);
+        let td = team_hex(TeamAction::takedown(cid, Reason::Illegal, "", 1), &team);
+        assert_eq!(n.moderation_publish(td).unwrap(), TeamActionResult::Applied);
+    }
+    let n = open_node(&phrase, "N", dir.path());
+    assert_eq!(n.moderation_removed_reason(hex::encode(cid)), Some(2));
+    assert_eq!(n.moderation_log().len(), 1);
+}
+
 #[test]
 fn news_ingests_real_google_news_fr_response() {
     let xml = include_str!("../../omcp-core/src/news/fixtures/google_news_world_fr_live.xml");

@@ -183,6 +183,26 @@ class RustOmcpCore : OmcpCore {
     private fun prefsUi(p: chat.omcp.ffi.NewsPrefs) =
         NewsPrefsUi(p.topics, p.langs, p.city, p.cityFromLocation, p.muted, p.alertsNotify, p.interestsChosen)
     override fun newsMayFetch(gatewayEnabled: Boolean) = chat.omcp.ffi.newsMayFetch(gatewayEnabled)
+    override fun moderationHasTeam() = node?.moderationHasTeam() ?: false
+    override fun moderationLog(): List<TeamLogUi> = node?.moderationLog()?.map {
+        TeamLogUi(it.kind, it.communityIdHex, it.reasonCode.toInt(), it.note, it.epoch.toLong(), it.signedBy, it.appliedMs.toLong())
+    } ?: emptyList()
+    override fun moderationPublish(actionHex: String): String {
+        val nd = node ?: return "no_node"
+        return try {
+            when (nd.moderationPublish(actionHex)) {
+                chat.omcp.ffi.TeamActionResult.APPLIED -> "applied"
+                chat.omcp.ffi.TeamActionResult.NO_TEAM -> "no_team"
+                chat.omcp.ffi.TeamActionResult.MALFORMED -> "malformed"
+                chat.omcp.ffi.TeamActionResult.BAD_SIGNATURE -> "bad_signature"
+                chat.omcp.ffi.TeamActionResult.NOT_WHITELISTED -> "not_whitelisted"
+                chat.omcp.ffi.TeamActionResult.BELOW_THRESHOLD -> "below_threshold"
+                chat.omcp.ffi.TeamActionResult.REPLAY -> "replay"
+            }
+        } catch (e: Exception) { "malformed" }
+    }
+    override fun moderationRemovedReason(communityIdHex: String): Int? =
+        node?.moderationRemovedReason(communityIdHex)?.toInt()
     override fun newsFetchPlan(wifiOnly: Boolean, network: NetworkType, metered: Boolean, nowMs: Long): NewsFetchPlanUi {
         val nd = node ?: return NewsFetchPlanUi()
         val net = when (network) {

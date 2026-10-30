@@ -629,6 +629,12 @@ public protocol OmcpCore: AnyObject {
     func newsIngestRss(feedUrl: String, body: String, nowMs: Int64) throws -> Int
     /// Gateway-only vs any phone with internet: one flag in Rust (`NEWS_FETCH_GATEWAY_ONLY`).
     func newsMayFetch(gatewayEnabled: Bool) -> Bool
+    /// Team moderation (PROTOCOL §23.9, TM1–TM4).
+    func moderationHasTeam() -> Bool
+    func moderationLog() -> [TeamLogEntryModel]
+    /// Verify, apply and gossip a signed TAKEDOWN/RESTORE (hex); returns an outcome code.
+    func moderationPublish(actionHex: String) -> String
+    func moderationRemovedReason(communityIdHex: String) -> Int?
     /// News settings (§5.115) → Rust decides which channel tags to subscribe (persisted in the store).
     func newsSetPrefs(topics: [String], langs: [String], city: String?, muted: [String], alertsNotify: Bool)
     /// RL2: report free/total storage; under 10 % free Rust lowers the relay cap.
@@ -729,6 +735,10 @@ public extension OmcpCore {
     func newsFetchPlan(wifiOnly: Bool, network: NetworkType, metered: Bool, nowMs: Int64) -> NewsFetchPlan { NewsFetchPlan() }
     func newsIngestRss(feedUrl: String, body: String, nowMs: Int64) throws -> Int { 0 }
     func newsMayFetch(gatewayEnabled: Bool) -> Bool { true }
+    func moderationHasTeam() -> Bool { false }
+    func moderationLog() -> [TeamLogEntryModel] { [] }
+    func moderationPublish(actionHex: String) -> String { "no_team" }
+    func moderationRemovedReason(communityIdHex: String) -> Int? { nil }
     func newsSetPrefs(topics: [String], langs: [String], city: String?, muted: [String], alertsNotify: Bool) {}
     func meshSetFreeStorage(freeBytes: Int64, totalBytes: Int64) {}
     func meshTick(nowMs: Int64) -> [UInt64] { [] }
@@ -748,5 +758,21 @@ public extension OmcpCore {
         try setVerified(id, true)
         if let c = contacts().first(where: { $0.id == id }) { return c }
         return try previewContact(payload).contact
+    }
+}
+
+/// One line of the public "Removed communities" log (§23.9(5)).
+public struct TeamLogEntryModel: Equatable, Identifiable {
+    public var id: String { "\(communityIdHex)-\(epoch)" }
+    public var kind: String          // "takedown" | "restore"
+    public var communityIdHex: String
+    public var reasonCode: Int       // 0 for restore
+    public var note: String
+    public var epoch: UInt64
+    public var signedBy: [String]
+    public var appliedMs: Int64
+    public init(kind: String, communityIdHex: String, reasonCode: Int, note: String, epoch: UInt64, signedBy: [String], appliedMs: Int64) {
+        self.kind = kind; self.communityIdHex = communityIdHex; self.reasonCode = reasonCode
+        self.note = note; self.epoch = epoch; self.signedBy = signedBy; self.appliedMs = appliedMs
     }
 }
