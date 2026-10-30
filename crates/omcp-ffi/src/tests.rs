@@ -520,7 +520,7 @@ fn has(hay: &[u8], needle: &[u8]) -> bool {
 fn contacts_chats_messages_and_queue_survive_restart() {
     let dir = tempfile::tempdir().unwrap();
     let pa = generate_recovery_phrase().unwrap();
-    let b = node("Bob");
+    let b = node("Bob Quintessa");
     let bob_id;
     {
         let a = open_node(&pa, "Alice", dir.path());
@@ -546,13 +546,13 @@ fn contacts_chats_messages_and_queue_survive_restart() {
     let raw = disk_bytes(dir.path());
     assert!(!has(&raw, b"queued while offline"));
     assert!(!has(&raw, b"hello Alice"));
-    assert!(!has(&raw, b"Bob"));
+    assert!(!has(&raw, b"Bob Quintessa")); // 3 bytes would match random ciphertext now and then
 
     // "Restart": a fresh node over the same file and key.
     let a = open_node(&pa, "Alice", dir.path());
     let c = a.contacts();
     assert_eq!(c.len(), 1);
-    assert_eq!(c[0].display_name, "Bob");
+    assert_eq!(c[0].display_name, "Bob Quintessa");
     assert!(c[0].verified);
     assert_eq!(a.chats().unwrap()[0].contact_id, bob_id);
     let ms = a.stored_messages(bob_id.clone()).unwrap();
