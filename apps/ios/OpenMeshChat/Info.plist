@@ -36,6 +36,8 @@
 	<string>Hopla uses Bluetooth so people nearby can find and message you.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Local network access is used for future LAN livestream relay (v0.2).</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Hopla uses the microphone when you go live or record a voice message.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Hopla uses the camera to scan contact QR codes.</string>
 	<key>NSFaceIDUsageDescription</key>

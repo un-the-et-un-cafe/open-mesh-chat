@@ -629,6 +629,13 @@ public protocol OmcpCore: AnyObject {
     func newsIngestRss(feedUrl: String, body: String, nowMs: Int64) throws -> Int
     /// Gateway-only vs any phone with internet: one flag in Rust (`NEWS_FETCH_GATEWAY_ONLY`).
     func newsMayFetch(gatewayEnabled: Bool) -> Bool
+    /// Live v0.2 (REQUIREMENTS "Live"): audio over the mesh; Rust does packets, keys and jitter.
+    func liveStart(title: String, video: Bool, contactIds: [String]) -> String?
+    func liveStop()
+    func liveStreams() -> [LiveStreamModel]
+    func liveJoin(streamIdHex: String, hasInternet: Bool) -> Bool
+    func liveLeave()
+    func liveStats() -> LiveStatsModel
     /// Team moderation (PROTOCOL §23.9, TM1–TM4).
     func moderationHasTeam() -> Bool
     func moderationLog() -> [TeamLogEntryModel]
@@ -735,6 +742,12 @@ public extension OmcpCore {
     func newsFetchPlan(wifiOnly: Bool, network: NetworkType, metered: Bool, nowMs: Int64) -> NewsFetchPlan { NewsFetchPlan() }
     func newsIngestRss(feedUrl: String, body: String, nowMs: Int64) throws -> Int { 0 }
     func newsMayFetch(gatewayEnabled: Bool) -> Bool { true }
+    func liveStart(title: String, video: Bool, contactIds: [String]) -> String? { nil }
+    func liveStop() {}
+    func liveStreams() -> [LiveStreamModel] { [] }
+    func liveJoin(streamIdHex: String, hasInternet: Bool) -> Bool { false }
+    func liveLeave() {}
+    func liveStats() -> LiveStatsModel { LiveStatsModel() }
     func moderationHasTeam() -> Bool { false }
     func moderationLog() -> [TeamLogEntryModel] { [] }
     func moderationPublish(actionHex: String) -> String { "no_team" }
@@ -774,5 +787,45 @@ public struct TeamLogEntryModel: Equatable, Identifiable {
     public init(kind: String, communityIdHex: String, reasonCode: Int, note: String, epoch: UInt64, signedBy: [String], appliedMs: Int64) {
         self.kind = kind; self.communityIdHex = communityIdHex; self.reasonCode = reasonCode
         self.note = note; self.epoch = epoch; self.signedBy = signedBy; self.appliedMs = appliedMs
+    }
+}
+
+/// A stream in the Live list (Rust `LiveStreamInfo`).
+public struct LiveStreamModel: Equatable, Identifiable, Sendable {
+    public var id: String { streamIdHex }
+    public var streamIdHex: String
+    public var title: String
+    public var hostContactId: String   // empty for our own stream
+    public var mine: Bool
+    public var listening: Bool
+    public var video: Bool
+    public var startedMs: Int64
+    public init(streamIdHex: String, title: String, hostContactId: String, mine: Bool, listening: Bool, video: Bool, startedMs: Int64) {
+        self.streamIdHex = streamIdHex; self.title = title; self.hostContactId = hostContactId
+        self.mine = mine; self.listening = listening; self.video = video; self.startedMs = startedMs
+    }
+}
+
+public struct LiveStatsModel: Equatable, Sendable {
+    public var played: UInt64 = 0
+    public var lost: UInt64 = 0
+    public var forwarded: UInt64 = 0
+    public var listeners: UInt32 = 0
+    public init(played: UInt64 = 0, lost: UInt64 = 0, forwarded: UInt64 = 0, listeners: UInt32 = 0) {
+        self.played = played; self.lost = lost; self.forwarded = forwarded; self.listeners = listeners
+    }
+    /// Lost share in percent (rounded down).
+    public var lossPercent: Int {
+        let t = played + lost
+        return t == 0 ? 0 : Int(lost * 100 / t)
+    }
+}
+
+/// Live tab rules shared by the views and tests.
+public enum LiveRules {
+    /// Only one of: hosting or listening. Hosting needs at least one listener.
+    public static func canGoLive(picked: Set<String>, hosting: Bool) -> Bool { !picked.isEmpty && !hosting }
+    public static func split(_ all: [LiveStreamModel]) -> (mine: LiveStreamModel?, others: [LiveStreamModel]) {
+        (all.first { $0.mine }, all.filter { !$0.mine })
     }
 }

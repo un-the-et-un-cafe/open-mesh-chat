@@ -57,6 +57,7 @@ uniffi::setup_scaffolding!();
 
 mod chatbackup;
 mod files;
+mod live;
 mod mesh;
 mod moderation;
 mod news;
@@ -66,6 +67,9 @@ pub use chatbackup::{
     MediaBackupItem, MediaBackupSettings, MediaRequestEvent, MediaUpdate, RestoreNotice,
 };
 pub use files::{FileFailure, FileOffer, FileProgress, ReceivedFile, FILE_CHUNK_BYTES};
+pub use live::{
+    live_audio_bitrate, live_frame_ms, live_stun_servers, LivePlayout, LiveStats, LiveStreamInfo,
+};
 pub use mesh::{mesh_max_links, mesh_relay_cap_bytes, MeshStats, MAX_MESH_LINKS};
 pub use moderation::{TeamActionResult, TeamLogEntry};
 pub use news::{
@@ -1088,7 +1092,7 @@ impl OmcpNode {
         if text.len() > MAX_TEXT_BYTES {
             return Err(invalid("text too long"));
         }
-        self.queue_app(&contact_id, AppContent::Text(text), burn, None)
+        self.queue_app(&contact_id, AppContent::Text(text), burn, None, false)
     }
 
     /// Queue a (small, ≤ 16 KiB in the beta) media item, e.g. a view-once photo.
@@ -1103,7 +1107,13 @@ impl OmcpNode {
             return Err(invalid("media too large for the beta link"));
         }
         let m = Some(mime.clone());
-        self.queue_app(&contact_id, AppContent::Media { mime, bytes }, burn, m)
+        self.queue_app(
+            &contact_id,
+            AppContent::Media { mime, bytes },
+            burn,
+            m,
+            false,
+        )
     }
 
     /// Open a received burn message. Returns its content exactly once (None afterwards,
@@ -1416,12 +1426,14 @@ impl OmcpNode {
 }
 
 impl OmcpNode {
-    fn queue_app(
+    /// `control` = not a user message (no chat row; e.g. a Live invite).
+    pub(crate) fn queue_app(
         &self,
         contact_id: &str,
         content: AppContent,
         burn: Option<BurnSpec>,
         mime: Option<String>,
+        control: bool,
     ) -> Result<String, FfiError> {
         let id = parse_id(contact_id)?;
         let header = burn.map(|b| b.header()).transpose()?;
@@ -1455,28 +1467,30 @@ impl OmcpNode {
             (AppContent::Text(t), None) => t.clone(),
             _ => String::new(),
         };
-        st.db().put_message(&MessageRec {
-            id: envelope_id,
-            peer: id,
-            mine: true,
-            time_ms: now,
-            status: st::STATUS_QUEUED,
-            text,
-            mime,
-            burn: header.map(|h| h.encode().to_vec()),
-            burn_state: if header.is_some() {
-                st::BURN_UNOPENED
-            } else {
-                st::BURN_NONE
-            },
-            burn_at_ms: None,
-            file: None,
-        })?;
+        if !control {
+            st.db().put_message(&MessageRec {
+                id: envelope_id,
+                peer: id,
+                mine: true,
+                time_ms: now,
+                status: st::STATUS_QUEUED,
+                text,
+                mime,
+                burn: header.map(|h| h.encode().to_vec()),
+                burn_state: if header.is_some() {
+                    st::BURN_UNOPENED
+                } else {
+                    st::BURN_NONE
+                },
+                burn_at_ms: None,
+                file: None,
+            })?;
+        }
         let q = Queued {
             envelope_id,
             created_ms: now,
             inner: Zeroizing::new(inner),
-            control: false,
+            control,
         };
         st.persist_queued(&id, &q)?;
         mesh::submit_own(&self.inner, &mut st, &id, &q, header.as_ref())?;
@@ -1853,6 +1867,10 @@ impl MeshLink {
                 node.db().put_message(&received(&t, None, None))?;
                 rt.text = t;
                 out.received.push(rt);
+            }
+            (None, AppContent::Media { mime, bytes }) if mime == omcp_core::live::INVITE_MIME => {
+                // Live invite: stream key over the E2EE chat; no chat row.
+                node.on_live_invite(peer, &bytes, out)?;
             }
             (None, AppContent::Media { mime, .. }) => {
                 // TODO(M5.x): non-burn media goes through the chunked file path.

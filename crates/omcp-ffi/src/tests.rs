@@ -2632,6 +2632,112 @@ fn tm_moderation_state_survives_restart_and_shipped_policy_parses() {
     assert_eq!(n.moderation_log().len(), 1);
 }
 
+// ---- Live v0.2: audio over the BLE mesh (LV1, LV2, LV4) ----
+
+#[test]
+fn live_audio_reaches_listener_three_hops_away_and_relays_cannot_listen() {
+    // A — B — D — C; A invites C only. B and D relay but are not listeners.
+    let (a, b, d, c) = (node("A"), node("B"), node("D"), node("C"));
+    befriend(&a, &b);
+    befriend(&b, &d);
+    befriend(&d, &c);
+    befriend_mls(&a, &c);
+    let cid = c.identity().peer_id_hex;
+    let ab = up(&a, &b);
+    let bd = up(&b, &d);
+    let dc = up(&d, &c);
+    let links = [
+        (ab.0.clone(), ab.1.clone()),
+        (bd.0.clone(), bd.1.clone()),
+        (dc.0.clone(), dc.1.clone()),
+    ];
+    let sid = a
+        .live_start("Town hall".into(), false, vec![cid.clone()])
+        .unwrap();
+    settle(&links);
+    let streams = c.live_streams();
+    assert_eq!(streams.len(), 1, "{streams:?}");
+    assert_eq!(streams[0].stream_id_hex, sid);
+    assert_eq!(streams[0].host_contact_id, a.identity().peer_id_hex);
+    assert!(a.live_streams()[0].mine);
+    assert!(b.live_streams().is_empty() && d.live_streams().is_empty());
+    // The invite is not a chat message.
+    assert!(c
+        .stored_messages(a.identity().peer_id_hex)
+        .unwrap()
+        .is_empty());
+    c.live_join(sid, false).unwrap();
+    // Relays can't join a stream they were not invited to (LV4).
+    assert!(b
+        .live_join(streams[0].stream_id_hex.clone(), false)
+        .is_err());
+
+    // 2 s of 12 kbit/s Opus (100 × 20 ms frames), with a chat message in the middle (LV2).
+    let t0 = now_ms();
+    for i in 0..20u64 {
+        let frames: Vec<Vec<u8>> = (0..5).map(|k| vec![(i * 5 + k) as u8; 30]).collect();
+        a.live_push_audio(frames).unwrap();
+        if i == 10 {
+            a.queue_text(cid.clone(), "during live".into()).unwrap();
+        }
+        let outs = settle(&links);
+        if i == 10 {
+            assert_eq!(texts(&outs).len(), 1, "chat still delivered during live");
+        }
+    }
+    let got = c.live_take_audio(t0 + 10_000);
+    let played: Vec<_> = got.iter().filter(|p| !p.lost).collect();
+    assert_eq!(played.len(), 100, "{} lost", got.len() - played.len());
+    assert_eq!(played[0].opus, vec![0u8; 30]);
+    assert_eq!(c.live_stats().played, 100);
+    assert!(b.live_stats().forwarded > 0 && d.live_stats().forwarded > 0);
+    assert!(b.live_take_audio(t0 + 10_000).is_empty());
+
+    // Stop: listeners drop the stream.
+    a.live_stop().unwrap();
+    settle(&links);
+    assert!(c.live_streams().is_empty());
+    for l in [&ab, &bd, &dc] {
+        down(l);
+    }
+}
+
+#[test]
+fn live_removed_listener_is_rotated_out() {
+    let (a, c, e) = (node("A"), node("C"), node("E"));
+    befriend_mls(&a, &c);
+    befriend_mls(&a, &e);
+    let ac = up(&a, &c);
+    let ae = up(&a, &e);
+    let links = [(ac.0.clone(), ac.1.clone()), (ae.0.clone(), ae.1.clone())];
+    let sid = a
+        .live_start(
+            "t".into(),
+            false,
+            vec![c.identity().peer_id_hex, e.identity().peer_id_hex],
+        )
+        .unwrap();
+    settle(&links);
+    c.live_join(sid.clone(), false).unwrap();
+    e.live_join(sid, false).unwrap();
+    a.live_remove_listener(e.identity().peer_id_hex).unwrap();
+    settle(&links);
+    let t0 = now_ms();
+    a.live_push_audio((0..5).map(|_| vec![1u8; 30]).collect())
+        .unwrap();
+    settle(&links);
+    let got = c.live_take_audio(t0 + 5_000);
+    assert_eq!(got.iter().filter(|p| !p.lost).count(), 5);
+    assert!(got.len() <= 5 + 50, "concealment stops after 1 s");
+    assert!(
+        e.live_take_audio(t0 + 5_000).is_empty(),
+        "old key can't open new frames"
+    );
+    assert_eq!(a.live_stats().listeners, 1);
+    assert_eq!(live_audio_bitrate(), 12_000);
+    assert!(live_stun_servers().iter().all(|s| s.starts_with("stun:")));
+}
+
 #[test]
 fn news_ingests_real_google_news_fr_response() {
     let xml = include_str!("../../omcp-core/src/news/fixtures/google_news_world_fr_live.xml");

@@ -183,6 +183,25 @@ class RustOmcpCore : OmcpCore {
     private fun prefsUi(p: chat.omcp.ffi.NewsPrefs) =
         NewsPrefsUi(p.topics, p.langs, p.city, p.cityFromLocation, p.muted, p.alertsNotify, p.interestsChosen)
     override fun newsMayFetch(gatewayEnabled: Boolean) = chat.omcp.ffi.newsMayFetch(gatewayEnabled)
+    override fun liveStart(title: String, video: Boolean, contactIds: List<String>): String? =
+        runCatching { node?.liveStart(title, video, contactIds) }.getOrNull()
+    override fun liveInvite(contactId: String) { runCatching { node?.liveInvite(contactId) } }
+    override fun liveRemoveListener(contactId: String) { runCatching { node?.liveRemoveListener(contactId) } }
+    override fun liveStop() { runCatching { node?.liveStop() } }
+    override fun livePushAudio(frames: List<ByteArray>): List<Long> =
+        runCatching { node?.livePushAudio(frames)?.map { it.toLong() } }.getOrNull() ?: emptyList()
+    override fun liveStreams(): List<LiveStreamUi> = node?.liveStreams()?.map {
+        LiveStreamUi(it.streamIdHex, it.title, it.hostContactId, it.mine, it.listening, it.video, it.startedMs.toLong())
+    } ?: emptyList()
+    override fun liveJoin(streamIdHex: String, hasInternet: Boolean): Boolean =
+        runCatching { node?.liveJoin(streamIdHex, hasInternet) != null }.getOrDefault(false)
+    override fun liveLeave() { node?.liveLeave() }
+    override fun liveTakeAudio(nowMs: Long): List<LivePlayoutUi> = node?.liveTakeAudio(nowMs.toULong())?.map {
+        LivePlayoutUi(it.index.toLong(), it.opus, it.lost, it.fecNext)
+    } ?: emptyList()
+    override fun liveStats(): LiveStatsUi = node?.liveStats()?.let {
+        LiveStatsUi(it.played.toLong(), it.lost.toLong(), it.forwarded.toLong(), it.droppedCongested.toLong(), it.listeners.toInt())
+    } ?: LiveStatsUi()
     override fun moderationHasTeam() = node?.moderationHasTeam() ?: false
     override fun moderationLog(): List<TeamLogUi> = node?.moderationLog()?.map {
         TeamLogUi(it.kind, it.communityIdHex, it.reasonCode.toInt(), it.note, it.epoch.toLong(), it.signedBy, it.appliedMs.toLong())

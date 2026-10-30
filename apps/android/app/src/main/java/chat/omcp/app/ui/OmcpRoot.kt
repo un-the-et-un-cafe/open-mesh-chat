@@ -196,7 +196,19 @@ fun OmcpRoot(
             composable(Routes.NewsStory) { entry ->
                 NewsReaderScreen(newsVm, entry.arguments?.getString("id").orEmpty(), repo.core.contacts(), onBack = { nav.popBackStack() })
             }
-            composable(Routes.Live) { LiveTabScreen() }
+            composable(Routes.Live) {
+                val liveVm = vm {
+                    chat.omcp.app.ui.vm.LiveViewModel(
+                        repo.core,
+                        chat.omcp.app.live.LiveAudioEngine(repo.core) { repo.kick?.kick("") },
+                    )
+                }
+                LiveTabScreen(liveVm, contacts) {
+                    val cm = ctx.getSystemService(android.net.ConnectivityManager::class.java)
+                    cm?.getNetworkCapabilities(cm.activeNetwork)
+                        ?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true
+                }
+            }
             composable(Routes.You) {
                 YouScreen(
                     identity = repo.core.identity(),
