@@ -15,7 +15,10 @@ use omcp_core::live::audio::is_live_audio;
 use omcp_core::live::host::{HostSession, ListenerSession};
 use omcp_core::live::jitter::Playout;
 use omcp_core::live::relay::{LiveRelay, LIVE_QUEUE_CAP};
-use omcp_core::live::{LiveInvite, INVITE_MIME};
+use omcp_core::live::sframe::stream_base_key;
+use omcp_core::live::signal::{RtcSignal, SignalKind, SIGNAL_MIME};
+use omcp_core::live::video::{wire, Dest, Routed, VideoRouter, HOST};
+use omcp_core::live::{LiveInvite, StreamKey, INVITE_MIME};
 
 use crate::mesh::{OutFrame, PDU_MESH};
 use crate::{invalid, now_ms, parse_id, FfiError, LinkOutput, NodeState, OmcpNode};
@@ -29,6 +32,74 @@ pub(crate) struct LiveState {
     listening: Option<ListenerSession>,
     forwarded: u64,
     dropped_congested: u64,
+    /// Host: online video tree + signal router.
+    video: VideoRouter,
+    /// Signals for our app (offer/answer/ICE/assign/bye).
+    signals_in: Vec<LiveSignalIn>,
+    /// Host: signals to relay to viewers (sent on the next poll, outside the lock).
+    pub(crate) pending_fwd: Vec<Routed>,
+}
+
+/// WebRTC signal kinds (PROTOCOL §20.3, content type 0x50).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum LiveSignalKind {
+    Offer,
+    Answer,
+    Ice,
+    /// Tear down; body `parked` = no tree slot (audio over the mesh).
+    Bye,
+    Join,
+    /// Open a peer connection to `peer_hex` (our new child) and send an offer.
+    Assign,
+}
+
+impl From<SignalKind> for LiveSignalKind {
+    fn from(k: SignalKind) -> Self {
+        match k {
+            SignalKind::Offer => Self::Offer,
+            SignalKind::Answer => Self::Answer,
+            SignalKind::Ice => Self::Ice,
+            SignalKind::Bye => Self::Bye,
+            SignalKind::Join => Self::Join,
+            SignalKind::Assign => Self::Assign,
+        }
+    }
+}
+
+impl From<LiveSignalKind> for SignalKind {
+    fn from(k: LiveSignalKind) -> Self {
+        match k {
+            LiveSignalKind::Offer => Self::Offer,
+            LiveSignalKind::Answer => Self::Answer,
+            LiveSignalKind::Ice => Self::Ice,
+            LiveSignalKind::Bye => Self::Bye,
+            LiveSignalKind::Join => Self::Join,
+            LiveSignalKind::Assign => Self::Assign,
+        }
+    }
+}
+
+/// One incoming signal. `peer_hex` is the tree peer (64 zeros = the host).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct LiveSignalIn {
+    pub peer_hex: String,
+    pub kind: LiveSignalKind,
+    pub body: String,
+}
+
+/// SFrame media key for the WebRTC frame cryptor (RFC 9605 base key + KID).
+#[derive(Clone, PartialEq, Eq, uniffi::Record)]
+pub struct LiveMediaKey {
+    pub base_key: Vec<u8>,
+    pub kid: u64,
+}
+
+impl std::fmt::Debug for LiveMediaKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LiveMediaKey")
+            .field("kid", &self.kid)
+            .finish_non_exhaustive()
+    }
 }
 
 /// A stream shown in the Live list.
@@ -105,6 +176,61 @@ impl NodeState {
         true
     }
 
+    /// Current stream key: ours when hosting, else the one we listen to.
+    fn live_key(&self) -> Option<StreamKey> {
+        let lv = &self.mesh.live;
+        lv.host
+            .as_ref()
+            .map(|h| h.key().clone())
+            .or_else(|| lv.listening.as_ref().map(|l| l.invite.key.clone()))
+    }
+
+    /// A sealed 0x50 signal from contact `peer` (E2EE chat, no chat row).
+    /// Returns signals to send on to other viewers (host only).
+    pub(crate) fn on_live_signal(&mut self, peer: [u8; 32], bytes: &[u8]) -> Vec<Routed> {
+        let Some(key) = self.live_key() else {
+            return Vec::new();
+        };
+        let Ok(s) = RtcSignal::open(&key, bytes) else {
+            return Vec::new(); // wrong key/epoch or garbage: drop
+        };
+        if self.mesh.live.host.is_some() {
+            // Host: the authenticated sender is `peer`; route through the tree.
+            let routed = self.mesh.live.video.on_signal(peer, s.to, s.kind, s.body);
+            let mut fwd = Vec::new();
+            for r in routed {
+                match r.dest {
+                    Dest::Local => self.mesh.live.signals_in.push(LiveSignalIn {
+                        peer_hex: hex::encode(r.peer),
+                        kind: r.kind.into(),
+                        body: r.body,
+                    }),
+                    Dest::Contact(_) => fwd.push(r),
+                }
+            }
+            fwd
+        } else {
+            // Viewer: only our host relays signals to us.
+            let host = self
+                .mesh
+                .live
+                .listening
+                .as_ref()
+                .map(|l| l.invite.key.stream_id);
+            let from_host = host
+                .and_then(|id| self.mesh.live.known.get(&id).map(|(h, _)| *h))
+                .is_some_and(|h| h == peer);
+            if from_host {
+                self.mesh.live.signals_in.push(LiveSignalIn {
+                    peer_hex: hex::encode(s.from),
+                    kind: s.kind.into(),
+                    body: s.body,
+                });
+            }
+            Vec::new()
+        }
+    }
+
     pub(crate) fn on_live_invite(
         &mut self,
         peer: [u8; 32],
@@ -150,6 +276,39 @@ fn parse_stream(hex_id: &str) -> Result<[u8; 16], FfiError> {
 }
 
 impl OmcpNode {
+    /// Seal and send routed signals (host → viewer).
+    pub(crate) fn send_routed(&self, routed: Vec<Routed>) -> Result<(), FfiError> {
+        let key = self.inner.lock().live_key();
+        let Some(key) = key else { return Ok(()) };
+        for r in routed {
+            if let Dest::Contact(to) = r.dest {
+                let sig = wire(key.stream_id, r.peer, to, r.kind, r.body);
+                self.send_signal_to(&to, &key, &sig)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn send_signal_to(
+        &self,
+        contact: &[u8; 32],
+        key: &StreamKey,
+        sig: &RtcSignal,
+    ) -> Result<(), FfiError> {
+        let bytes = sig.seal(key).map_err(|_| invalid("rtc signal"))?;
+        self.queue_app(
+            &hex::encode(contact),
+            AppContent::Media {
+                mime: SIGNAL_MIME.into(),
+                bytes,
+            },
+            None,
+            None,
+            true,
+        )
+        .map(|_| ())
+    }
+
     fn send_invite(&self, contact: &[u8; 32], inv: &LiveInvite) -> Result<(), FfiError> {
         let bytes = inv.encode().map_err(|_| invalid("live invite"))?;
         self.queue_app(
@@ -194,6 +353,8 @@ impl OmcpNode {
             }
             let inv = h.invite(true);
             st.mesh.live.host = Some(h);
+            st.mesh.live.video = VideoRouter::new();
+            st.mesh.live.signals_in.clear();
             inv
         };
         for id in &ids {
@@ -225,7 +386,10 @@ impl OmcpNode {
                 return Err(invalid("not live"));
             };
             let n = h.remove_listener(&id).map_err(|_| invalid("rotate"))?;
-            (h.invite(true), n)
+            let inv = h.invite(true);
+            let fwd = st.mesh.live.video.leave(&id);
+            st.mesh.live.pending_fwd.extend(fwd);
+            (inv, n)
         };
         for c in notify {
             self.send_invite(&c, &inv)?;
@@ -235,7 +399,11 @@ impl OmcpNode {
 
     /// End our stream and tell the listeners.
     pub fn live_stop(&self) -> Result<(), FfiError> {
-        let h = self.inner.lock().mesh.live.host.take();
+        let h = {
+            let mut st = self.inner.lock();
+            st.mesh.live.video = VideoRouter::new();
+            st.mesh.live.host.take()
+        };
         if let Some(h) = h {
             let inv = h.invite(false);
             for c in h.listeners() {
@@ -262,6 +430,98 @@ impl OmcpNode {
             st.live_fanout(&p, None);
         }
         Ok(st.mesh.pending_links(None))
+    }
+
+    /// Viewer with internet: ask the host for a slot in the video tree.
+    /// The host answers with an offer (from our parent) or `Bye parked`.
+    pub fn live_video_join(&self) -> Result<(), FfiError> {
+        self.live_send_signal(hex::encode(HOST), LiveSignalKind::Join, String::new())
+    }
+
+    /// Send a WebRTC signal to tree peer `peer_hex` (64 zeros = host). Viewers
+    /// always send via the host, which relays it sealed to the other viewer.
+    pub fn live_send_signal(
+        &self,
+        peer_hex: String,
+        kind: LiveSignalKind,
+        body: String,
+    ) -> Result<(), FfiError> {
+        let to = parse_id(&peer_hex)?;
+        let (key, dest, routed) = {
+            let st = self.inner.lock();
+            let key = st.live_key().ok_or_else(|| invalid("not live"))?;
+            if st.mesh.live.host.is_some() {
+                let r = st
+                    .mesh
+                    .live
+                    .video
+                    .from_host(to, kind.into(), body.clone())
+                    .ok_or_else(|| invalid("not a direct viewer"))?;
+                (key, to, Some(r))
+            } else {
+                let id = key.stream_id;
+                let host = st
+                    .mesh
+                    .live
+                    .known
+                    .get(&id)
+                    .map(|(h, _)| *h)
+                    .ok_or_else(|| invalid("unknown stream"))?;
+                (key, host, None)
+            }
+        };
+        match routed {
+            Some(r) => self.send_routed(vec![r]),
+            None => {
+                let sig = wire(key.stream_id, HOST, to, kind.into(), body);
+                self.send_signal_to(&dest, &key, &sig)
+            }
+        }
+    }
+
+    /// Host: a direct viewer's link failed for good; re-parent its children.
+    pub fn live_video_drop(&self, peer_hex: String) -> Result<(), FfiError> {
+        let id = parse_id(&peer_hex)?;
+        let routed = {
+            let mut st = self.inner.lock();
+            let mut out = Vec::new();
+            for r in st.mesh.live.video.leave(&id) {
+                match r.dest {
+                    Dest::Local => st.mesh.live.signals_in.push(LiveSignalIn {
+                        peer_hex: hex::encode(r.peer),
+                        kind: r.kind.into(),
+                        body: r.body,
+                    }),
+                    Dest::Contact(_) => out.push(r),
+                }
+            }
+            out
+        };
+        self.send_routed(routed)
+    }
+
+    /// Signals waiting for the app (poll with the audio loop).
+    pub fn live_take_signals(&self) -> Vec<LiveSignalIn> {
+        let fwd = std::mem::take(&mut self.inner.lock().mesh.live.pending_fwd);
+        if !fwd.is_empty() {
+            let _ = self.send_routed(fwd);
+        }
+        std::mem::take(&mut self.inner.lock().mesh.live.signals_in)
+    }
+
+    /// SFrame media key for the current stream (frame cryptor). Changes when
+    /// the key rotates (listener removed): re-read after `live_streams()`.
+    pub fn live_media_key(&self) -> Option<LiveMediaKey> {
+        let k = self.inner.lock().live_key()?;
+        Some(LiveMediaKey {
+            base_key: stream_base_key(&k).to_vec(),
+            kid: u64::from(k.key_epoch),
+        })
+    }
+
+    /// Video tree: viewers placed / direct children of the host.
+    pub fn live_video_viewers(&self) -> u32 {
+        self.inner.lock().mesh.live.video.tree.viewers() as u32
     }
 
     /// Streams we can join (invites) plus our own.
@@ -316,7 +576,10 @@ impl OmcpNode {
     }
 
     pub fn live_leave(&self) {
-        self.inner.lock().mesh.live.listening = None;
+        let _ = self.live_send_signal(hex::encode(HOST), LiveSignalKind::Bye, String::new());
+        let mut st = self.inner.lock();
+        st.mesh.live.listening = None;
+        st.mesh.live.signals_in.clear();
     }
 
     /// Frames due for playout now (call every 20–100 ms while listening).

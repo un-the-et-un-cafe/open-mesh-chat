@@ -347,6 +347,14 @@ interface OmcpCore {
     fun liveLeave() {}
     fun liveTakeAudio(nowMs: Long): List<LivePlayoutUi> = emptyList()
     fun liveStats(): LiveStatsUi = LiveStatsUi()
+    // Online video (WebRTC, STUN only, signals sealed as 0x50 and relayed by the host).
+    fun liveVideoJoin() {}
+    /** [kind]: offer, answer, ice, bye, join, assign. [peerHex] 64 zeros = the host. */
+    fun liveSendSignal(peerHex: String, kind: String, body: String): Boolean = false
+    fun liveTakeSignals(): List<LiveSignalUi> = emptyList()
+    fun liveVideoDrop(peerHex: String) {}
+    fun liveMediaKey(): LiveMediaKeyUi? = null
+    fun liveStunServers(): List<String> = listOf("stun:stun.l.google.com:19302")
 
     // Team moderation (PROTOCOL §23.9, TM1–TM4).
     /** Whether this build ships a moderation team (config/team_moderation.conf). */
@@ -434,6 +442,15 @@ data class LiveStreamUi(
 
 /** One 20 ms slot: [opus] empty when lost. */
 class LivePlayoutUi(val index: Long, val opus: ByteArray, val lost: Boolean, val fecNext: ByteArray?)
+
+data class LiveSignalUi(val peerHex: String, val kind: String, val body: String)
+
+/** SFrame base key + KID for the frame cryptor (derived in Rust from the stream key). */
+class LiveMediaKeyUi(val baseKey: ByteArray, val kid: Long) {
+    override fun equals(other: Any?) = other is LiveMediaKeyUi && other.kid == kid && other.baseKey.contentEquals(baseKey)
+    override fun hashCode() = kid.hashCode() * 31 + baseKey.contentHashCode()
+    override fun toString() = "LiveMediaKeyUi(kid=$kid)"
+}
 
 data class LiveStatsUi(
     val played: Long = 0,

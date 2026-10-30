@@ -16,9 +16,15 @@ pub enum SignalKind {
     Offer,
     Answer,
     Ice,
-    /// Tear down (re-parenting or leave).
+    /// Tear down (re-parenting or leave). Body `parked` = no tree slot.
     Bye,
+    /// Viewer → host: I have internet, put me in the video tree.
+    Join,
+    /// Host → parent: open a peer connection to child `from` and send the offer.
+    Assign,
 }
+
+pub const SIGNAL_MIME: &str = "application/omcp-rtc-signal";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RtcSignal {

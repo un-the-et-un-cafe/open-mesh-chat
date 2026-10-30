@@ -16,6 +16,10 @@ settings:
 packages:
   HoplaKit:
     path: HoplaKit
+  # Live video: libwebrtc build with the frame cryptor (E2EE), BSD-3-Clause, 150.7871.04
+  # (same as Android). Local manifest: upstream's needs a newer PackageDescription.
+  WebRTCBinary:
+    path: Packages/WebRTCBinary
 targets:
   # UniFFI Swift bindings (generated, git-ignored) over the Rust static library.
   OmcpFFI:
@@ -41,6 +45,8 @@ targets:
       - path: OpenMeshChat
     dependencies:
       - package: HoplaKit
+      - package: WebRTCBinary
+        product: WebRTC
       - target: OmcpFFI
       - target: NotificationService
     settings:

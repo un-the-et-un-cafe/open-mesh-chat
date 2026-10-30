@@ -2739,6 +2739,73 @@ fn live_removed_listener_is_rotated_out() {
 }
 
 #[test]
+fn live_video_signalling_through_host_and_shared_media_key() {
+    use crate::live::LiveSignalKind as K;
+    let (a, c, e) = (node("A"), node("C"), node("E"));
+    befriend_mls(&a, &c);
+    befriend_mls(&a, &e);
+    let ac = up(&a, &c);
+    let ae = up(&a, &e);
+    let links = [(ac.0.clone(), ac.1.clone()), (ae.0.clone(), ae.1.clone())];
+    let (cid, eid) = (c.identity().peer_id_hex, e.identity().peer_id_hex);
+    let sid = a
+        .live_start("Video".into(), true, vec![cid.clone(), eid.clone()])
+        .unwrap();
+    settle(&links);
+    assert!(c.live_streams()[0].video);
+    c.live_join(sid.clone(), true).unwrap();
+    e.live_join(sid, true).unwrap();
+    // Same SFrame key on host and viewers; none before joining.
+    let mk = a.live_media_key().unwrap();
+    assert_eq!(mk.base_key.len(), 16);
+    assert_eq!(c.live_media_key().unwrap(), mk);
+    assert_eq!(e.live_media_key().unwrap(), mk);
+
+    c.live_video_join().unwrap();
+    settle(&links);
+    let s = a.live_take_signals();
+    assert_eq!(s.len(), 1, "{s:?}");
+    assert_eq!(s[0].kind, K::Assign);
+    let c_as_seen = s[0].peer_hex.clone();
+    a.live_send_signal(c_as_seen.clone(), K::Offer, "v=0 offer".into())
+        .unwrap();
+    settle(&links);
+    let host_hex = "0".repeat(64);
+    let got = c.live_take_signals();
+    assert_eq!(got.len(), 1);
+    assert_eq!(
+        (got[0].kind, got[0].peer_hex.as_str(), got[0].body.as_str()),
+        (K::Offer, host_hex.as_str(), "v=0 offer")
+    );
+    c.live_send_signal(host_hex.clone(), K::Answer, "v=0 answer".into())
+        .unwrap();
+    c.live_send_signal(host_hex.clone(), K::Ice, "candidate:1".into())
+        .unwrap();
+    settle(&links);
+    let got = a.live_take_signals();
+    assert_eq!(
+        got.iter().map(|s| s.kind).collect::<Vec<_>>(),
+        vec![K::Answer, K::Ice]
+    );
+    assert!(got.iter().all(|s| s.peer_hex == c_as_seen));
+    // E never joined the tree: the host can't signal it, and it got nothing.
+    assert!(a.live_send_signal(eid, K::Offer, "x".into()).is_err());
+    assert!(e.live_take_signals().is_empty());
+    assert_eq!(a.live_video_viewers(), 1);
+    // Signals are not chat messages.
+    assert!(a.stored_messages(cid).unwrap().is_empty());
+    // C leaves: host frees the slot.
+    c.live_leave();
+    settle(&links);
+    a.live_take_signals();
+    assert_eq!(a.live_video_viewers(), 0);
+    a.live_stop().unwrap();
+    for l in [&ac, &ae] {
+        down(l);
+    }
+}
+
+#[test]
 fn news_ingests_real_google_news_fr_response() {
     let xml = include_str!("../../omcp-core/src/news/fixtures/google_news_world_fr_live.xml");
     let n = node("N");

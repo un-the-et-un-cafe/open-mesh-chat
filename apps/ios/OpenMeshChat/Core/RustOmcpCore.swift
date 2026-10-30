@@ -224,6 +224,44 @@ public final class RustOmcpCore: HoplaKit.OmcpCore {
         guard let s = node?.liveStats() else { return LiveStatsModel() }
         return LiveStatsModel(played: s.played, lost: s.lost, forwarded: s.forwarded, listeners: s.listeners)
     }
+    public func livePushAudio(_ frames: [Data]) -> [UInt64] { (try? node?.livePushAudio(frames: frames)) ?? [] }
+    public func liveTakeAudio(nowMs: UInt64) -> [LivePlayoutModel] {
+        (node?.liveTakeAudio(nowMs: nowMs) ?? []).map { LivePlayoutModel(index: $0.index, opus: $0.opus, lost: $0.lost) }
+    }
+    public func liveVideoJoin() { try? node?.liveVideoJoin() }
+    @discardableResult public func liveSendSignal(peerHex: String, kind: String, body: String) -> Bool {
+        guard let node, let k = Self.signalKind(kind) else { return false }
+        return (try? node.liveSendSignal(peerHex: peerHex, kind: k, body: body)) != nil
+    }
+    public func liveTakeSignals() -> [LiveSignalModel] {
+        (node?.liveTakeSignals() ?? []).map { LiveSignalModel(peerHex: $0.peerHex, kind: Self.signalName($0.kind), body: $0.body) }
+    }
+    public func liveVideoDrop(peerHex: String) { try? node?.liveVideoDrop(peerHex: peerHex) }
+    public func liveMediaKey() -> LiveMediaKeyModel? {
+        node?.liveMediaKey().map { LiveMediaKeyModel(baseKey: $0.baseKey, kid: $0.kid) }
+    }
+    public func liveStunServers() -> [String] { OmcpFFI.liveStunServers() }
+    private static func signalKind(_ k: String) -> LiveSignalKind? {
+        switch k {
+        case "offer": return .offer
+        case "answer": return .answer
+        case "ice": return .ice
+        case "bye": return .bye
+        case "join": return .join
+        case "assign": return .assign
+        default: return nil
+        }
+    }
+    private static func signalName(_ k: LiveSignalKind) -> String {
+        switch k {
+        case .offer: return "offer"
+        case .answer: return "answer"
+        case .ice: return "ice"
+        case .bye: return "bye"
+        case .join: return "join"
+        case .assign: return "assign"
+        }
+    }
     public func moderationHasTeam() -> Bool { node?.moderationHasTeam() ?? false }
     public func moderationLog() -> [TeamLogEntryModel] {
         (node?.moderationLog() ?? []).map {

@@ -202,6 +202,18 @@ class RustOmcpCore : OmcpCore {
     override fun liveStats(): LiveStatsUi = node?.liveStats()?.let {
         LiveStatsUi(it.played.toLong(), it.lost.toLong(), it.forwarded.toLong(), it.droppedCongested.toLong(), it.listeners.toInt())
     } ?: LiveStatsUi()
+    override fun liveVideoJoin() { runCatching { node?.liveVideoJoin() } }
+    override fun liveSendSignal(peerHex: String, kind: String, body: String): Boolean {
+        val k = signalKind(kind) ?: return false
+        return runCatching { node?.liveSendSignal(peerHex, k, body) != null }.getOrDefault(false)
+    }
+    override fun liveTakeSignals(): List<LiveSignalUi> = node?.liveTakeSignals()?.map {
+        LiveSignalUi(it.peerHex, it.kind.name.lowercase(), it.body)
+    } ?: emptyList()
+    override fun liveVideoDrop(peerHex: String) { runCatching { node?.liveVideoDrop(peerHex) } }
+    override fun liveMediaKey(): LiveMediaKeyUi? = node?.liveMediaKey()?.let { LiveMediaKeyUi(it.baseKey, it.kid.toLong()) }
+    override fun liveStunServers(): List<String> = chat.omcp.ffi.liveStunServers()
+    private fun signalKind(k: String) = chat.omcp.ffi.LiveSignalKind.entries.firstOrNull { it.name.equals(k, ignoreCase = true) }
     override fun moderationHasTeam() = node?.moderationHasTeam() ?: false
     override fun moderationLog(): List<TeamLogUi> = node?.moderationLog()?.map {
         TeamLogUi(it.kind, it.communityIdHex, it.reasonCode.toInt(), it.note, it.epoch.toLong(), it.signedBy, it.appliedMs.toLong())
