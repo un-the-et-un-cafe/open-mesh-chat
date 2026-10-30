@@ -107,7 +107,8 @@ public final class RustOmcpCore: HoplaKit.OmcpCore {
             },
             mediaRequests: o.mediaRequests.map(request),
             resendAsks: o.resendAsks.map(request),
-            mediaUpdates: o.mediaUpdates.map { MediaUpdateInfo(contactId: $0.contactId, msgId: $0.msgIdHex, state: fileState($0.state)) })
+            mediaUpdates: o.mediaUpdates.map { MediaUpdateInfo(contactId: $0.contactId, msgId: $0.msgIdHex, state: fileState($0.state)) },
+            relayLinks: o.relayLinks)
     }
 
     public func generateRecoveryPhrase() throws -> String { try call { try OmcpFFI.generateRecoveryPhrase() } }
@@ -180,6 +181,63 @@ public final class RustOmcpCore: HoplaKit.OmcpCore {
     }
     public func requestMedia(_ msgId: String) throws { try call { try n().requestMedia(msgIdHex: msgId) } }
     public func askToResend(_ msgId: String, note: String?) throws { try call { try n().askToResend(msgIdHex: msgId, note: note) } }
+    // Multi-hop mesh relay (PROTOCOL §22).
+    public func meshStats() -> MeshRelayStats {
+        guard let s = node?.meshStats() else { return MeshRelayStats() }
+        return MeshRelayStats(carried: Int(s.carried), carriedBytes: Int64(s.carriedBytes), ownPending: Int(s.ownPending), neighbours: Int(s.neighbours),
+                              storageUsedBytes: Int64(s.storageUsedBytes), storageCapBytes: Int64(s.storageCapBytes))
+    }
+    // Hopla News (v0.4): gateway phones fetch Google News RSS (gateway rules in Rust); others get stories over the mesh.
+    public func newsFetchPlan(wifiOnly: Bool, network: NetworkType, metered: Bool, nowMs: Int64) -> HoplaKit.NewsFetchPlan {
+        guard let node else { return HoplaKit.NewsFetchPlan() }
+        let net: Network
+        switch network {
+        case .offline: net = .offline
+        case .wifi: net = .wifi(metered: metered)
+        case .cellular: net = .cellular(metered: metered)
+        }
+        let p = node.newsFetchPlan(network: net, wifiOnly: wifiOnly, nowMs: UInt64(max(0, nowMs)))
+        return HoplaKit.NewsFetchPlan(feeds: p.feeds, meteredWarning: p.meteredWarning, blocked: p.blocked,
+                                      usedTodayBytes: Int64(p.usedTodayBytes), dailyCapBytes: Int64(p.dailyCapBytes))
+    }
+    public func newsIngestRss(feedUrl: String, body: String, nowMs: Int64) throws -> Int {
+        guard let node else { return 0 }
+        return Int(try node.newsIngestRss(feedUrl: feedUrl, body: body, nowMs: UInt64(max(0, nowMs))))
+    }
+    public func newsMayFetch(gatewayEnabled: Bool) -> Bool { OmcpFFI.newsMayFetch(gatewayEnabled: gatewayEnabled) }
+    public func newsSetPrefs(topics: [String], langs: [String], city: String?, muted: [String], alertsNotify: Bool) {
+        guard let node else { return }
+        var p = node.newsPrefs()
+        p.topics = Array(Set(topics + ["emergencies"])).sorted()
+        p.langs = langs.isEmpty ? ["en"] : langs
+        p.city = (city?.isEmpty ?? true) ? nil : city
+        p.muted = muted
+        p.alertsNotify = alertsNotify
+        p.interestsChosen = true
+        _ = try? node.newsSetPrefs(prefs: p)
+    }
+    public func newsFeed(tab: String) -> [HoplaKit.NewsStory] {
+        guard let list = try? node?.newsFeed(tab: tab) else { return [] }
+        return list.map { HoplaKit.NewsStory(id: $0.idHex, topic: $0.topic, title: $0.title, summary: $0.summary, publisher: $0.publisher,
+                                             sourceName: $0.sourceName, link: $0.link, via: $0.via, emergency: $0.emergency) }
+    }
+    public func newsCardText(id: String) -> String? {
+        guard let s = node?.newsStory(idHex: id) else { return nil }
+        return OmcpFFI.newsCardText(story: s)
+    }
+    public func meshSetFreeStorage(freeBytes: Int64, totalBytes: Int64) {
+        try? node?.meshSetFreeStorage(freeBytes: UInt64(max(0, freeBytes)), totalBytes: UInt64(max(0, totalBytes)))
+    }
+    public func meshTick(nowMs: Int64) -> [UInt64] { (try? node?.meshTick(nowMs: UInt64(max(0, nowMs)))).flatMap { $0 } ?? [] }
+    public func meshPendingLinks() -> [UInt64] { node?.meshPendingLinks() ?? [] }
+    public func meshTakeStatusUpdates() -> [MeshStatusUpdate] {
+        (node?.meshTakeStatusUpdates() ?? []).map {
+            MeshStatusUpdate(msgId: $0.idHex, contactId: $0.contactId, status: $0.status == .delivered ? .delivered : .sent)
+        }
+    }
+    public func meshBeacon() -> Data { node?.meshBeacon() ?? Data() }
+    public func meshMaxLinks() -> Int { Int(OmcpFFI.meshMaxLinks()) }
+
     public func keptMediaSettings() -> KeptMediaPrefs {
         (try? node?.keptMediaSettings()).flatMap { $0 }.map { KeptMediaPrefs(maxDays: Int($0.maxDays), maxBytes: Int64($0.maxBytes)) } ?? KeptMediaPrefs()
     }
@@ -206,6 +264,7 @@ public final class RustOmcpCore: HoplaKit.OmcpCore {
         switch m.status {
         case .queued: status = .queued
         case .sent: status = .sent
+        case .delivered: status = .delivered
         case .received: status = .received
         case .system: status = .system
         }
@@ -363,5 +422,6 @@ final class RustLink: CoreLink {
     func sendText(_ text: String) throws -> LinkResult { try wrap { try link.sendText(text: text) } }
     func flush() throws -> LinkResult { try wrap { try link.flush() } }
     var isEstablished: Bool { link.isEstablished() }
+    var handle: UInt64 { link.handle() }
     func close() { link.shutdown() }
 }

@@ -113,3 +113,20 @@ final class PolicyTests: XCTestCase {
         XCTAssertTrue(l.canTry)
     }
 }
+
+/// iOS News fetch mirrors Android: any phone with internet fetches, under the network rules.
+final class NewsFetchRulesTests: XCTestCase {
+    func testAnyPhoneFetchesWifiOnlyByDefault() {
+        let core = FakeOmcpCore(); let store = InMemoryAppStore()
+        core.newsPlan = NewsFetchPlan(feeds: ["https://news.google.com/rss/x"], blocked: nil)
+        XCTAssertFalse(store.gatewayEnabled)
+        XCTAssertEqual(NewsFetchRules.run(core: core, store: store, network: .wifi, metered: false, nowMs: 1) { _ in "<rss/>" }, 3)
+        XCTAssertEqual(core.lastNewsWifiOnly, true)
+        store.gatewayAllowMobile = true
+        core.newsPlan = NewsFetchPlan(blocked: "daily_cap")
+        core.newsIngested = []
+        XCTAssertEqual(NewsFetchRules.run(core: core, store: store, network: .cellular, metered: true, nowMs: 1) { _ in "<rss/>" }, 0)
+        XCTAssertEqual(core.lastNewsWifiOnly, false)
+        XCTAssertTrue(core.newsIngested.isEmpty)
+    }
+}

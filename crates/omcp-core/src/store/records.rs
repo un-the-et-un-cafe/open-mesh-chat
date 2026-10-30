@@ -9,6 +9,8 @@ use crate::burn::BurnSnapshot;
 pub const STATUS_QUEUED: u8 = 0;
 pub const STATUS_SENT: u8 = 1;
 pub const STATUS_RECEIVED: u8 = 2;
+/// Our message, end-to-end acked over the mesh (§22.8(3)).
+pub const STATUS_DELIVERED: u8 = 4;
 
 /// [`MessageRec::burn_state`] values.
 pub const BURN_NONE: u8 = 0;
@@ -272,3 +274,32 @@ macro_rules! fixed {
 }
 fixed!(b16, 16);
 fixed!(b32, 32);
+
+/// One mesh carry-store item (v0.2): the encoded opaque `EnvelopeV1`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CarryRec {
+    #[serde(with = "b16")]
+    pub id: [u8; 16],
+    #[serde(with = "bytes")]
+    pub envelope: Vec<u8>,
+    pub expires_at: u64,
+    pub hop_count: u8,
+    /// Our own outbound mesh copy (not relayed for someone else).
+    pub own: bool,
+    /// `DELIVERY_ACK` envelope: the acked `msg_hash` (§22.8(3)).
+    #[serde(default)]
+    pub ack_of: Option<[u8; 16]>,
+    /// RL2 priority class (`omcp_core::sync::budget::RelayClass` as u8).
+    /// `None` in rows written before RL2: own rows are own chats, the rest
+    /// came over contact links.
+    #[serde(default)]
+    pub class: Option<u8>,
+}
+
+/// A mesh envelope id already delivered to us (dedup across restarts).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MeshSeenRec {
+    #[serde(with = "b16")]
+    pub id: [u8; 16],
+    pub until_ms: u64,
+}

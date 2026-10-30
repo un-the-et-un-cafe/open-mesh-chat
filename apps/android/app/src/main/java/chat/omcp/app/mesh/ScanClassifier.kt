@@ -22,7 +22,7 @@ object ScanClassifier {
     const val AD_LEN = 13
 
     sealed interface Decision {
-        data class Dial(val advertisement: ByteArray) : Decision
+        data class Dial(val advertisement: ByteArray, val beacon: ByteArray? = null) : Decision
         data class Probe(val reason: String) : Decision
         data object Ignore : Decision
     }
@@ -35,7 +35,10 @@ object ScanClassifier {
         omcpManufacturerId: Int,
         omcpLocalName: String,
     ): Decision {
-        manufacturerData[omcpManufacturerId]?.let { if (it.size == AD_LEN) return Decision.Dial(it) }
+        manufacturerData[omcpManufacturerId]?.let {
+            val (ad, beacon) = MeshBeacon.split(it)
+            if (ad.size == AD_LEN) return Decision.Dial(ad, beacon)
+        }
         if (omcpService in serviceUuids) return Decision.Probe("service-uuid")
         if (localName != null && localName == omcpLocalName) return Decision.Probe("local-name")
         if (isAppleOverflow(manufacturerData[APPLE_COMPANY_ID])) return Decision.Probe("ios-overflow")
@@ -74,4 +77,20 @@ class ProbeLimiter(
     }
 
     @Synchronized fun inFlightCount() = inFlight.size
+}
+
+/** OMCP manufacturer data = 13-byte discovery ad, optionally followed by the 6-byte §22.7(12) HELLO beacon. */
+object MeshBeacon {
+    const val AD_LEN = 13
+    const val BEACON_LEN = 6
+
+    fun split(mfr: ByteArray): Pair<ByteArray, ByteArray?> =
+        if (mfr.size >= AD_LEN + BEACON_LEN && mfr[AD_LEN] == 0x48.toByte()) {
+            mfr.copyOfRange(0, AD_LEN) to mfr.copyOfRange(AD_LEN, AD_LEN + BEACON_LEN)
+        } else {
+            mfr to null
+        }
+
+    fun join(ad: ByteArray, beacon: ByteArray): ByteArray =
+        if (ad.size == AD_LEN && beacon.size == BEACON_LEN) ad + beacon else ad
 }

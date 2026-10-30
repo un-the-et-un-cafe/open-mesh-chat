@@ -14,13 +14,16 @@ import chat.omcp.app.ui.components.EmptyState
 /** Product decision: keep Communities + Live tabs visible with Coming in v0.2 empty states. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun CommunitiesHomeScreen() {
+fun CommunitiesHomeScreen(onOpenLive: () -> Unit = {}) {
+    // REQUIREMENTS "Hopla News": Live ("Coming in v0.2") moves to the top of Communities.
     Scaffold(topBar = { TopAppBar(title = { Text(stringResource(R.string.tab_communities)) }) }) { padding ->
-        EmptyState(
-            title = stringResource(R.string.coming_v02_title),
-            body = stringResource(R.string.communities_empty_body),
-            modifier = Modifier.padding(padding),
-        )
+        androidx.compose.foundation.layout.Column(Modifier.padding(padding)) {
+            androidx.compose.material3.TextButton(onClick = onOpenLive) { Text(stringResource(R.string.news_live_soon)) }
+            EmptyState(
+                title = stringResource(R.string.coming_v02_title),
+                body = stringResource(R.string.communities_empty_body),
+            )
+        }
     }
 }
 

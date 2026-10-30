@@ -114,11 +114,55 @@ data class LinkResult(
     val mediaRequests: List<MediaRequestInfo> = emptyList(),
     val resendAsks: List<MediaRequestInfo> = emptyList(),
     val mediaUpdates: List<MediaUpdateInfo> = emptyList(),
+    /** Other links (by [CoreLink.handle]) with mesh frames waiting: flush them (multi-hop relay). */
+    val relayLinks: List<Long> = emptyList(),
 )
+
+/**
+ * Mesh relay counters from Rust. The relay is always on with an automatic cap
+ * (REQUIREMENTS RL1, RL2); Settings shows only [storageUsedBytes] (RL4).
+ */
+data class MeshRelayStats(
+    val carried: Int = 0,
+    val carriedBytes: Long = 0,
+    val ownPending: Int = 0,
+    val neighbours: Int = 0,
+    val storageUsedBytes: Long = 0,
+    val storageCapBytes: Long = 500_000_000L,
+)
+
+/** Mesh-caused status change (PROTOCOL §22.8(3)): [status] is "Sent" (handed to a relay) or "Delivered" (end-to-end ack). */
+data class MeshStatusUpdate(val msgId: String, val contactId: String, val status: String)
 
 enum class NetworkType { Offline, Wifi, Cellular }
 
 data class GatewayDecision(val bridge: Boolean, val meteredWarning: Boolean)
+
+/** Hopla News story (REQUIREMENTS "Hopla News", v0.4). */
+data class NewsStoryUi(
+    val idHex: String, val topic: String, val title: String, val summary: String,
+    val publisher: String, val sourceName: String, val link: String, val publishedMs: Long,
+    val via: String?, val fetchedHere: Boolean, val emergency: Boolean,
+)
+
+/** What a gateway phone may fetch now (gateway rules: Wi-Fi-only default, metered warns, 500 MB/day). */
+data class NewsFetchPlanUi(
+    val feeds: List<String> = emptyList(), val meteredWarning: Boolean = false,
+    val blocked: String? = "offline", val usedTodayBytes: Long = 0, val dailyCapBytes: Long = 500_000_000,
+)
+
+/** News settings (§5.115), persisted by the Rust core in the encrypted store. */
+data class NewsPrefsUi(
+    val topics: List<String> = listOf("world", "emergencies"),
+    val langs: List<String> = listOf("en"),
+    val city: String? = null,
+    val cityFromLocation: Boolean = false,
+    val muted: List<String> = emptyList(),
+    val alertsNotify: Boolean = true,
+    val interestsChosen: Boolean = false,
+)
+
+data class NewsCardUi(val idHex: String, val publisher: String, val link: String, val title: String)
 
 data class PasswordCheck(val ok: Boolean, val score: Int, val tooShort: Boolean)
 
@@ -172,6 +216,8 @@ interface CoreLink {
     fun flush(): LinkResult
     fun isEstablished(): Boolean
     fun close()
+    /** Opaque Rust link handle, matched against [LinkResult.relayLinks]. */
+    fun handle(): Long = 0L
 }
 
 /**
@@ -280,6 +326,30 @@ interface OmcpCore {
     fun requestMedia(msgId: String) {}
     /** User-confirmed "Ask to resend": ONE message with the optional [note] (≤ 280 bytes). */
     fun askToResend(msgId: String, note: String?) {}
+    // ---- multi-hop mesh relay (PROTOCOL §22) ----
+    fun meshStats(): MeshRelayStats = MeshRelayStats()
+    // ---- Hopla News (v0.4): read-only, users cannot publish ----
+    fun newsFeed(tab: String): List<NewsStoryUi> = emptyList()
+    fun newsPrefs(): NewsPrefsUi = NewsPrefsUi()
+    fun newsSetPrefs(p: NewsPrefsUi): NewsPrefsUi = p
+    /** Gateway-only vs any phone with internet: one flag in Rust (`NEWS_FETCH_GATEWAY_ONLY`). */
+    fun newsMayFetch(gatewayEnabled: Boolean): Boolean = true
+    fun newsFetchPlan(wifiOnly: Boolean, network: NetworkType, metered: Boolean, nowMs: Long): NewsFetchPlanUi = NewsFetchPlanUi()
+    fun newsIngestRss(feedUrl: String, body: String, nowMs: Long): Int = 0
+    fun newsTakeAlerts(): List<NewsStoryUi> = emptyList()
+    fun newsCardText(story: NewsStoryUi): String = "hopla-news/1\n${story.idHex}\ngn\n${story.publisher}\n${story.link}\n${story.title}"
+    fun parseNewsCard(text: String): NewsCardUi? = null
+    /** RL2: report free/total storage; under 10 % free Rust lowers the relay cap. */
+    fun meshSetFreeStorage(freeBytes: Long, totalBytes: Long) {}
+    /** Periodic relay work; returns link handles with frames waiting. */
+    fun meshTick(nowMs: Long): List<Long> = emptyList()
+    fun meshPendingLinks(): List<Long> = emptyList()
+    /** Status changes caused by the mesh since the last call (Queued → Sent → Delivered). */
+    fun meshTakeStatusUpdates(): List<MeshStatusUpdate> = emptyList()
+    /** 6-byte HELLO beacon (§22.7(12)) for advertisement data. */
+    fun meshBeacon(): ByteArray = ByteArray(0)
+    fun meshMaxLinks(): Int = 4
+
     fun keptMediaSettings(): KeptMediaPrefs = KeptMediaPrefs()
     /** Applies at once; returns how many kept copies were evicted (oldest first). */
     fun setKeptMediaSettings(p: KeptMediaPrefs, nowMs: Long): Int = 0

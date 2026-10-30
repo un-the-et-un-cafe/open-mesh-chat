@@ -295,7 +295,7 @@ struct ChatThreadView: View {
             .padding(.horizontal, 12).padding(.vertical, 8)
             .background(m.mine ? c.brandSoft : c.surface)
             .clipShape(RoundedRectangle(cornerRadius: 14))
-            Text(L(m.mine ? (m.status == .queued ? "msg_queued" : "msg_sent") : "msg_received")).font(.caption2).foregroundStyle(c.ink3)
+            Text(L(m.mine ? (m.status == .queued ? "msg_queued" : m.status == .delivered ? "msg_delivered" : "msg_sent") : "msg_received")).font(.caption2).foregroundStyle(c.ink3)
         }
         .frame(maxWidth: .infinity, alignment: m.mine ? .trailing : .leading)
         // No copy / share / forward / quote for burn content (B2).

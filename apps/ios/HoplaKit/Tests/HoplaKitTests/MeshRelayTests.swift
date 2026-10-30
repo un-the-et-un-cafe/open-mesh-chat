@@ -1,0 +1,91 @@
+import XCTest
+@testable import HoplaKit
+
+/// Multi-hop mesh relay (PROTOCOL §22): settings model, duty cycle, Android parity.
+final class MeshRelayTests: XCTestCase {
+    /// RL1/RL2/RL4: no toggle or cap setting; the model only reads "Storage used for relaying".
+    func testRl4SettingsShowOnlyStorageUsed() {
+        let core = FakeOmcpCore()
+        let m = MeshRelaySettings(core: core)
+        XCTAssertEqual(m.stats.storageUsedBytes, 0)
+        XCTAssertEqual(m.storageUsedMb, "0")
+        XCTAssertEqual(m.stats.storageCapBytes, 500_000_000, "RL2 automatic cap")
+        core.fakeMeshStats = MeshRelayStats(carried: 2, carriedBytes: 1_200_000, storageUsedBytes: 12_400_000)
+        m.refresh()
+        XCTAssertEqual(m.storageUsedMb, "12")
+        core.meshSetFreeStorage(freeBytes: 1, totalBytes: 100) // protocol default: no-op in the fake
+    }
+
+    func testRl4StorageUsedFormatsAsMb() {
+        XCTAssertEqual(MeshRelaySettings.formatMb(0), "0")
+        XCTAssertEqual(MeshRelaySettings.formatMb(330_000), "0.3")
+        XCTAssertEqual(MeshRelaySettings.formatMb(9_900_000), "9.9")
+        XCTAssertEqual(MeshRelaySettings.formatMb(120_400_000), "120")
+        XCTAssertEqual(MeshRelaySettings.formatMb(500_000_000), "500")
+    }
+
+    /// RL1/RL4 strings and UI: the read-only line exists in EN/FR; the toggle and cap strings
+    /// and controls are gone (reads the sources when present).
+    func testRl1Rl4NoToggleInStringsOrView() throws {
+        let ios = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent()
+        guard let strings = try? String(contentsOf: ios.appendingPathComponent("scripts/strings.py"), encoding: .utf8),
+              let you = try? String(contentsOf: ios.appendingPathComponent("OpenMeshChat/Screens/YouView.swift"), encoding: .utf8)
+        else { throw XCTSkip("app sources not available") }
+        XCTAssertTrue(strings.contains("\"relay_storage_used\": (\"Storage used for relaying: %@ MB\", \"Stockage utilisé pour le relais : %@ Mo\")"))
+        for k in ["relay_toggle", "relay_cap_title", "relay_privacy", "relay_usage"] {
+            XCTAssertFalse(strings.contains("\"\(k)"), k)
+        }
+        let view = you.components(separatedBy: "struct MeshRelaySettingsView").last ?? ""
+        XCTAssertFalse(view.contains("Toggle(") || view.contains("Picker("))
+    }
+
+    func testDutyCycleFollowsBattery() {
+        let charging = MeshDutyCycle.profile(batteryPercent: 10, charging: true, lowPowerMode: false, coreMaxLinks: 4)
+        XCTAssertTrue(charging.continuousScan)
+        XCTAssertEqual(charging.maxLinks, 4)
+        let normal = MeshDutyCycle.profile(batteryPercent: 80, charging: false, lowPowerMode: false, coreMaxLinks: 4)
+        XCTAssertTrue(normal.continuousScan)
+        XCTAssertGreaterThan(normal.tickMs, charging.tickMs)
+        let low = MeshDutyCycle.profile(batteryPercent: 10, charging: false, lowPowerMode: false, coreMaxLinks: 4)
+        XCTAssertFalse(low.continuousScan)
+        XCTAssertTrue(low.scanning(nowMs: 0))
+        XCTAssertFalse(low.scanning(nowMs: 31_000))
+        XCTAssertEqual(low.maxLinks, 2)
+        XCTAssertFalse(MeshDutyCycle.profile(batteryPercent: 90, charging: true, lowPowerMode: true, coreMaxLinks: 4).continuousScan)
+        XCTAssertTrue(MeshDutyCycle.profile(batteryPercent: -1, charging: false, lowPowerMode: false, coreMaxLinks: 4).continuousScan)
+    }
+
+    func testRelayLinksDefaultEmptyAndLinkHandleDefault() {
+        let r = LinkResult(outgoing: [], received: [], established: true, peerContactId: nil, flushed: 0)
+        XCTAssertTrue(r.relayLinks.isEmpty)
+        XCTAssertEqual(LinkResult(outgoing: [], received: [], established: true, peerContactId: nil, flushed: 0, relayLinks: [3]).relayLinks, [3])
+    }
+
+    /// Same thresholds as Android `MeshDutyCycle.kt` (reads the Kotlin source when present).
+    func testDutyCycleMatchesAndroid() throws {
+        let kt = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("android/app/src/main/java/chat/omcp/app/mesh/MeshDutyCycle.kt")
+        guard let src = try? String(contentsOf: kt, encoding: .utf8) else { throw XCTSkip("Android source not available") }
+        XCTAssertTrue(src.contains("LOW_BATTERY_PCT = \(MeshDutyCycle.lowBatteryPercent)"))
+        XCTAssertTrue(src.contains("Profile(ScanMode.LowPower, 30_000, 300_000, 60_000, minOf(2, coreMaxLinks))"))
+    }
+
+    func testMeshStatusQueuedSentDeliveredNeverBackwards() throws {
+        let (repo, _) = makeRepo()
+        let c1 = try repo.addContact(qr: "omcp:1:b0b:Bob", action: .chatWithoutVerifying).id
+        try repo.send(c1, text: "hi")
+        let id = try XCTUnwrap(repo.messages[c1]?.last?.id)
+        XCTAssertEqual(repo.messages[c1]?.last?.status, .queued)
+        repo.applyStatusUpdates([MeshStatusUpdate(msgId: id, contactId: c1, status: .sent)])
+        XCTAssertEqual(repo.messages[c1]?.last?.status, .sent)
+        repo.applyStatusUpdates([MeshStatusUpdate(msgId: id, contactId: c1, status: .delivered)])
+        XCTAssertEqual(repo.messages[c1]?.last?.status, .delivered)
+        repo.applyStatusUpdates([MeshStatusUpdate(msgId: id, contactId: c1, status: .sent)])
+        XCTAssertEqual(repo.messages[c1]?.last?.status, .delivered, "never goes backwards")
+        XCTAssertTrue(FakeOmcpCore().meshTakeStatusUpdates().isEmpty)
+    }
+}

@@ -4,6 +4,14 @@ import SwiftUI
 struct YouView: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.omcpColors) private var c
+    @AppStorage("omcp.themeMode") private var themeMode = ThemeMode.system.rawValue
+
+    private var buildLine: String {
+        let info = Bundle.main.infoDictionary
+        let v = info?["CFBundleShortVersionString"] as? String ?? "?"
+        let commit = info?["OMCPGitCommit"] as? String ?? "dev"
+        return L("about_version", v, "0.1.21") + " · " + commit
+    }
 
     var body: some View {
         let _ = model.revision
@@ -22,11 +30,22 @@ struct YouView: View {
                 Section {
                     NavigationLink { BackupSettingsView() } label: { row(L("backup_title"), L("backup_row_desc")) }
                     NavigationLink { StorageSettingsView() } label: { row(L("storage_title"), L("storage_keep_title")) }
+                    NavigationLink { MeshRelaySettingsView() } label: { row(L("relay_title"), L("relay_row_desc")) }
                     NavigationLink { NotificationSettingsView() } label: { row(L("notif_title"), L("notif_row_desc")) }
                     NavigationLink { PrivacySettingsView() } label: { row(L("privacy_title"), L("privacy_row_desc")) }
                     NavigationLink { GatewaySettingsView() } label: { row(L("gateway_title"), L("gateway_row_desc")) }
                 }
-                Section { row(L("about"), L("about_desc")) }
+                Section(L("appearance")) {
+                    Picker(L("appearance"), selection: $themeMode) {
+                        ForEach(ThemeMode.allCases) { m in Text(L(m.labelKey)).tag(m.rawValue) }
+                    }
+                    .pickerStyle(.inline)
+                    .labelsHidden()
+                }
+                Section {
+                    row(L("about"), L("about_desc"))
+                    Text(buildLine).font(.caption.monospaced()).foregroundStyle(c.ink2)
+                }
             }
             .navigationTitle(L("tab_you"))
         }
@@ -99,6 +118,24 @@ struct StorageSettingsView: View {
             }
         }
         .navigationTitle(L("storage_title"))
+        .onAppear(perform: reload)
+    }
+}
+
+/// Settings > Mesh relay (REQUIREMENTS RL4): only "Storage used for relaying: X MB", for
+/// information. No toggle and no cap picker: the relay is always on (RL1) and the cap is
+/// automatic (RL2). No mockup exists yet (DESIGN_SPEC Q36 placeholder): plain Form row.
+struct MeshRelaySettingsView: View {
+    @EnvironmentObject private var model: AppModel
+    @State private var usedBytes: Int64 = 0
+
+    private func reload() { usedBytes = model.core.meshStats().storageUsedBytes }
+
+    var body: some View {
+        Form {
+            Text(L("relay_storage_used", MeshRelaySettings.formatMb(usedBytes)))
+        }
+        .navigationTitle(L("relay_title"))
         .onAppear(perform: reload)
     }
 }

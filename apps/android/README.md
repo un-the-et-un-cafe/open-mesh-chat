@@ -124,3 +124,10 @@ App icon is a **placeholder** (redesign pending).
 
 ## Roadmap
 - **v0.3 Hopla Nearby** (not started): dating, plus a Nearby session (Android foreground service with an ongoing notification, 30/60/120 min) and area mode over the gateway geohash. Acceptance NX1–NX3: first card < 1 s from cache, an iOS session lasting 60 min while locked, and an area-mode match notified within 5 min.
+
+## Mesh relay
+
+Multi-hop store-and-forward relay (PROTOCOL §22) is described in [docs/MESH_RELAY.md](../../docs/MESH_RELAY.md).
+The relay is always on with an automatic 500 MB cap (REQUIREMENTS RL1–RL4): there is no relay switch or cap
+setting, and Settings › Mesh relay shows only "Storage used for relaying: X MB". The app reports free storage
+to the core on every mesh tick so the cap is lowered under 10 % free.

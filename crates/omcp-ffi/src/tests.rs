@@ -7,14 +7,15 @@ fn node(name: &str) -> Arc<OmcpNode> {
 /// Deliver every PDU in `out` to `to`, ping-ponging until quiet.
 fn pump(from: &MeshLink, to: &MeshLink, out: LinkOutput) -> Vec<ReceivedText> {
     let mut got = Vec::new();
-    let mut queue = vec![(false, out.outgoing)];
-    while let Some((dir_back, pdus)) = queue.pop() {
+    // FIFO: a BLE link delivers each direction in order (link AEAD counters).
+    let mut queue = std::collections::VecDeque::from([(false, out.outgoing)]);
+    while let Some((dir_back, pdus)) = queue.pop_front() {
         for p in pdus {
             let (dst, back) = if dir_back { (from, true) } else { (to, false) };
             let o = dst.on_pdu(p).unwrap();
             got.extend(o.received);
             if !o.outgoing.is_empty() {
-                queue.push((!back, o.outgoing));
+                queue.push_back((!back, o.outgoing));
             }
         }
     }
@@ -219,16 +220,16 @@ fn pump_all(
     // Like `pump`, but also collects OPENED events from both sides.
     let mut got = Vec::new();
     let mut opened = Vec::new();
-    let mut queue = vec![(false, out.outgoing)];
+    let mut queue = std::collections::VecDeque::from([(false, out.outgoing)]);
     opened.extend(out.opened);
-    while let Some((back, pdus)) = queue.pop() {
+    while let Some((back, pdus)) = queue.pop_front() {
         for p in pdus {
             let dst = if back { la } else { lb };
             let o = dst.on_pdu(p).unwrap();
             got.extend(o.received);
             opened.extend(o.opened);
             if !o.outgoing.is_empty() {
-                queue.push((!back, o.outgoing));
+                queue.push_back((!back, o.outgoing));
             }
         }
     }
@@ -519,7 +520,7 @@ fn has(hay: &[u8], needle: &[u8]) -> bool {
 fn contacts_chats_messages_and_queue_survive_restart() {
     let dir = tempfile::tempdir().unwrap();
     let pa = generate_recovery_phrase().unwrap();
-    let b = node("Bob");
+    let b = node("Bob Quintessa");
     let bob_id;
     {
         let a = open_node(&pa, "Alice", dir.path());
@@ -545,13 +546,13 @@ fn contacts_chats_messages_and_queue_survive_restart() {
     let raw = disk_bytes(dir.path());
     assert!(!has(&raw, b"queued while offline"));
     assert!(!has(&raw, b"hello Alice"));
-    assert!(!has(&raw, b"Bob"));
+    assert!(!has(&raw, b"Bob Quintessa")); // 3 bytes would match random ciphertext now and then
 
     // "Restart": a fresh node over the same file and key.
     let a = open_node(&pa, "Alice", dir.path());
     let c = a.contacts();
     assert_eq!(c.len(), 1);
-    assert_eq!(c[0].display_name, "Bob");
+    assert_eq!(c[0].display_name, "Bob Quintessa");
     assert!(c[0].verified);
     assert_eq!(a.chats().unwrap()[0].contact_id, bob_id);
     let ms = a.stored_messages(bob_id.clone()).unwrap();
@@ -602,7 +603,7 @@ fn wrong_storage_key_and_other_identity_are_refused() {
         OmcpNode::open(other, "B".into(), path, SKEY.to_vec()),
         Err(FfiError::Storage { .. })
     ));
-    assert_eq!(storage_schema_version(), 2);
+    assert_eq!(storage_schema_version(), 3);
     assert_eq!(generate_storage_key().unwrap().len(), 32);
 }
 
@@ -766,14 +767,15 @@ fn outgoing_file_and_received_file_reference_survive_restart() {
 /// Pump in both directions until quiet, collecting every output.
 fn pump_out(la: &MeshLink, lb: &MeshLink, out: LinkOutput) -> Vec<LinkOutput> {
     let mut outs = Vec::new();
-    let mut queue = vec![(false, out.outgoing.clone())];
+    // FIFO: a BLE link delivers each direction in order (link AEAD counters).
+    let mut queue = std::collections::VecDeque::from([(false, out.outgoing.clone())]);
     outs.push(out);
-    while let Some((back, pdus)) = queue.pop() {
+    while let Some((back, pdus)) = queue.pop_front() {
         for p in pdus {
             let dst = if back { la } else { lb };
             let o = dst.on_pdu(p).unwrap();
             if !o.outgoing.is_empty() {
-                queue.push((!back, o.outgoing.clone()));
+                queue.push_back((!back, o.outgoing.clone()));
             }
             outs.push(o);
         }
@@ -1582,4 +1584,959 @@ fn d_old_identity_backup_restores_legacy_contacts() {
     .unwrap();
     // A legacy contact: dialled by its id (the X25519 key) until re-keyed.
     assert_eq!(n.inner.lock().contacts[&[9; 32]].dh, [9; 32]);
+}
+
+// ---- multi-hop mesh relay (PROTOCOL §22 on BLE gossip) ----
+
+/// Flush every link in both directions until no PDUs move.
+fn settle(links: &[(Arc<MeshLink>, Arc<MeshLink>)]) -> Vec<LinkOutput> {
+    let mut outs = Vec::new();
+    for _ in 0..64 {
+        let mut moved = false;
+        for (x, y) in links {
+            for (from, to) in [(x, y), (y, x)] {
+                let o = from.flush().unwrap();
+                moved |= !o.outgoing.is_empty();
+                outs.extend(pump_out(from, to, o));
+            }
+        }
+        if !moved {
+            return outs;
+        }
+    }
+    panic!("mesh did not settle");
+}
+
+fn texts(outs: &[LinkOutput]) -> Vec<ReceivedText> {
+    outs.iter().flat_map(|o| o.received.clone()).collect()
+}
+
+fn befriend(x: &Arc<OmcpNode>, y: &Arc<OmcpNode>) {
+    x.add_contact_from_qr(y.qr_payload()).unwrap();
+    y.add_contact_from_qr(x.qr_payload()).unwrap();
+}
+
+fn up(a: &Arc<OmcpNode>, b: &Arc<OmcpNode>) -> (Arc<MeshLink>, Arc<MeshLink>, Vec<LinkOutput>) {
+    let (la, lb, mut outs) = link(a, b);
+    outs.extend(settle(&[(la.clone(), lb.clone())]));
+    (la, lb, outs)
+}
+
+fn down(l: &(Arc<MeshLink>, Arc<MeshLink>, Vec<LinkOutput>)) {
+    l.0.shutdown();
+    l.1.shutdown();
+}
+
+/// Mutual QR add plus one direct link: the first handshake creates the 1:1
+/// MLS group (§22.8(1)). Afterwards the two may never be in range again.
+fn befriend_mls(x: &Arc<OmcpNode>, y: &Arc<OmcpNode>) {
+    befriend(x, y);
+    let l = up(x, y);
+    down(&l);
+    assert!(x.mesh_ready(y.identity().peer_id_hex).unwrap());
+    assert!(y.mesh_ready(x.identity().peer_id_hex).unwrap());
+}
+
+fn status_of(n: &OmcpNode, contact: &str, id: &str) -> MessageStatus {
+    n.stored_messages(contact.to_string())
+        .unwrap()
+        .into_iter()
+        .find(|m| m.id_hex == id)
+        .unwrap()
+        .status
+}
+
+#[test]
+fn mesh_chain_a_b_c_store_and_forward_end_to_end() {
+    // A and C added each other (QR + first handshake: MLS group), then are
+    // never in range again; B is a friend of both.
+    let dir = tempfile::tempdir().unwrap();
+    let pb = generate_recovery_phrase().unwrap();
+    let a = node("Alice");
+    let mut b = open_node(&pb, "Bob", dir.path());
+    let c = node("Carol");
+    befriend(&a, &b);
+    befriend(&b, &c);
+    befriend_mls(&a, &c);
+    let aid = a.identity().peer_id_hex;
+    let cid = c.identity().peer_id_hex;
+    // RL1/RL2: always on, automatic 500 MB cap.
+    assert_eq!(b.mesh_stats().storage_cap_bytes, mesh_relay_cap_bytes());
+
+    // A meets B and sends to C: B carries an opaque envelope.
+    let secret = "meet at the north gate 7pm";
+    let mid = a.queue_message(cid.clone(), secret.into(), None).unwrap();
+    assert_eq!(a.mesh_stats().own_pending, 1);
+    assert_eq!(status_of(&a, &cid, &mid), MessageStatus::Queued);
+    let ab = up(&a, &b);
+    assert!(texts(&ab.2).is_empty(), "B must not receive A→C");
+    assert_eq!(b.mesh_stats().carried, 1);
+    // Handed to a relay: Sent.
+    assert_eq!(status_of(&a, &cid, &mid), MessageStatus::Sent);
+    let ups = a.mesh_take_status_updates();
+    assert!(ups
+        .iter()
+        .any(|u| u.id_hex == mid && u.status == MessageStatus::Sent));
+    assert_eq!(c.queued_for(aid.clone()), 0);
+    down(&ab);
+
+    // B restarts: the carry store survives, sealed at rest, without plaintext.
+    drop(ab);
+    drop(b);
+    let disk = disk_bytes(dir.path());
+    assert!(
+        !has(&disk, secret.as_bytes()),
+        "relay store holds no plaintext"
+    );
+    b = open_node(&pb, "Bob", dir.path());
+    assert_eq!(b.mesh_stats().carried, 1);
+    assert!(b.stored_messages(cid.clone()).unwrap().is_empty());
+
+    // Later B meets C: delivered once, attributed to A.
+    let bc = up(&b, &c);
+    let got = texts(&bc.2);
+    assert_eq!(got.len(), 1);
+    assert_eq!(got[0].text, secret);
+    assert_eq!(got[0].contact_id, aid);
+    let stored = c.stored_messages(aid.clone()).unwrap();
+    assert_eq!(stored.len(), 1);
+    // C's DELIVERY_ACK reached B: B dropped its copy and now carries the ack.
+    assert_eq!(b.mesh_stats().carried, 1, "only the ack is carried");
+    down(&bc);
+    // Meeting again does not deliver twice.
+    let bc2 = up(&b, &c);
+    assert!(texts(&bc2.2).is_empty());
+    down(&bc2);
+
+    // C replies the same way (C→B, then B→A).
+    c.queue_text(aid.clone(), "ok".into()).unwrap();
+    let cb = up(&c, &b);
+    assert!(texts(&cb.2).is_empty());
+    down(&cb);
+    let ba = up(&b, &a);
+    let got = texts(&ba.2);
+    assert_eq!(got.len(), 1);
+    assert_eq!(
+        (got[0].text.as_str(), got[0].contact_id.as_str()),
+        ("ok", cid.as_str())
+    );
+    // The end-to-end ack arrived with it: Delivered, own copy withdrawn.
+    assert_eq!(status_of(&a, &cid, &mid), MessageStatus::Delivered);
+    assert!(a
+        .mesh_take_status_updates()
+        .iter()
+        .any(|u| u.id_hex == mid && u.status == MessageStatus::Delivered));
+    assert_eq!(a.mesh_stats().own_pending, 1, "only A's ack for \"ok\"");
+    down(&ba);
+}
+
+#[test]
+fn mesh_waits_for_mls_group_before_relaying() {
+    // Contacts by QR only: no 1:1 MLS group yet, so nothing goes on the mesh.
+    let (a, b, c) = (node("A"), node("B"), node("C"));
+    befriend(&a, &b);
+    befriend(&a, &c);
+    let cid = c.identity().peer_id_hex;
+    let aid = a.identity().peer_id_hex;
+    assert!(!a.mesh_ready(cid.clone()).unwrap());
+    let mid = a.queue_message(cid.clone(), "later".into(), None).unwrap();
+    assert_eq!(a.mesh_stats().own_pending, 0);
+    let ab = up(&a, &b);
+    down(&ab);
+    assert_eq!(b.mesh_stats().carried, 0);
+    assert_eq!(a.queued_for(cid.clone()), 1, "still in the local queue");
+    // First direct link: group created (existing contacts migrate here) and
+    // the queue is delivered directly.
+    let ac = up(&a, &c);
+    assert_eq!(texts(&ac.2).len(), 1);
+    assert!(a.mesh_ready(cid.clone()).unwrap() && c.mesh_ready(aid).unwrap());
+    assert_eq!(status_of(&a, &cid, &mid), MessageStatus::Sent);
+    down(&ac);
+}
+
+#[test]
+fn mesh_device_key_rotation_mid_transit_still_delivers() {
+    let (a, b, c) = (node("A"), node("B"), node("C"));
+    befriend(&a, &b);
+    befriend(&b, &c);
+    befriend_mls(&a, &c);
+    let aid = a.identity().peer_id_hex;
+    let cid = c.identity().peer_id_hex;
+    a.queue_text(cid.clone(), "across a rotation".into())
+        .unwrap();
+    let ab = up(&a, &b);
+    down(&ab);
+    assert_eq!(b.mesh_stats().carried, 1);
+    // C rotates its device key while the envelope is with B.
+    let old = c.device_info().unwrap().fingerprint;
+    c.rotate_device_key().unwrap();
+    assert_ne!(c.device_info().unwrap().fingerprint, old);
+    // B still knows C's previous key and dials it: C answers with it.
+    let bc = up(&b, &c);
+    let got = texts(&bc.2);
+    assert_eq!(got.len(), 1);
+    assert_eq!(
+        (got[0].text.as_str(), got[0].contact_id.as_str()),
+        ("across a rotation", aid.as_str())
+    );
+    down(&bc);
+    // A (also holding the old key) reaches C directly, and C's new key works
+    // when C dials.
+    let ac = up(&a, &c);
+    down(&ac);
+    let ca = up(&c, &a);
+    down(&ca);
+    c.queue_text(aid.clone(), "after".into()).unwrap();
+    let cb = up(&c, &b);
+    down(&cb);
+    let ba = up(&b, &a);
+    assert!(texts(&ba.2).iter().any(|t| t.text == "after"));
+    down(&ba);
+}
+
+#[test]
+fn mesh_live_three_hop_line() {
+    // A — B — D — C, all links up at once; A and C are not neighbours.
+    let (a, b, d, c) = (node("A"), node("B"), node("D"), node("C"));
+    befriend(&a, &b);
+    befriend(&b, &d);
+    befriend(&d, &c);
+    befriend_mls(&a, &c);
+    let cid = c.identity().peer_id_hex;
+    let aid = a.identity().peer_id_hex;
+    let ab = up(&a, &b);
+    let bd = up(&b, &d);
+    let dc = up(&d, &c);
+    let links = [
+        (ab.0.clone(), ab.1.clone()),
+        (bd.0.clone(), bd.1.clone()),
+        (dc.0.clone(), dc.1.clone()),
+    ];
+    a.queue_text(cid.clone(), "three hops".into()).unwrap();
+    assert!(!a.mesh_pending_links().is_empty());
+    let outs = settle(&links);
+    let got = texts(&outs);
+    assert_eq!(got.len(), 1, "{got:?}");
+    assert_eq!(
+        (got[0].text.as_str(), got[0].contact_id.as_str()),
+        ("three hops", aid.as_str())
+    );
+    // RL1: every relay passes the next one on too (no switch to stop it).
+    a.queue_text(cid.clone(), "again".into()).unwrap();
+    let outs = settle(&links);
+    assert_eq!(texts(&outs).len(), 1);
+    let _ = mesh_max_links();
+    // Beacon is a 6-byte HELLO.
+    let beacon = a.mesh_beacon();
+    assert_eq!(beacon.len(), 6);
+    assert_eq!(beacon[0], 0x48);
+    assert!(a.mesh_tick(now_ms()).is_ok());
+}
+
+#[test]
+fn mesh_burn_after_read_crosses_relay_and_opened_returns() {
+    let (a, b, c) = (node("A"), node("B"), node("C"));
+    befriend(&a, &b);
+    befriend(&b, &c);
+    befriend_mls(&a, &c);
+    let aid = a.identity().peer_id_hex;
+    let cid = c.identity().peer_id_hex;
+    let id = a
+        .queue_message(
+            cid.clone(),
+            "self-destruct".into(),
+            Some(spec(BurnMode::OnOpen, 0, 3600)),
+        )
+        .unwrap();
+    let ab = up(&a, &b);
+    down(&ab);
+    let bc = up(&b, &c);
+    let got = texts(&bc.2);
+    assert_eq!(got.len(), 1);
+    assert!(got[0].burn.is_some());
+    assert!(got[0].text.is_empty(), "burn content is not in the event");
+    down(&bc);
+    let content = c.open_burn(id.clone(), now_ms()).unwrap().unwrap();
+    assert_eq!(content.text, "self-destruct");
+    c.close_burn(id.clone()).unwrap();
+    // OPENED travels back C → B → A.
+    let cb = up(&c, &b);
+    down(&cb);
+    let ba = up(&b, &a);
+    let opened: Vec<OpenedEvent> = ba.2.iter().flat_map(|o| o.opened.clone()).collect();
+    assert_eq!(opened.len(), 1);
+    assert_eq!(opened[0].contact_id, cid);
+    assert_eq!(opened[0].msg_id_hex, id);
+    assert!(!a.burn_is_live(id.clone()));
+    down(&ba);
+    let _ = aid;
+}
+
+#[test]
+fn mesh_direct_delivery_and_mesh_copy_do_not_duplicate() {
+    let (a, b, c) = (node("A"), node("B"), node("C"));
+    befriend(&a, &b);
+    befriend(&b, &c);
+    befriend_mls(&a, &c);
+    let cid = c.identity().peer_id_hex;
+    a.queue_text(cid.clone(), "once".into()).unwrap();
+    let ab = up(&a, &b); // B carries a copy
+    down(&ab);
+    let ac = up(&a, &c); // direct delivery
+    assert_eq!(texts(&ac.2).len(), 1);
+    assert_eq!(a.mesh_stats().own_pending, 0, "own mesh copy withdrawn");
+    down(&ac);
+    let bc = up(&b, &c); // the relayed copy is dropped as a duplicate
+    assert!(texts(&bc.2).is_empty());
+}
+
+// ---- Relay RL1–RL4 (apps/REQUIREMENTS.md "Relay (store and forward)") ----
+
+/// A, B, C where only B is ever between A and C; A has queued one message
+/// for C and handed it to B. Returns (a, b, c, cid, B's db dir).
+fn carried_by_b() -> (
+    Arc<OmcpNode>,
+    Arc<OmcpNode>,
+    Arc<OmcpNode>,
+    String,
+    tempfile::TempDir,
+    String,
+) {
+    let dir = tempfile::tempdir().unwrap();
+    let pb = generate_recovery_phrase().unwrap();
+    let a = node("A");
+    let b = open_node(&pb, "B", dir.path());
+    let c = node("C");
+    befriend(&a, &b);
+    befriend(&b, &c);
+    befriend_mls(&a, &c);
+    let cid = c.identity().peer_id_hex;
+    a.queue_text(cid.clone(), "carried".into()).unwrap();
+    let ab = up(&a, &b);
+    down(&ab);
+    assert_eq!(b.mesh_stats().carried, 1);
+    (a, b, c, cid, dir, pb)
+}
+
+#[test]
+fn rl1_relay_always_on_old_off_setting_ignored() {
+    let (_a, b, c, _cid, dir, pb) = carried_by_b();
+    // A row left by the removed switch ("relay off", 10 MB) has no effect.
+    b.inner
+        .lock()
+        .db
+        .put_meta(b"mesh-settings", &(false, 10_000_000u64))
+        .unwrap();
+    drop(b);
+    let b = open_node(&pb, "B", dir.path());
+    assert_eq!(b.mesh_stats().carried, 1, "still carrying after restart");
+    assert_eq!(b.mesh_stats().storage_cap_bytes, mesh_relay_cap_bytes());
+    let bc = up(&b, &c);
+    assert_eq!(texts(&bc.2).len(), 1);
+    down(&bc);
+}
+
+#[test]
+fn rl2_automatic_cap_500_mb_lowered_on_low_storage() {
+    assert_eq!(mesh_relay_cap_bytes(), 500_000_000);
+    let (_a, b, c, _cid, dir, pb) = carried_by_b();
+    let gb = 1_000_000_000u64;
+    b.mesh_set_free_storage(64 * gb, 128 * gb).unwrap();
+    assert_eq!(b.mesh_stats().storage_cap_bytes, 500_000_000);
+    b.mesh_set_free_storage(5 * gb, 100 * gb).unwrap();
+    assert_eq!(b.mesh_stats().storage_cap_bytes, 250_000_000);
+    assert_eq!(b.mesh_stats().carried, 1);
+    // Disk full: the carried envelope is dropped, also on disk.
+    b.mesh_set_free_storage(0, 100 * gb).unwrap();
+    assert_eq!(b.mesh_stats().carried, 0);
+    assert_eq!(b.mesh_stats().storage_used_bytes, 0);
+    drop(b);
+    let b = open_node(&pb, "B", dir.path());
+    assert_eq!(b.mesh_stats().carried, 0);
+    let bc = up(&b, &c);
+    assert!(texts(&bc.2).is_empty());
+    down(&bc);
+}
+
+#[test]
+fn rl2_carry_class_persisted_and_legacy_rows_mapped() {
+    let (_a, b, _c, _cid, _dir, _pb) = carried_by_b();
+    let rows = b.inner.lock().db.carry_items().unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        rows[0].class,
+        Some(omcp_core::sync::budget::RelayClass::Contact.to_u8())
+    );
+    let mut legacy = rows[0].clone();
+    legacy.class = None;
+    assert_eq!(
+        mesh::carry_class(&legacy),
+        omcp_core::sync::budget::RelayClass::Contact
+    );
+    legacy.own = true;
+    assert_eq!(
+        mesh::carry_class(&legacy),
+        omcp_core::sync::budget::RelayClass::OwnChat
+    );
+}
+
+#[test]
+fn rl3_carried_copy_deleted_on_delivery_ack() {
+    let (_a, b, c, _cid, _dir, _pb) = carried_by_b();
+    let before = b.mesh_stats();
+    let bc = up(&b, &c);
+    assert_eq!(texts(&bc.2).len(), 1);
+    down(&bc);
+    // C's ack reached B: the message is gone, only the (small) ack is carried.
+    let after = b.mesh_stats();
+    assert_eq!(after.carried, 1);
+    assert!(b
+        .inner
+        .lock()
+        .db
+        .carry_items()
+        .unwrap()
+        .iter()
+        .all(|r| r.ack_of.is_some()));
+    assert!(after.carried_bytes <= before.carried_bytes);
+}
+
+#[test]
+fn rl4_storage_used_for_relaying_reported() {
+    let fresh = node("Z");
+    assert_eq!(fresh.mesh_stats().storage_used_bytes, 0);
+    let (a, b, _c, _cid, _dir, _pb) = carried_by_b();
+    let s = b.mesh_stats();
+    assert!(s.storage_used_bytes > 0);
+    // B relays only for others: everything it stores is relayed traffic.
+    assert_eq!(s.storage_used_bytes, s.carried_bytes);
+    // A's own pending copy counts towards A's relay storage as well.
+    let sa = a.mesh_stats();
+    assert_eq!(sa.own_pending, 1);
+    assert!(sa.storage_used_bytes > sa.carried_bytes);
+}
+
+// ---- Link PDU registry (PROTOCOL §21.9) ----
+
+#[test]
+fn mls_setup_is_link_pdu_0x04_per_registry() {
+    // §21.9: 0x03 MESH_FRAME, 0x04 MLS_SETUP; 0x01/0x02 are the handshake
+    // and link-data PDUs. No two kinds share a value.
+    assert_eq!(mesh::PDU_MLS_SETUP, 0x04);
+    assert_eq!(mesh::PDU_MESH, 0x03);
+    let kinds = [PDU_HANDSHAKE, PDU_LINK, mesh::PDU_MESH, mesh::PDU_MLS_SETUP];
+    let uniq: std::collections::BTreeSet<u8> = kinds.iter().copied().collect();
+    assert_eq!(uniq.len(), kinds.len());
+    let setup = [
+        mesh::SETUP_KEY_PACKAGE,
+        mesh::SETUP_WELCOME,
+        mesh::SETUP_JOINED,
+    ];
+    assert_eq!(setup, [0x01, 0x02, 0x03]);
+    // On the wire: the first direct link carries MLS setup as 0x04 PDUs and
+    // nothing outside the registry.
+    let (a, b) = (node("A"), node("B"));
+    befriend(&a, &b);
+    let l = up(&a, &b);
+    let first: Vec<u8> =
+        l.2.iter()
+            .flat_map(|o| o.outgoing.iter().map(|p| p[0]))
+            .collect();
+    assert!(first.contains(&0x04), "{first:?}");
+    assert!(first.iter().all(|k| uniq.contains(k)), "{first:?}");
+    assert!(a.mesh_ready(b.identity().peer_id_hex).unwrap());
+    down(&l);
+    // Unknown PDU kinds are refused.
+    let lb = b.open_responder_link().unwrap();
+    assert!(lb.on_pdu(vec![0x05, 0, 0]).is_err());
+}
+
+// ---- Hopla News (REQUIREMENTS § Hopla News) ----
+
+const NEWS_FIXTURE: &str =
+    include_str!("../../omcp-core/src/news/fixtures/google_news_world_en.xml");
+
+/// RFC 822 date for unix ms (GMT).
+fn rfc822(ms: u64) -> String {
+    let secs = ms / 1000;
+    let (days, rem) = ((secs / 86_400) as i64, secs % 86_400);
+    // Civil from days (H. Hinnant).
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    const MON: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    format!(
+        "Mon, {d:02} {} {y} {:02}:{:02}:{:02} GMT",
+        MON[(m - 1) as usize],
+        rem / 3600,
+        rem % 3600 / 60,
+        rem % 60
+    )
+}
+
+/// The core fixture with its dates moved to "now": item k is k × 10 min old,
+/// except the fixture's week-old item, which stays expired.
+fn news_feed_now() -> String {
+    let now = now_ms();
+    let mut out = String::new();
+    let mut rest = NEWS_FIXTURE;
+    let mut k = 0u64;
+    while let Some(i) = rest.find("<pubDate>") {
+        let j = rest[i..].find("</pubDate>").unwrap() + i;
+        out.push_str(&rest[..i + 9]);
+        let old = &rest[i + 9..j];
+        let ms = if old.contains("17 Oct") {
+            now - 8 * 24 * 3_600_000
+        } else {
+            now - (k + 1) * 600_000
+        };
+        out.push_str(&rfc822(ms));
+        k += 1;
+        rest = &rest[j..];
+    }
+    out.push_str(rest);
+    out
+}
+
+fn world_en_url() -> String {
+    "https://news.google.com/rss/headlines/section/topic/WORLD?hl=en-US&gl=US&ceid=US:en".into()
+}
+
+#[test]
+fn news_prefs_default_world_headlines_and_due_feeds() {
+    let n = node("N");
+    let p = n.news_prefs();
+    assert_eq!(p.topics, vec!["world", "emergencies"]);
+    assert_eq!(p.langs, vec!["en"]);
+    assert!(p.alerts_notify, "emergency alerts notify by default");
+    let now = now_ms();
+    let due = n.news_due_feeds(now);
+    assert_eq!(due.len(), 2);
+    assert!(due.contains(&world_en_url()));
+    assert!(due
+        .iter()
+        .all(|u| u.starts_with("https://news.google.com/rss")));
+    // Asked for: not due again before the retry delay; after a successful
+    // ingest, not before 30 min.
+    assert!(n.news_due_feeds(now + 60_000).is_empty());
+    assert_eq!(n.news_due_feeds(now + news::FETCH_RETRY_MS).len(), 2);
+    n.news_ingest_rss(world_en_url(), news_feed_now(), now)
+        .unwrap();
+    let later = now + 2 * news::FETCH_RETRY_MS;
+    assert!(!n.news_due_feeds(later).contains(&world_en_url()));
+    assert!(n
+        .news_due_feeds(now + news_fetch_interval_ms())
+        .contains(&world_en_url()));
+    // City + French: local feed per language; bad input refused.
+    let p2 = n
+        .news_set_prefs(NewsPrefs {
+            city: Some("  Riverside ".into()),
+            langs: vec!["fr".into(), "en".into()],
+            ..p.clone()
+        })
+        .unwrap();
+    assert_eq!(p2.city.as_deref(), Some("Riverside"));
+    let due = n.news_due_feeds(now + 10 * news_fetch_interval_ms());
+    assert!(due.contains(
+        &"https://news.google.com/rss/search?q=riverside&hl=fr&gl=FR&ceid=FR:fr".to_string()
+    ));
+    assert_eq!(due.len(), 6);
+    for bad in [
+        NewsPrefs {
+            topics: vec!["reports".into()],
+            ..p.clone()
+        },
+        NewsPrefs {
+            topics: vec!["local".into()],
+            ..p.clone()
+        },
+        NewsPrefs {
+            langs: vec!["de".into()],
+            ..p.clone()
+        },
+        NewsPrefs {
+            city: Some("a/b".into()),
+            ..p.clone()
+        },
+    ] {
+        assert!(n.news_set_prefs(bad).is_err());
+    }
+}
+
+#[test]
+fn nw2_ingest_dedups_by_source_and_link_and_relays_to_neighbours_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let pb = generate_recovery_phrase().unwrap();
+    let a = node("Ana");
+    let b = open_node(&pb, "Ben", dir.path());
+    befriend(&a, &b);
+    let now = now_ms();
+    assert_eq!(
+        a.news_ingest_rss(world_en_url(), news_feed_now(), now)
+            .unwrap(),
+        3
+    );
+    // Same feed again (or another phone's copy): nothing new.
+    assert_eq!(
+        a.news_ingest_rss(world_en_url(), news_feed_now(), now)
+            .unwrap(),
+        0
+    );
+    let mine = a.news_feed("top".into()).unwrap();
+    assert_eq!(mine.len(), 3);
+    assert!(mine.iter().all(|s| s.fetched_here && s.via.is_none()));
+    assert_eq!(mine[0].source_name, "Google News");
+    assert_eq!(mine[0].title, "Riverside council opens new flood barrier");
+    // B (offline until now) meets A once and catches up.
+    let l = up(&a, &b);
+    assert!(
+        texts(&l.2).is_empty(),
+        "news never shows up as chat messages"
+    );
+    let got = b.news_feed("top".into()).unwrap();
+    assert_eq!(got.len(), 3, "each story once");
+    assert!(got
+        .iter()
+        .all(|s| s.via.as_deref() == Some("Ana") && !s.fetched_here));
+    assert_eq!(b.news_feed("world".into()).unwrap().len(), 3);
+    assert!(b.news_feed("sport".into()).unwrap().is_empty());
+    // B already holds A's stories: its own fetch of the same feed adds none.
+    assert_eq!(
+        b.news_ingest_rss(world_en_url(), news_feed_now(), now)
+            .unwrap(),
+        0
+    );
+    down(&l);
+    // Stories, their class and the "via" survive a restart.
+    let st = b.news_status();
+    assert_eq!(st.stories, 3);
+    assert!(st.storage_bytes > 0 && st.storage_cap_bytes == 20_000_000);
+    drop(b);
+    let b = open_node(&pb, "Ben", dir.path());
+    let again = b.news_feed("top".into()).unwrap();
+    assert_eq!(again, got);
+}
+
+#[test]
+fn nw3_news_rows_are_stored_in_the_news_class() {
+    let dir = tempfile::tempdir().unwrap();
+    let pa = generate_recovery_phrase().unwrap();
+    let a = open_node(&pa, "Ana", dir.path());
+    a.news_ingest_rss(world_en_url(), news_feed_now(), now_ms())
+        .unwrap();
+    let rows = a.inner.lock().db.carry_items().unwrap();
+    assert_eq!(rows.len(), 3);
+    assert!(rows
+        .iter()
+        .all(|r| !r.own && r.class == Some(omcp_core::sync::budget::RelayClass::News.to_u8())));
+    assert_eq!(a.mesh_stats().own_pending, 0, "news is not an own chat");
+}
+
+#[test]
+fn news_publish_ban_ingest_accepts_only_subscribed_google_news_feeds() {
+    let n = node("N");
+    let now = now_ms();
+    let feed = news_feed_now();
+    for url in [
+        "https://rumours.example/rss".to_string(),
+        "https://news.google.com/rss/headlines/section/topic/SPORTS?hl=en-US&gl=US&ceid=US:en"
+            .into(),
+        format!("{}&x=1", world_en_url()),
+    ] {
+        assert!(n.news_ingest_rss(url, feed.clone(), now).is_err());
+    }
+    assert!(n
+        .news_ingest_rss(world_en_url(), "<html>not rss</html>".into(), now)
+        .is_err());
+    assert_eq!(n.news_status().stories, 0);
+    // There is no other way to create news: the only producers are the
+    // ingest above and relayed envelopes, which the engine checks
+    // (core: news_publish_ban_relays_drop_news_not_from_the_rss_ingest_path).
+}
+
+#[test]
+fn news_emergency_alerts_notify_by_default_and_can_be_turned_off() {
+    let n = node("N");
+    let now = now_ms();
+    let url = "https://news.google.com/rss/search?q=%22emergency%20alert%22%20OR%20evacuation&hl=en-US&gl=US&ceid=US:en";
+    assert!(n.news_due_feeds(now).contains(&url.to_string()));
+    assert_eq!(
+        n.news_ingest_rss(url.into(), news_feed_now(), now).unwrap(),
+        3
+    );
+    let alerts = n.news_take_alerts();
+    assert_eq!(alerts.len(), 3);
+    assert!(alerts.iter().all(|s| s.emergency));
+    assert!(n.news_take_alerts().is_empty());
+    // Pinned first in Top.
+    n.news_ingest_rss(world_en_url(), news_feed_now(), now)
+        .unwrap();
+    let top = n.news_feed("top".into()).unwrap();
+    assert!(top.len() >= 3 && top[..3].iter().all(|s| s.emergency));
+    let p = n.news_prefs();
+    n.news_set_prefs(NewsPrefs {
+        alerts_notify: false,
+        ..p
+    })
+    .unwrap();
+    assert!(n.news_take_alerts().is_empty());
+}
+
+#[test]
+fn nw1_offline_phone_catches_up_from_one_neighbour_within_60s() {
+    let a = node("Ana");
+    let b = node("Ben");
+    befriend(&a, &b);
+    let now = now_ms();
+    a.news_ingest_rss(world_en_url(), news_feed_now(), now)
+        .unwrap();
+    // B was offline for 72 h (never fetched); one encounter catches it up.
+    let t0 = std::time::Instant::now();
+    let l = up(&a, &b);
+    let got = b.news_feed("top".into()).unwrap();
+    assert_eq!(got.len(), 3);
+    assert!(t0.elapsed().as_secs() < 60);
+    down(&l);
+}
+
+#[test]
+fn nw5_city_channel_subscribes_only_that_city() {
+    let n = node("N");
+    let p = n.news_prefs();
+    n.news_set_prefs(NewsPrefs {
+        city: Some("Lyon".into()),
+        ..p
+    })
+    .unwrap();
+    let due = n.news_due_feeds(now_ms());
+    let local: Vec<_> = due
+        .iter()
+        .filter(|u| u.contains("Lyon") || u.contains("lyon"))
+        .collect();
+    assert!(!local.is_empty(), "the city's feed is subscribed: {due:?}");
+    assert!(
+        !due.iter().any(|u| u.contains("Paris")),
+        "no other city channels"
+    );
+    // Location is never sent: only the city name appears in the feed URL.
+    assert!(due
+        .iter()
+        .all(|u| !u.contains("lat") && !u.contains("geo=")));
+}
+
+#[test]
+fn nw6_news_card_round_trips_through_a_chat_message() {
+    let n = node("N");
+    let now = now_ms();
+    n.news_ingest_rss(world_en_url(), news_feed_now(), now)
+        .unwrap();
+    let s = n.news_feed("top".into()).unwrap()[0].clone();
+    let text = news::news_card_text(s.clone());
+    let (_a, _b, la, lb) = paired();
+    pump(&la, &lb, la.start().unwrap());
+    let got = pump(&la, &lb, la.send_text(text).unwrap());
+    let card = news::parse_news_card(got[0].text.clone()).expect("card");
+    assert_eq!(card.id_hex, s.id_hex);
+    assert_eq!(card.link, s.link);
+    assert_eq!(card.title, s.title);
+    assert!(news::parse_news_card("hello".into()).is_none());
+    assert!(news::parse_news_card(format!(
+        "{}{}\ngn\nX\nhttp://x\nT",
+        news::NEWS_CARD_PREFIX,
+        s.id_hex
+    ))
+    .is_none());
+}
+
+#[test]
+fn news_fetch_plan_applies_gateway_rules() {
+    let n = node("N");
+    let now = now_ms();
+    let p = n.news_fetch_plan(Network::Cellular { metered: true }, true, now);
+    assert!(p.feeds.is_empty() && p.blocked.as_deref() == Some("wifi_only"));
+    let p = n.news_fetch_plan(Network::Offline, true, now);
+    assert_eq!(p.blocked.as_deref(), Some("offline"));
+    let p = n.news_fetch_plan(Network::Cellular { metered: true }, false, now);
+    assert!(!p.feeds.is_empty() && p.metered_warning && p.blocked.is_none());
+    assert_eq!(p.daily_cap_bytes, 500_000_000);
+    n.news_ingest_rss(world_en_url(), news_feed_now(), now)
+        .unwrap();
+    assert!(
+        n.news_fetch_plan(Network::Wifi { metered: false }, true, now)
+            .used_today_bytes
+            > 0
+    );
+}
+
+/// Full round trip (CB1–CB4, RS1/RS2): identity + two chats on disk, back up all
+/// text with the key derived from the 24 words, wipe the install, restore from
+/// the 24 words alone, and compare every message field by field.
+#[test]
+fn roundtrip_backup_wipe_restore_from_24_words_is_identical() {
+    let phrase = generate_recovery_phrase().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let a = open_node(&phrase, "Alice", dir.path());
+    let b = node("Bob");
+    let c = node("Carol");
+    let mut before = Vec::new();
+    let mut blobs = Vec::new();
+    let mut ident_blob = None;
+    let key = generate_backup_key().unwrap();
+    for (peer, n) in [(&b, 12usize), (&c, 7usize)] {
+        peer.add_contact_from_qr(a.qr_payload()).unwrap();
+        let cp = a.add_contact_from_qr(peer.qr_payload()).unwrap();
+        peer.verify_contact_from_qr(a.qr_payload()).unwrap();
+        a.set_verified(cp.contact_id.clone(), true).unwrap();
+        let la = a.open_initiator_link(cp.contact_id.clone()).unwrap();
+        let lp = peer.open_responder_link().unwrap();
+        pump(&la, &lp, la.start().unwrap());
+        for i in 0..n {
+            pump(
+                &la,
+                &lp,
+                la.send_text(format!("{i} → {} · émoji 🎉", cp.display_name))
+                    .unwrap(),
+            );
+            pump(&lp, &la, lp.send_text(format!("re {i}")).unwrap());
+        }
+        la.shutdown();
+        lp.shutdown();
+        before.push((
+            cp.contact_id.clone(),
+            a.stored_messages(cp.contact_id).unwrap(),
+        ));
+    }
+    backup_all(&a, 1, &mut blobs);
+    ident_blob.replace(
+        a.create_backup_with_key(key.clone(), "t".into(), 1)
+            .unwrap(),
+    );
+    // Key really comes from the words: same phrase → same key, other phrase → none.
+    assert!(matches!(
+        node("Mallory").chat_backup_restore(blobs.clone()),
+        Err(FfiError::WrongBackupPassword)
+    ));
+    // Wipe: drop the node and every file of the install.
+    drop(a);
+    drop(dir);
+    let dir2 = tempfile::tempdir().unwrap();
+    let r = open_backup_with_key(ident_blob.unwrap(), key).unwrap();
+    assert_eq!(r.phrase, phrase);
+    let a2 = open_node(&phrase, "Alice", dir2.path());
+    assert!(a2.device_info().unwrap().restored_at_ms.is_none());
+    for ct in r.contacts {
+        a2.restore_contact_with_key(ct.contact_id, ct.display_name, ct.verified, ct.dh_hex)
+            .unwrap();
+    }
+    a2.mark_restored(now_ms()).unwrap();
+    let sum = a2.chat_backup_restore(blobs).unwrap();
+    let _ = sum;
+    for (cid, msgs) in &before {
+        let after = a2.stored_messages(cid.clone()).unwrap();
+        let key = |m: &StoredMessage| (m.id_hex.clone(), m.text.clone(), m.mine, m.time_ms);
+        assert_eq!(
+            after.iter().map(key).collect::<Vec<_>>(),
+            msgs.iter().map(key).collect::<Vec<_>>(),
+            "chat {cid} identical after restore"
+        );
+        assert!(!after.is_empty());
+    }
+    // Restored indicator (RS1) is set on the new install.
+    assert!(a2.device_info().unwrap().restored_at_ms.is_some());
+    // RS2: contacts' verified badge for the restored account resets on next link.
+    let alice = a2.identity().peer_id_hex;
+    for peer in [&b, &c] {
+        assert!(peer
+            .contacts()
+            .iter()
+            .any(|x| x.contact_id == alice && x.verified));
+        link(&a2, peer);
+        let x = peer
+            .contacts()
+            .into_iter()
+            .find(|x| x.contact_id == alice)
+            .unwrap();
+        assert!(!x.verified, "verified badge reset");
+        assert!(x.restored_at_ms.is_some(), "restored notice");
+    }
+}
+
+/// News prefs and the gateway fetch byte counter survive an app restart, so the
+/// 500 MB/day cap holds (design §5.115; gateway rules).
+#[test]
+fn news_prefs_and_fetch_byte_counter_survive_restart() {
+    let phrase = generate_recovery_phrase().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let now = now_ms();
+    let used;
+    {
+        let n = open_node(&phrase, "N", dir.path());
+        let mut p = n.news_prefs();
+        p.topics = vec!["tech".into(), "emergencies".into()];
+        p.langs = vec!["en".into(), "fr".into()];
+        p.city = Some("Riverside".into());
+        p.muted = vec!["sport".into()];
+        p.alerts_notify = false;
+        n.news_set_prefs(p).unwrap();
+        let url = n.news_due_feeds(now).into_iter().next().unwrap();
+        let _ = n.news_ingest_rss(url, news_feed_now(), now);
+        used = n
+            .news_fetch_plan(Network::Wifi { metered: false }, true, now)
+            .used_today_bytes;
+        assert!(used > 0);
+    }
+    let n = open_node(&phrase, "N", dir.path());
+    let p = n.news_prefs();
+    assert_eq!(p.city.as_deref(), Some("Riverside"));
+    assert_eq!(p.muted, vec!["sport".to_string()]);
+    assert!(!p.alerts_notify);
+    assert!(p.langs.contains(&"fr".to_string()));
+    assert_eq!(
+        n.news_fetch_plan(Network::Wifi { metered: false }, true, now)
+            .used_today_bytes,
+        used,
+        "byte counter persisted"
+    );
+    // Next day the counter resets.
+    assert_eq!(
+        n.news_fetch_plan(Network::Wifi { metered: false }, true, now + 86_400_000)
+            .used_today_bytes,
+        0
+    );
+}
+
+#[test]
+fn news_fetch_role_is_one_flag() {
+    use crate::news::news_may_fetch;
+    assert!(news_may_fetch(true));
+    // Product decision: any phone with internet fetches and relays news into the mesh.
+    assert!(news_may_fetch(false));
+}
+
+#[test]
+fn news_ingests_real_google_news_fr_response() {
+    let xml = include_str!("../../omcp-core/src/news/fixtures/google_news_world_fr_live.xml");
+    let n = node("N");
+    let mut p = n.news_prefs();
+    p.langs = vec!["fr".into()];
+    n.news_set_prefs(p).unwrap();
+    let url = "https://news.google.com/rss/headlines/section/topic/WORLD?hl=fr&gl=FR&ceid=FR:fr";
+    let newest = omcp_core::news::rss::parse_rss(xml)
+        .unwrap()
+        .iter()
+        .filter_map(|i| i.published_ms)
+        .max()
+        .unwrap();
+    let added = n
+        .news_ingest_rss(url.into(), xml.into(), newest + 60_000)
+        .unwrap();
+    assert!(added > 0, "real FR feed yields stories");
 }

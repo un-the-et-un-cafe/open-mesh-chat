@@ -9,6 +9,14 @@ repository = "https://github.com/un-the-et-un-cafe/open-mesh-chat"
 
 # The §22.6 simulations (10k nodes, 10^6 tags) run under `cargo test`; keep
 # them fast in CI by optimising the simulator, the core and dependencies.
+# Release: size-optimised whole-program build for the Android/iOS core
+# library (with 1:1 MLS linked in, the arm64 APK stays under 25 MB only with
+# all three). Costs: slower release builds; "z" trades some CPU speed for size.
+[profile.release]
+lto = "fat"
+codegen-units = 1
+opt-level = "z"
+
 [profile.dev.package.omcp-sim]
 opt-level = 3
 

@@ -232,11 +232,15 @@ public struct LinkResult: Sendable {
     public var resendAsks: [MediaRequestInfo] = []
     /// CB3: placeholder state changes (requested / unavailable).
     public var mediaUpdates: [MediaUpdateInfo] = []
+    /// Other links (by `CoreLink.handle`) with mesh frames waiting: flush them (multi-hop relay, §22).
+    public var relayLinks: [UInt64] = []
     public init(outgoing: [Data], received: [IncomingText], established: Bool, peerContactId: String?, flushed: Int,
                 opened: [OpenedInfo] = [], fileProgress: [FileProgressInfo] = [], files: [ReceivedFileInfo] = [],
                 fileFailures: [FileFailureInfo] = [], morePending: Bool = false,
                 restoreNotices: [RestoreNoticeInfo] = [], mediaRequests: [MediaRequestInfo] = [],
-                resendAsks: [MediaRequestInfo] = [], mediaUpdates: [MediaUpdateInfo] = []) {
+                resendAsks: [MediaRequestInfo] = [], mediaUpdates: [MediaUpdateInfo] = [],
+                relayLinks: [UInt64] = []) {
+        self.relayLinks = relayLinks
         self.restoreNotices = restoreNotices
         self.mediaRequests = mediaRequests
         self.resendAsks = resendAsks
@@ -478,10 +482,106 @@ public protocol CoreLink: AnyObject {
     func flush() throws -> LinkResult
     var isEstablished: Bool { get }
     func close()
+    /// Opaque Rust link handle, matched against `LinkResult.relayLinks`.
+    var handle: UInt64 { get }
+}
+
+public extension CoreLink {
+    var handle: UInt64 { 0 }
+}
+
+/// Mesh relay counters from Rust. The relay is always on with an automatic cap
+/// (REQUIREMENTS RL1, RL2); Settings shows only `storageUsedBytes` (RL4).
+public struct MeshRelayStats: Equatable, Sendable {
+    public var carried: Int
+    public var carriedBytes: Int64
+    public var ownPending: Int
+    public var neighbours: Int
+    /// RL4 "Storage used for relaying".
+    public var storageUsedBytes: Int64
+    /// RL2 automatic cap in force (500 MB unless storage is low).
+    public var storageCapBytes: Int64
+    public init(carried: Int = 0, carriedBytes: Int64 = 0, ownPending: Int = 0, neighbours: Int = 0,
+                storageUsedBytes: Int64 = 0, storageCapBytes: Int64 = 500_000_000) {
+        self.carried = carried
+        self.carriedBytes = carriedBytes
+        self.ownPending = ownPending
+        self.neighbours = neighbours
+        self.storageUsedBytes = storageUsedBytes
+        self.storageCapBytes = storageCapBytes
+    }
+}
+
+/// Mesh-caused status change (PROTOCOL §22.8(3)): `.sent` = handed to a relay,
+/// `.delivered` = end-to-end ack received.
+public struct MeshStatusUpdate: Equatable, Sendable {
+    public var msgId: String
+    public var contactId: String
+    public var status: ChatMessage.Status
+    public init(msgId: String, contactId: String, status: ChatMessage.Status) {
+        self.msgId = msgId
+        self.contactId = contactId
+        self.status = status
+    }
 }
 
 /// App-facing protocol core. Production: `RustOmcpCore` (omcp-ffi via UniFFI, in the app
 /// target). Previews/tests: `FakeOmcpCore`. The UI layer never invents crypto results.
+/// Hopla News story (REQUIREMENTS "Hopla News", v0.4). Read-only: users cannot publish.
+public struct NewsStory: Equatable, Sendable, Identifiable {
+    public var id: String
+    public var topic: String
+    public var title: String
+    public var summary: String
+    public var publisher: String
+    public var sourceName: String
+    public var link: String
+    public var via: String?
+    public var emergency: Bool
+    public init(id: String, topic: String, title: String, summary: String, publisher: String, sourceName: String, link: String, via: String?, emergency: Bool) {
+        self.id = id; self.topic = topic; self.title = title; self.summary = summary
+        self.publisher = publisher; self.sourceName = sourceName; self.link = link; self.via = via; self.emergency = emergency
+    }
+}
+
+/// What a phone may fetch now under the gateway rules (Rust `news_fetch_plan`).
+public struct NewsFetchPlan: Equatable, Sendable {
+    public var feeds: [String]
+    public var meteredWarning: Bool
+    public var blocked: String?
+    public var usedTodayBytes: Int64
+    public var dailyCapBytes: Int64
+    public init(feeds: [String] = [], meteredWarning: Bool = false, blocked: String? = "offline", usedTodayBytes: Int64 = 0, dailyCapBytes: Int64 = 500_000_000) {
+        self.feeds = feeds; self.meteredWarning = meteredWarning; self.blocked = blocked
+        self.usedTodayBytes = usedTodayBytes; self.dailyCapBytes = dailyCapBytes
+    }
+}
+
+/// News fetch rules shared by the app (mirrors Android `NewsViewModel.fetchNow`): only phones
+/// allowed by the core's role flag (any phone with internet), then the gateway network rules
+/// (Wi-Fi-only unless mobile data is allowed, metered warning, 500 MB/day cap).
+public enum NewsFetchRules {
+    public static func plan(core: OmcpCore, store: AppStore, network: NetworkType, metered: Bool, nowMs: Int64) -> NewsFetchPlan? {
+        guard core.newsMayFetch(gatewayEnabled: store.gatewayEnabled) else { return nil }
+        return core.newsFetchPlan(wifiOnly: !store.gatewayAllowMobile, network: network, metered: metered, nowMs: nowMs)
+    }
+
+    /// Run one round with a synchronous GET (tests, background tasks). Returns stories added.
+    @discardableResult
+    public static func run(core: OmcpCore, store: AppStore, network: NetworkType, metered: Bool, nowMs: Int64, get: (String) -> String?) -> Int {
+        guard let p = plan(core: core, store: store, network: network, metered: metered, nowMs: nowMs) else { return 0 }
+        var added = 0
+        for url in p.feeds {
+            guard let body = get(url) else { continue }
+            added += (try? core.newsIngestRss(feedUrl: url, body: body, nowMs: nowMs)) ?? 0
+        }
+        return added
+    }
+}
+
+/// News tab chips (design §5.108).
+public let newsTabs = ["top", "local", "world", "politics", "tech", "sport", "health", "emergencies"]
+
 public protocol OmcpCore: AnyObject {
     var linked: Bool { get }
     var suiteLabel: String { get }
@@ -521,6 +621,26 @@ public protocol OmcpCore: AnyObject {
     func requestMedia(_ msgId: String) throws
     /// ONE message carrying the optional note (≤ 280 UTF-8 bytes).
     func askToResend(_ msgId: String, note: String?) throws
+    // Multi-hop mesh relay (PROTOCOL §22).
+    func meshStats() -> MeshRelayStats
+    func newsFeed(tab: String) -> [NewsStory]
+    func newsCardText(id: String) -> String?
+    func newsFetchPlan(wifiOnly: Bool, network: NetworkType, metered: Bool, nowMs: Int64) -> NewsFetchPlan
+    func newsIngestRss(feedUrl: String, body: String, nowMs: Int64) throws -> Int
+    /// Gateway-only vs any phone with internet: one flag in Rust (`NEWS_FETCH_GATEWAY_ONLY`).
+    func newsMayFetch(gatewayEnabled: Bool) -> Bool
+    /// News settings (§5.115) → Rust decides which channel tags to subscribe (persisted in the store).
+    func newsSetPrefs(topics: [String], langs: [String], city: String?, muted: [String], alertsNotify: Bool)
+    /// RL2: report free/total storage; under 10 % free Rust lowers the relay cap.
+    func meshSetFreeStorage(freeBytes: Int64, totalBytes: Int64)
+    /// Periodic relay work; returns link handles with frames waiting.
+    func meshTick(nowMs: Int64) -> [UInt64]
+    func meshPendingLinks() -> [UInt64]
+    /// Status changes caused by the mesh since the last call (Queued → Sent → Delivered).
+    func meshTakeStatusUpdates() -> [MeshStatusUpdate]
+    /// 6-byte HELLO beacon (§22.7(12)).
+    func meshBeacon() -> Data
+    func meshMaxLinks() -> Int
     func keptMediaSettings() -> KeptMediaPrefs
     /// Applies at once; returns how many kept copies were evicted (oldest first).
     func setKeptMediaSettings(_ p: KeptMediaPrefs, nowMs: Int64) throws -> Int
@@ -603,6 +723,19 @@ public extension OmcpCore {
     func restoreMediaFromBackup(msgId: String, blob: Data) throws -> Data { throw CoreError.other("no media backup") }
     func requestMedia(_ msgId: String) throws {}
     func askToResend(_ msgId: String, note: String?) throws {}
+    func meshStats() -> MeshRelayStats { MeshRelayStats() }
+    func newsFeed(tab: String) -> [NewsStory] { [] }
+    func newsCardText(id: String) -> String? { nil }
+    func newsFetchPlan(wifiOnly: Bool, network: NetworkType, metered: Bool, nowMs: Int64) -> NewsFetchPlan { NewsFetchPlan() }
+    func newsIngestRss(feedUrl: String, body: String, nowMs: Int64) throws -> Int { 0 }
+    func newsMayFetch(gatewayEnabled: Bool) -> Bool { true }
+    func newsSetPrefs(topics: [String], langs: [String], city: String?, muted: [String], alertsNotify: Bool) {}
+    func meshSetFreeStorage(freeBytes: Int64, totalBytes: Int64) {}
+    func meshTick(nowMs: Int64) -> [UInt64] { [] }
+    func meshPendingLinks() -> [UInt64] { [] }
+    func meshTakeStatusUpdates() -> [MeshStatusUpdate] { [] }
+    func meshBeacon() -> Data { Data() }
+    func meshMaxLinks() -> Int { 4 }
     func keptMediaSettings() -> KeptMediaPrefs { KeptMediaPrefs() }
     func setKeptMediaSettings(_ p: KeptMediaPrefs, nowMs: Int64) throws -> Int { 0 }
     func keptMediaUsage() -> KeptMediaUsage { KeptMediaUsage(count: 0, bytes: 0) }

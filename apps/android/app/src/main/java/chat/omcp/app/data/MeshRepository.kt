@@ -57,7 +57,10 @@ data class ChatMessage(
     val burnAtMs: Long? = null,
 ) {
     enum class Status {
-        Queued, Sent, Received,
+        Queued, Sent,
+        /** End-to-end delivery ack received over the mesh (PROTOCOL §22.8(3)). */
+        Delivered,
+        Received,
         /** In-chat system notice; [text] = `restored:<ms>` (RS1, design §5.95). */
         System,
     }
@@ -428,6 +431,23 @@ class MeshRepository(
                     }
                 }
                 )
+        }
+    }
+
+    /** Mesh status changes (handed to a relay → Sent, ack → Delivered); never goes backwards. */
+    fun onStatusUpdates(updates: List<chat.omcp.app.core.MeshStatusUpdate>) {
+        if (updates.isEmpty()) return
+        val rank = { s: ChatMessage.Status -> when (s) { ChatMessage.Status.Queued -> 0; ChatMessage.Status.Sent -> 1; ChatMessage.Status.Delivered -> 2; else -> 3 } }
+        _messages.update { all ->
+            var next = all
+            for (u in updates) {
+                val st = runCatching { ChatMessage.Status.valueOf(u.status) }.getOrNull() ?: continue
+                val list = next[u.contactId] ?: continue
+                next = next + (u.contactId to list.map { m ->
+                    if (m.id == u.msgId && m.mine && rank(st) > rank(m.status)) m.copy(status = st) else m
+                })
+            }
+            next
         }
     }
 

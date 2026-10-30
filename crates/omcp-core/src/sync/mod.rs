@@ -23,6 +23,7 @@ pub mod media;
 pub mod plumtree;
 pub mod receipts;
 pub mod recon;
+pub mod relay;
 pub mod routing;
 pub mod tag;
 pub mod watermark;

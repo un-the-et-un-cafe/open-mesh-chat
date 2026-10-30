@@ -164,6 +164,54 @@ class RustOmcpCore : OmcpCore {
     override fun restoreMediaFromBackup(msgId: String, blob: ByteArray): ByteArray = n().restoreMediaFromBackup(msgId, blob)
     override fun requestMedia(msgId: String) = n().requestMedia(msgId)
     override fun askToResend(msgId: String, note: String?) = n().askToResend(msgId, note)
+    override fun meshStats() = n().meshStats().let {
+        MeshRelayStats(
+            it.carried.toInt(), it.carriedBytes.toLong(), it.ownPending.toInt(), it.neighbours.toInt(),
+            it.storageUsedBytes.toLong(), it.storageCapBytes.toLong(),
+        )
+    }
+    private fun story(s: chat.omcp.ffi.NewsStory) = NewsStoryUi(
+        s.idHex, s.topic, s.title, s.summary, s.publisher, s.sourceName, s.link,
+        s.publishedMs.toLong(), s.via, s.fetchedHere, s.emergency,
+    )
+    override fun newsFeed(tab: String) = node?.newsFeed(tab)?.map(::story) ?: emptyList()
+    override fun newsPrefs(): NewsPrefsUi = node?.newsPrefs()?.let(::prefsUi) ?: NewsPrefsUi()
+    override fun newsSetPrefs(p: NewsPrefsUi): NewsPrefsUi {
+        val nd = node ?: return p
+        return prefsUi(nd.newsSetPrefs(chat.omcp.ffi.NewsPrefs(p.topics, p.langs, p.city?.takeIf { it.isNotBlank() }, p.cityFromLocation, p.muted, p.alertsNotify, p.interestsChosen)))
+    }
+    private fun prefsUi(p: chat.omcp.ffi.NewsPrefs) =
+        NewsPrefsUi(p.topics, p.langs, p.city, p.cityFromLocation, p.muted, p.alertsNotify, p.interestsChosen)
+    override fun newsMayFetch(gatewayEnabled: Boolean) = chat.omcp.ffi.newsMayFetch(gatewayEnabled)
+    override fun newsFetchPlan(wifiOnly: Boolean, network: NetworkType, metered: Boolean, nowMs: Long): NewsFetchPlanUi {
+        val nd = node ?: return NewsFetchPlanUi()
+        val net = when (network) {
+            NetworkType.Offline -> chat.omcp.ffi.Network.Offline
+            NetworkType.Wifi -> chat.omcp.ffi.Network.Wifi(metered)
+            NetworkType.Cellular -> chat.omcp.ffi.Network.Cellular(metered)
+        }
+        val p = nd.newsFetchPlan(net, wifiOnly, nowMs.toULong())
+        return NewsFetchPlanUi(p.feeds, p.meteredWarning, p.blocked, p.usedTodayBytes.toLong(), p.dailyCapBytes.toLong())
+    }
+    override fun newsIngestRss(feedUrl: String, body: String, nowMs: Long) =
+        node?.newsIngestRss(feedUrl, body, nowMs.toULong())?.toInt() ?: 0
+    override fun newsTakeAlerts() = node?.newsTakeAlerts()?.map(::story) ?: emptyList()
+    override fun newsCardText(story: NewsStoryUi): String {
+        val s = node?.newsStory(story.idHex) ?: return super.newsCardText(story)
+        return chat.omcp.ffi.newsCardText(s)
+    }
+    override fun parseNewsCard(text: String) =
+        chat.omcp.ffi.parseNewsCard(text)?.let { NewsCardUi(it.idHex, it.publisher, it.link, it.title) }
+    override fun meshSetFreeStorage(freeBytes: Long, totalBytes: Long) {
+        node?.meshSetFreeStorage(freeBytes.coerceAtLeast(0).toULong(), totalBytes.coerceAtLeast(0).toULong())
+    }
+    override fun meshTick(nowMs: Long) = node?.meshTick(nowMs.toULong())?.map { it.toLong() } ?: emptyList()
+    override fun meshPendingLinks() = node?.meshPendingLinks()?.map { it.toLong() } ?: emptyList()
+    override fun meshTakeStatusUpdates() = node?.meshTakeStatusUpdates()?.map {
+        MeshStatusUpdate(it.idHex, it.contactId, if (it.status == chat.omcp.ffi.MessageStatus.DELIVERED) "Delivered" else "Sent")
+    } ?: emptyList()
+    override fun meshBeacon() = node?.meshBeacon() ?: ByteArray(0)
+    override fun meshMaxLinks() = chat.omcp.ffi.meshMaxLinks().toInt()
     override fun keptMediaSettings() = n().keptMediaSettings().let { KeptMediaPrefs(it.maxDays.toInt(), it.maxBytes.toLong()) }
     override fun setKeptMediaSettings(p: KeptMediaPrefs, nowMs: Long) =
         n().setKeptMediaSettings(chat.omcp.ffi.KeptMediaSettings(p.maxDays.toUInt(), p.maxBytes.toULong()), nowMs.toULong()).toInt()
@@ -216,6 +264,7 @@ private fun chat.omcp.ffi.StoredMessage.toApp() = StoredMessageInfo(
     status = when (status) {
         chat.omcp.ffi.MessageStatus.QUEUED -> "Queued"
         chat.omcp.ffi.MessageStatus.SENT -> "Sent"
+        chat.omcp.ffi.MessageStatus.DELIVERED -> "Delivered"
         chat.omcp.ffi.MessageStatus.RECEIVED -> "Received"
         chat.omcp.ffi.MessageStatus.SYSTEM -> "System"
     },
@@ -289,6 +338,7 @@ private fun LinkOutput.toResult() = LinkResult(
     mediaRequests = mediaRequests.map { it.toApp() },
     resendAsks = resendAsks.map { it.toApp() },
     mediaUpdates = mediaUpdates.map { MediaUpdateInfo(it.contactId, it.msgIdHex, it.state.label()) },
+    relayLinks = relayLinks.map { it.toLong() },
 )
 
 private class RustLink(private val link: MeshLink) : CoreLink {
@@ -297,6 +347,7 @@ private class RustLink(private val link: MeshLink) : CoreLink {
     override fun sendText(text: String) = link.sendText(text).toResult()
     override fun flush() = link.flush().toResult()
     override fun isEstablished() = link.isEstablished()
+    override fun handle() = link.handle().toLong()
     override fun close() {
         link.shutdown()
         link.destroy()

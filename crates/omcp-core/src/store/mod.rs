@@ -80,7 +80,14 @@ const MIGRATIONS: &[&str] = &[
     // v2 (v0.1.4b): kept local copies of sent media (index + sealed bytes rows).
     "CREATE TABLE kept_media(id BLOB PRIMARY KEY, grp BLOB, seq INTEGER NOT NULL, ct BLOB NOT NULL);
      CREATE INDEX kept_media_grp ON kept_media(grp, seq);",
+    // v3 (v0.2 mesh relay): carry store (opaque envelopes relayed for others
+    // and our own mesh copies) and the delivered-id dedup set.
+    "CREATE TABLE relay(id BLOB PRIMARY KEY, grp BLOB, seq INTEGER NOT NULL, ct BLOB NOT NULL);
+     CREATE INDEX relay_grp ON relay(grp, seq);",
 ];
+
+const RELAY_CARRY_GRP: &[u8] = b"carry";
+const RELAY_SEEN_GRP: &[u8] = b"seen";
 
 const KEPT_INDEX_GRP: &[u8] = b"kept-index";
 const DAY_MS: u64 = 86_400_000;
@@ -103,6 +110,7 @@ enum Table {
     Burn,
     BurnKeys,
     KeptMedia,
+    Relay,
 }
 
 impl Table {
@@ -118,6 +126,7 @@ impl Table {
             Table::Burn => "burn",
             Table::BurnKeys => "burn_keys",
             Table::KeptMedia => "kept_media",
+            Table::Relay => "relay",
         }
     }
 }
@@ -574,6 +583,41 @@ impl Store {
             out.push(q);
         }
         Ok(out)
+    }
+
+    // ---- mesh relay carry store (v0.2) ----
+
+    /// Persist one carry-store item (an opaque envelope, sealed at rest).
+    pub fn put_carry(&self, c: &CarryRec) -> Result<()> {
+        self.put(
+            Table::Relay,
+            &kept_key(b'c', &c.id),
+            Some(RELAY_CARRY_GRP),
+            c,
+        )
+    }
+    pub fn delete_carry(&self, id: &[u8; 16]) -> Result<()> {
+        self.del_raw(Table::Relay, &kept_key(b'c', id))
+    }
+    pub fn carry_items(&self) -> Result<Vec<CarryRec>> {
+        self.list(Table::Relay, Some(RELAY_CARRY_GRP))
+    }
+    /// Remember a mesh envelope id delivered to us until `until_ms`.
+    pub fn put_mesh_seen(&self, id: &[u8; 16], until_ms: u64) -> Result<()> {
+        let r = MeshSeenRec { id: *id, until_ms };
+        self.put(Table::Relay, &kept_key(b's', id), Some(RELAY_SEEN_GRP), &r)
+    }
+    /// Delivered ids still within their lifetime; expired rows are deleted.
+    pub fn mesh_seen(&self, now_ms: u64) -> Result<Vec<MeshSeenRec>> {
+        let mut live = Vec::new();
+        for r in self.list::<MeshSeenRec>(Table::Relay, Some(RELAY_SEEN_GRP))? {
+            if r.until_ms > now_ms {
+                live.push(r);
+            } else {
+                self.del_raw(Table::Relay, &kept_key(b's', &r.id))?;
+            }
+        }
+        Ok(live)
     }
 
     // ---- outgoing file transfers (so they resume after a restart) ----

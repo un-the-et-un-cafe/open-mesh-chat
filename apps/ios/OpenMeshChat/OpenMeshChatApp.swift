@@ -9,6 +9,7 @@ import UserNotifications
 struct OpenMeshChatApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @StateObject private var model = AppModel()
+    @AppStorage("omcp.themeMode") private var themeMode = ThemeMode.system.rawValue
 
     var body: some Scene {
         WindowGroup {
@@ -21,6 +22,7 @@ struct OpenMeshChatApp: App {
             }
             .environmentObject(model)
             .environment(\.omcpColors, OmcpColors.current())
+            .preferredColorScheme(ThemeMode(rawValue: themeMode)?.colorScheme)
             .screenSecurity()
             .onChange(of: model.onboarded) { _, on in if on { model.startMesh() } }
         }

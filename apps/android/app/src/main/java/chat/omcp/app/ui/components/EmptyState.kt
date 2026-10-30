@@ -18,6 +18,8 @@ fun EmptyState(
     title: String,
     body: String,
     modifier: Modifier = Modifier,
+    actionLabel: String? = null,
+    onAction: () -> Unit = {},
 ) {
     val c = LocalOmcpColors.current
     Column(
@@ -40,5 +42,8 @@ fun EmptyState(
             textAlign = TextAlign.Center,
             modifier = Modifier.padding(top = 12.dp),
         )
+        if (actionLabel != null) {
+            androidx.compose.material3.Button(onClick = onAction, modifier = Modifier.padding(top = 20.dp)) { Text(actionLabel) }
+        }
     }
 }

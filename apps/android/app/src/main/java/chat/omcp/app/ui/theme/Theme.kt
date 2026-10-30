@@ -29,7 +29,16 @@ data class OmcpExtraColors(
     val pathMixedSoft: Color,
     val pathQueue: Color,
     val pathQueueSoft: Color,
+    val lineStrong: Color = Color(0xFF617289),
+    val brandInk: Color = Color.White,
+    val focus: Color = Color(0xFF0A66C2),
 )
+
+/** Appearance (You › Appearance): follow the system, or force light / dark. */
+enum class ThemeMode { System, Light, Dark;
+    fun isDark(systemDark: Boolean) = when (this) { System -> systemDark; Light -> false; Dark -> true }
+    companion object { fun parse(s: String?) = entries.firstOrNull { it.name == s } ?: System }
+}
 
 val LocalOmcpColors = staticCompositionLocalOf {
     OmcpExtraColors(
@@ -57,7 +66,7 @@ val LocalOmcpColors = staticCompositionLocalOf {
 
 private val LightScheme = lightColorScheme(
     primary = OmcpLight.Brand,
-    onPrimary = Color.White,
+    onPrimary = OmcpLight.BrandInk,
     primaryContainer = OmcpLight.BrandSoft,
     onPrimaryContainer = OmcpLight.Brand,
     background = OmcpLight.Bg,
@@ -67,13 +76,15 @@ private val LightScheme = lightColorScheme(
     surfaceVariant = OmcpLight.Surface2,
     onSurfaceVariant = OmcpLight.Ink2,
     outline = OmcpLight.Line,
+    outlineVariant = OmcpLight.Line,
+    inversePrimary = OmcpDark.Brand,
     error = OmcpLight.Danger,
-    onError = Color.White,
+    onError = OmcpLight.BrandInk,
 )
 
 private val DarkScheme = darkColorScheme(
     primary = OmcpDark.Brand,
-    onPrimary = Color(0xFF062624),
+    onPrimary = OmcpDark.BrandInk,
     primaryContainer = OmcpDark.BrandSoft,
     onPrimaryContainer = OmcpDark.Brand,
     background = OmcpDark.Bg,
@@ -83,8 +94,10 @@ private val DarkScheme = darkColorScheme(
     surfaceVariant = OmcpDark.Surface2,
     onSurfaceVariant = OmcpDark.Ink2,
     outline = OmcpDark.Line,
+    outlineVariant = OmcpDark.Line,
+    inversePrimary = OmcpLight.Brand,
     error = OmcpDark.Danger,
-    onError = Color(0xFF3A1820),
+    onError = OmcpDark.BrandInk,
 )
 
 private val LightExtra = OmcpExtraColors(
@@ -107,6 +120,9 @@ private val LightExtra = OmcpExtraColors(
     pathMixedSoft = OmcpLight.PathMixedSoft,
     pathQueue = OmcpLight.PathQueue,
     pathQueueSoft = OmcpLight.PathQueueSoft,
+    lineStrong = OmcpLight.LineStrong,
+    brandInk = OmcpLight.BrandInk,
+    focus = OmcpLight.Focus,
 )
 
 private val DarkExtra = OmcpExtraColors(
@@ -129,11 +145,15 @@ private val DarkExtra = OmcpExtraColors(
     pathMixedSoft = OmcpDark.PathMixedSoft,
     pathQueue = OmcpDark.PathQueue,
     pathQueueSoft = OmcpDark.PathQueueSoft,
+    lineStrong = OmcpDark.LineStrong,
+    brandInk = OmcpDark.BrandInk,
+    focus = OmcpDark.Focus,
 )
 
 @Composable
 fun OmcpTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
+    mode: ThemeMode = ThemeMode.System,
+    darkTheme: Boolean = mode.isDark(isSystemInDarkTheme()),
     content: @Composable () -> Unit,
 ) {
     val scheme = if (darkTheme) DarkScheme else LightScheme

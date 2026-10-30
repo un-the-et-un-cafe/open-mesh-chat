@@ -1,5 +1,101 @@
 # OMCP Design Pack — Changelog
 
+## v0.1.21 — 2026-10-26
+
+WCAG 2.2 audit (2.5.8, 2.4.11, 2.5.7) + glass-bar contrast. `DESIGN_SPEC.md` §5S.
+
+### Added
+- “Mute a topic” button in News settings (single-pointer alternative to long-press; EN/FR/HE strings). Re-rendered `news-interests*` and `news-interests-location*` (12 PNGs).
+- Focus-ring style (`:focus-visible`) and focus-not-obscured rule; invisible 44 px hit-slop on news chips/buttons (`news.css`, no visual change).
+- Spec rules: platform touch size (44 pt / 48 dp), drag alternatives (match-list overflow, queue tap menu, sliders, reorder), glass bar minimum scrim.
+- `brand/` and `tokens.css` untouched. AA contrast failures: 0.
+
+## v0.1.20 — 2026-10-24
+
+Hopla News revised to the 2026-10-24 REQUIREMENTS and the maintainer’s decisions. `DESIGN_SPEC.md` §5R rewritten (5.107–5.119); Q26–Q35 closed, Q37–Q39 open.
+
+### Changed
+- The only source is **Google News RSS**, shown as a neutral “Google News” text label (no logo) plus “via ‹contact›” when relayed; “Relayed by N phones”. Reader = summary + “Read on Google News”. The label component takes a second source later (X news RSS, separate project) without layout changes.
+- Emergency alerts: Emergencies-topic stories from the sources (no official key); notifications **on by default**.
+- Interests (onboarding + News settings): **Use my location** (same permission as Nearby) or type the city; languages, muted topics, storage.
+- Share sheet lists **chats and communities**; shared card + discussion thread in both; “News can’t be posted by users”.
+- Shared-card thumbnail no longer overflows under the card text.
+- Re-rendered (96): news-alert--dark.png, news-alert--fr-dark.png, news-alert--fr.png, news-alert--he-dark.png, news-alert--he.png, news-alert.png, news-catchup--dark.png, news-catchup--fr-dark.png, news-catchup--fr.png, news-catchup--he-dark.png, news-catchup--he.png, news-catchup.png, news-chat-thread--dark.png, news-chat-thread--fr-dark.png, news-chat-thread--fr.png, news-chat-thread--he-dark.png, news-chat-thread--he.png, news-chat-thread.png, news-community-thread--dark.png, news-community-thread--fr-dark.png, news-community-thread--fr.png, news-community-thread--he-dark.png, news-community-thread--he.png, news-community-thread.png, news-empty--dark.png, news-empty--fr-dark.png, news-empty--fr.png, news-empty--he-dark.png, news-empty--he.png, news-empty.png, news-interests--dark.png, news-interests--fr-dark.png, news-interests--fr.png, news-interests--he-dark.png, news-interests--he.png, news-interests.png, news-loading--dark.png, news-loading--fr-dark.png, news-loading--fr.png, news-loading--he-dark.png, news-loading--he.png, news-loading.png, news-local--dark.png, news-local--fr-dark.png, news-local--fr.png, news-local--he-dark.png, news-local--he.png, news-local-empty--dark.png, news-local-empty--fr-dark.png, news-local-empty--fr.png, news-local-empty--he-dark.png, news-local-empty--he.png, news-local-empty.png, news-local.png, news-onboarding-interests--dark.png, news-onboarding-interests--fr-dark.png, news-onboarding-interests--fr.png, news-onboarding-interests--he-dark.png, news-onboarding-interests--he.png, news-onboarding-interests.png, news-reader--dark.png, news-reader--fr-dark.png, news-reader--fr.png, news-reader--he-dark.png, news-reader--he.png, news-reader.png, news-share--dark.png, news-share--fr-dark.png, news-share--fr.png, news-share--he-dark.png, news-share--he.png, news-share-bubble--dark.png, news-share-bubble--fr-dark.png, news-share-bubble--fr.png, news-share-bubble--he-dark.png, news-share-bubble--he.png, news-share-bubble.png, news-share.png, news-top--dark.png, news-top--fr-dark.png, news-top--fr.png, news-top--he-dark.png, news-top--he.png, news-top-city--dark.png, news-top-city--fr-dark.png, news-top-city--fr.png, news-top-city--he-dark.png, news-top-city--he.png, news-top-city.png, news-top.png, news-world--dark.png, news-world--fr-dark.png, news-world--fr.png, news-world--he-dark.png, news-world--he.png, news-world.png.
+
+### Added (12)
+- news-interests-location--dark.png, news-interests-location--fr-dark.png, news-interests-location--fr.png, news-interests-location--he-dark.png, news-interests-location--he.png, news-interests-location.png, news-location-permission--dark.png, news-location-permission--fr-dark.png, news-location-permission--fr.png, news-location-permission--he-dark.png, news-location-permission--he.png, news-location-permission.png.
+
+### Removed (18) — signatures, trust levels, curators, sources management, hidden counts, “Story unavailable”, full-text reader
+- news-reader-summary--dark.png, news-reader-summary--fr-dark.png, news-reader-summary--fr.png, news-reader-summary--he-dark.png, news-reader-summary--he.png, news-reader-summary.png, news-sources--dark.png, news-sources--fr-dark.png, news-sources--fr.png, news-sources--he-dark.png, news-sources--he.png, news-sources.png, news-trust--dark.png, news-trust--fr-dark.png, news-trust--fr.png, news-trust--he-dark.png, news-trust--he.png, news-trust.png (and `news-trust.html`, `news-sources.html`, `news-reader-summary.html`).
+
+### Accessibility
+- Whole pack re-audited: light 0 failures (11772 measurements), dark 0 failures (4500).
+
+### Constraints observed
+- `brand/` and `tokens.css` untouched; no new tokens. Fictional people and stories; generated art. Not pushed. Generator `/workspace/omcp-v0120/`. Mirror updated.
+
+## v0.1.19 — 2026-10-24
+
+Hopla News (REQUIREMENTS § Hopla News, v0.4 draft, incl. maintainer decisions), requested by the maintainer. `DESIGN_SPEC.md` §5R (5.107–5.119).
+
+### Added
+- 19 mockups (`news-top`, `news-local`, `news-local-empty`, `news-world`, `news-top-city`, `news-empty`, `news-loading`, `news-reader`, `news-reader-summary`, `news-trust`, `news-alert`, `news-sources`, `news-interests`, `news-onboarding-interests`, `news-share`, `news-share-bubble`, `news-chat-thread`, `news-community-thread`, `news-catchup`), each EN/FR/HE (draft) × light/dark = 114 PNGs.
+- `mockups/news.css` (components only, existing tokens). **No new tokens; `tokens.css` and `brand/` unchanged.**
+- `SignatureBadge` with 5 shapes (verified, via curator, unsigned, invalid, official); unsigned/invalid never shown as stories (NW2).
+- Nav decision §5.107: Chats · News · Communities · Nearby · You; Live moves into Communities (Q26).
+- Copy table EN/FR/HE draft (§5.119), questions Q26–Q36, `a11y/news-contrast.md`.
+- Placeholder: Relay settings screen will follow once the relay questions are answered.
+
+### Accessibility
+- Contrast re-run on the whole pack: light 0 failures (11822 measurements), dark 0 failures (4550).
+
+### Constraints observed
+- Fictional names, sources and generated abstract art only. Not pushed. Generator `/workspace/omcp-v0119/`. Mirror updated.
+
+## v0.1.18 — 2026-10-24
+
+Light mode to WCAG AA as the matched twin of dark, and a first RTL locale: Hebrew (requested by the maintainer). `DESIGN_SPEC.md` §5.104–5.106.
+
+### Changed — light theme (WCAG AA; light token change approved by the maintainer)
+- `tokens.css` `:root` only: `--ink-2` #4a5b70 → #3b495a, `--ink-3` #6b7c90 → #515e6d, `--line` #d8dee8 → #73849a, `--line-strong` #b8c2d0 → #617289. Each step now has the same contrast on light `--surface` as the v0.1.17 dark step on dark `--surface` (9.18 / 6.62 / 3.82 / 4.91 vs 9.18 / 6.60 / 3.82 / 4.87). Dark values, soft tints, brand hues unchanged.
+- Disabled controls without `opacity`: `nearby-skeleton` loading row (`.is-loading`, `aria-disabled`), `restore-password` lockout, `settings-storage` edit-off. Disabled now ≥ 3.5:1 light, ≥ 4.0:1 dark (was 1.07 / 1.34).
+- Inverse toasts use the other theme’s teal for their action/icon (was 2.84:1). `mod-stream` host line no longer fades the reputation chip. “Ask to resend” pill border = full `--brand`. Photo scrims ≥ .62.
+- Result (excluding verified white-on-photo / OS-chrome artefacts, listed in the audit): light failing element pairs 1548 → **0**, worst non-disabled 1.15:1 → **3.25:1**, worst text 2.22:1 → **4.54:1**; dark failing 5 → **0** (the 5 were the disabled skeleton buttons), worst non-disabled 3.15:1 (unchanged), worst disabled 1.34:1 → 4.02:1.
+- Added `a11y/light-contrast.md`, `a11y/light-before-after.png`, `a11y/light-vs-dark.png`; re-generated `a11y/dark-contrast.md`; `a11y/dark-contrast.py` now measures either theme.
+
+### Added — Hebrew (he, RTL) — DRAFT, pending native-speaker review
+- 27 Hebrew frames (`--he`, plus `--he-dark` for chats-list and chat-thread): onboarding-welcome--he.png, onboarding-permissions--he.png, onboarding-profile--he.png, onboarding-secure--he.png, onboarding-secure-phrase--he.png, onboarding-secure-quiz--he.png, onboarding-done--he.png, onboarding-restore--he.png, chats-list--he.png, chats-list--he-dark.png, chat-thread--he.png, chat-thread--he-dark.png, settings-privacy--he.png, settings-backup--he.png, settings-storage--he.png, settings-notifications--he.png, restore-detect--he.png, restore-source--he.png, restore-password--he.png, restore-progress--he.png, restore-success--he.png, nearby-area--he.png, nearby-chat--he.png, burn-bubbles--he.png, burn-composer--he.png, mod-community--he.png, mod-report--he.png.
+- “HE (draft)” column in every EN/FR copy table of `DESIGN_SPEC.md` (216 rows).
+- `tokens.css`: RTL rules (`.phone[dir=rtl]`: Rubik → Noto Sans Hebrew → Heebo; mirrored chevrons/send, bubble tails, toggles; status bar, QR, word and safety grids stay LTR).
+- Spec §5.106 RTL mirroring rules (what mirrors, what never mirrors, bidi isolation, swipe directions).
+
+### Re-rendered
+- All mockups (system python3 Playwright, `/usr/bin/google-chrome`).
+
+### Constraints observed
+- `brand/` untouched; not pushed. Generator `/workspace/omcp-v0118/`. Mirror updated.
+
+## v0.1.17 — 2026-10-24
+
+Dark mode readable everywhere, and backup copy that says chats are backed up (requested by the maintainer). `DESIGN_SPEC.md` §5.102, §5.103.
+
+### Changed — dark theme (WCAG AA)
+- `tokens.css`, dark values only (`@media (prefers-color-scheme: dark)` and `.phone.dark`): `--ink-2` #a3b1c2 → #b4c0ce, `--ink-3` #7a8a9c → #95a3b4, `--line` #2a3646 → #687990, `--line-strong` #3d4d60 → #7a8ba1. Light values and brand hues unchanged.
+- `tokens.css`, dark-only rule: switch thumb on the on-track uses `--brand-ink` (was white, 2.29:1).
+- Mockup HTML: 58 literal `color:#fff` on solid `--brand`/`--ok`/`--danger`/`--warn` fills → `color:var(--brand-ink)` (same white in light).
+- Result: failing dark pairs 24 → 3 (all 3 disabled, in `nearby-skeleton--dark`); worst non-disabled ratio 1.14:1 → 3.15:1; worst text 2.04:1 → 4.71:1. Light: 0 regressions.
+- Added `a11y/dark-contrast.md`, `a11y/dark-contrast.py`, `a11y/dark-before-after.png`, `a11y/light-spot-check.png`.
+
+### Changed — backup copy (EN/FR, HTML + copy tables)
+- Cloud backup = recovery phrase + all chats (text; media if media backup is on). Written phrase = identity + contacts, not chats.
+- `onboarding-secure`, `onboarding-secure-phrase`, `onboarding-secure-reminder`, `onboarding-restore`, `settings-backup` (method lines, honest note, delete sheet), `restore-source`, `restore-error--corrupted`, `restore-password`, `restore-reinstall`.
+
+### Re-rendered
+- All 70 mockups (445 frames), using system python3 Playwright with `/usr/bin/google-chrome`.
+
+### Constraints observed
+- `brand/` untouched; light token values untouched; not pushed to git. Generator `/workspace/omcp-v0117/`. Mirror updated.
+
 ## v0.1.16 — 2026-10-24
 
 One-tap Ask to resend, and Keep media you sent (decisions approved by the maintainer). `DESIGN_SPEC.md` §5.100, §5.101.
@@ -112,7 +208,7 @@ Restore from backup for Google Drive and iCloud, reinstall-first. Extends §5.17
 
 ## v0.1.9 — 2026-10-24
 
-maintainer resolved Q12/Q13; Q11 fixed in REQUIREMENTS (commit 6a0ee67). `DESIGN_SPEC.md` §5K (§5.81–5.82).
+the maintainer resolved Q12/Q13; Q11 fixed in REQUIREMENTS (commit 6a0ee67). `DESIGN_SPEC.md` §5K (§5.81–5.82).
 
 ### Added
 - `nearby-area-indicator`: persistent indicator in area mode (hex-cell glyph, violet, “Area mode” label) for iOS Live Activity, Dynamic Island and Android ongoing notification — normal, Private, paused, dark, FR.
@@ -146,7 +242,7 @@ Nearby stays on until the user turns it off (REQUIREMENTS Decision 4 + D6). `DES
 
 ## v0.1.7 — 2026-10-24
 
-maintainer approved the pending proposals; REQUIREMENTS Decision 5 / SS1 updated. `DESIGN_SPEC.md` §5I (§5.71–5.74).
+the maintainer approved the pending proposals; REQUIREMENTS Decision 5 / SS1 updated. `DESIGN_SPEC.md` §5I (§5.71–5.74).
 
 ### Changed
 - `settings-privacy`: copy aligned to REQUIREMENTS (“On by default”; “Burn-after-read and view-once content is always protected”; second-camera line in On and Off). All 12 frames re-rendered.

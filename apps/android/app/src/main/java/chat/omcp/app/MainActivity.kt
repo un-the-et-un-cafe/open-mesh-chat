@@ -16,6 +16,8 @@ import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import chat.omcp.app.ui.OmcpRoot
 import chat.omcp.app.ui.theme.OmcpTheme
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 
 class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -36,9 +38,13 @@ class MainActivity : FragmentActivity() {
                 }
             }
         }
+        val themePrefs = chat.omcp.app.ui.theme.ThemePrefs(this)
         setContent {
-            OmcpTheme {
+            val mode by themePrefs.mode.collectAsState()
+            OmcpTheme(mode = mode) {
                 OmcpRoot(
+                    themeMode = mode,
+                    onThemeMode = themePrefs::set,
                     repo = app.repository,
                     cloud = app.cloudBackup,
                     secureWindow = ::setSecure,

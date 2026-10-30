@@ -7,10 +7,10 @@
   --surface: #ffffff;
   --surface-2: #eef1f5;
   --ink: #0f1b2d;
-  --ink-2: #4a5b70;
-  --ink-3: #6b7c90;
-  --line: #d8dee8;
-  --line-strong: #b8c2d0;
+  --ink-2: #3b495a;
+  --ink-3: #515e6d;
+  --line: #73849a;
+  --line-strong: #617289;
 
   /* Brand — calm teal, trustworthy not flashy */
   --brand: #0b6e6a;
@@ -62,10 +62,10 @@
     --surface: #151d28;
     --surface-2: #1c2633;
     --ink: #e8eef5;
-    --ink-2: #a3b1c2;
-    --ink-3: #7a8a9c;
-    --line: #2a3646;
-    --line-strong: #3d4d60;
+    --ink-2: #b4c0ce;
+    --ink-3: #95a3b4;
+    --line: #687990;
+    --line-strong: #7a8ba1;
 
     --brand: #3dbdb6;
     --brand-ink: #062624;
@@ -132,10 +132,10 @@ body {
   --surface: #151d28;
   --surface-2: #1c2633;
   --ink: #e8eef5;
-  --ink-2: #a3b1c2;
-  --ink-3: #7a8a9c;
-  --line: #2a3646;
-  --line-strong: #3d4d60;
+  --ink-2: #b4c0ce;
+  --ink-3: #95a3b4;
+  --line: #687990;
+  --line-strong: #7a8ba1;
   --brand: #3dbdb6;
   --brand-ink: #062624;
   --brand-soft: #143836;
@@ -416,6 +416,10 @@ body {
   transition: transform .15s;
 }
 .toggle.on::after { transform: translateX(20px); }
+/* v0.1.17 dark-only: switch thumb on the "on" track uses --brand-ink (white on --brand was 2.3:1) */
+.phone.dark .toggle.on::after { background: var(--brand-ink); }
+@media (prefers-color-scheme: dark) { :root .toggle.on::after { background: var(--brand-ink); } }
+
 
 /* Chat bubbles */
 .messages {
@@ -739,3 +743,31 @@ body {
 .file-icon.img { background: var(--path-gateway-soft); color: var(--path-gateway); }
 .file-icon.vid { background: var(--warn-soft); color: var(--warn); }
 .file-icon.bad { background: var(--danger-soft); color: var(--danger); }
+
+/* v0.1.18: inverse toasts (background:var(--ink)) use the other theme's accent, like Material inversePrimary.
+   Light: dark-theme teal on the near-black toast; dark: light-theme teal on the near-white toast. Brand hues unchanged. */
+[role=status][style*="background:var(--ink)"] { --brand: #3dbdb6; --ok: #5dca8e; }
+.phone.dark [role=status][style*="background:var(--ink)"] { --brand: #0b6e6a; --ok: #0f6b3a; }
+@media (prefers-color-scheme: dark) { :root [role=status][style*="background:var(--ink)"] { --brand: #0b6e6a; --ok: #0f6b3a; } }
+/* v0.1.18: disabled-while-loading controls — no opacity; muted fill, --line-strong boundary, --ink-3 glyph (>= 3:1 both themes) */
+.is-loading .rbtn { background: var(--surface-2) !important; border-color: var(--line-strong) !important; color: var(--ink-3) !important; box-shadow: none !important; }
+.is-loading .rbtn * { color: var(--ink-3) !important; }
+.is-loading .rbtn svg, .is-loading .rbtn svg * { stroke: var(--ink-3) !important; }
+/* v0.1.18: disabled groups without opacity */
+.is-disabled, .is-disabled * { color: var(--ink-3) !important; }
+.is-disabled .seg, .is-disabled .seg * { background: var(--surface-2) !important; border-color: var(--line-strong) !important; box-shadow: none !important; }
+
+/* ---- v0.1.18: Hebrew / RTL (frames with dir="rtl" lang="he"; copy is a DRAFT pending native review) ---- */
+.phone[dir=rtl] { font-family: "Rubik", "Noto Sans Hebrew", "Heebo", system-ui, sans-serif; }
+.phone[dir=rtl] button, .phone[dir=rtl] input { font-family: inherit; }
+.phone[dir=rtl] .status-bar { direction: ltr; }               /* clock + system icons are not mirrored */
+.phone[dir=rtl] .rtl-flip { transform: scaleX(-1); }          /* back/forward chevrons, send, arrows */
+.phone[dir=rtl] .bubble.them { border-bottom-left-radius: 16px; border-bottom-right-radius: 4px; }
+.phone[dir=rtl] .bubble.me { border-bottom-right-radius: 16px; border-bottom-left-radius: 4px; }
+.phone[dir=rtl] .toggle::after { left: auto; right: 2px; }
+.phone[dir=rtl] .toggle.on::after { transform: translateX(-20px); }
+.phone[dir=rtl] .kv span:last-child { text-align: left; }
+.phone[dir=rtl] .word b { text-align: right; }
+.phone[dir=rtl] .ltr, .phone[dir=rtl] .mono, .phone[dir=rtl] .word-grid, .phone[dir=rtl] .safety-grid, .phone[dir=rtl] .safety-num { direction: ltr; unicode-bidi: isolate; }
+.phone[dir=rtl] .qr, .phone[dir=rtl] .qr * { direction: ltr; }   /* QR modules must never mirror (scannability) */
+.phone[dir=rtl] .h-rtl-left { left: auto !important; right: var(--h-l) !important; }

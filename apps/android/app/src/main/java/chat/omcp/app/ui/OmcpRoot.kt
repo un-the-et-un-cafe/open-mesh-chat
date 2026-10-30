@@ -8,6 +8,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.LiveTv
+import androidx.compose.material.icons.filled.Newspaper
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
@@ -46,6 +47,9 @@ import chat.omcp.app.ui.screens.CommunitiesHomeScreen
 import chat.omcp.app.ui.screens.ContactAddScreen
 import chat.omcp.app.ui.screens.GatewaySettingsScreen
 import chat.omcp.app.ui.screens.LiveTabScreen
+import chat.omcp.app.ui.screens.NewsHomeScreen
+import chat.omcp.app.ui.screens.NewsReaderScreen
+import chat.omcp.app.ui.vm.NewsViewModel
 import chat.omcp.app.ui.screens.MyQrBlock
 import chat.omcp.app.ui.screens.MyQrScreen
 import chat.omcp.app.ui.screens.OnboardingFlow
@@ -63,6 +67,10 @@ private object Routes {
     const val Chats = "chats"
     const val Communities = "communities"
     const val Live = "live"
+    const val News = "news"
+    const val NewsStory = "news/{id}"
+    const val NewsSettings = "news-settings"
+    fun newsStory(id: String) = "news/$id"
     const val You = "you"
     const val Thread = "thread/{chatId}"
     const val Security = "security/{chatId}"
@@ -71,6 +79,8 @@ private object Routes {
     const val MyQr = "my-qr"
     const val Backup = "backup"
     const val Storage = "storage"
+    const val Relay = "relay"
+    const val Diagnostics = "diagnostics"
 
     fun thread(id: String) = "thread/$id"
     fun security(id: String) = "security/$id"
@@ -86,6 +96,8 @@ fun OmcpRoot(
     cloud: CloudBackupStore,
     secureWindow: (Boolean) -> Unit,
     requestDeviceAuth: ((() -> Unit) -> Unit),
+    themeMode: chat.omcp.app.ui.theme.ThemeMode = chat.omcp.app.ui.theme.ThemeMode.System,
+    onThemeMode: (chat.omcp.app.ui.theme.ThemeMode) -> Unit = {},
 ) {
     val ctx = LocalContext.current
     val onboarded by repo.onboarded.collectAsState()
@@ -98,7 +110,12 @@ fun OmcpRoot(
         if (MeshPermissions.hasBle(ctx)) MeshService.start(ctx)
     }
     val requestMesh = { perms.launch(MeshPermissions.BLE + Manifest.permission.POST_NOTIFICATIONS) }
-    LaunchedEffect(onboarded) { if (onboarded && MeshPermissions.hasBle(ctx)) MeshService.start(ctx) }
+    // Ask for Nearby devices (+ notifications) right after onboarding, not only after adding a
+    // contact: the phone that shows its QR never went through that path, so its mesh never started.
+    LaunchedEffect(onboarded) {
+        if (!onboarded) return@LaunchedEffect
+        if (MeshPermissions.hasBle(ctx)) MeshService.start(ctx) else requestMesh()
+    }
 
     if (!onboarded || gate == BackupGate.Required) {
         // O6: after 24 h without a backup method, the Secure step is mandatory.
@@ -133,17 +150,28 @@ fun OmcpRoot(
     }
 
     val nav = rememberNavController()
+    val newsCtx = androidx.compose.ui.platform.LocalContext.current
+    val newsVm = vm { NewsViewModel(repo, network = { chat.omcp.app.data.NewsNet.current(newsCtx.applicationContext) }) }
+    LaunchedEffect(Unit) {
+        // Foreground: fetch when the rules allow it (Rust: Wi-Fi-only default, metered warns, daily cap).
+        // In the background NewsFetchWorker takes over every 30 min.
+        while (true) {
+            val (type, metered) = chat.omcp.app.data.NewsNet.current(newsCtx.applicationContext)
+            newsVm.fetchNow(type, metered)
+            kotlinx.coroutines.delay(5 * 60_000L)
+        }
+    }
     val backStack by nav.currentBackStackEntryAsState()
     val route = backStack?.destination?.route
-    val showBar = route in setOf(Routes.Chats, Routes.Communities, Routes.Live, Routes.You)
+    val showBar = route in setOf(Routes.Chats, Routes.News, Routes.Communities, Routes.You)
 
     Scaffold(
         bottomBar = {
             if (showBar) {
                 NavigationBar {
                     NavigationBarItem(route == Routes.Chats, { nav.tab(Routes.Chats) }, { Icon(Icons.Default.Chat, null) }, label = { Text(stringResource(R.string.tab_chats)) })
+                    NavigationBarItem(route == Routes.News, { nav.tab(Routes.News) }, { Icon(Icons.Default.Newspaper, null) }, label = { Text(stringResource(R.string.tab_news)) })
                     NavigationBarItem(route == Routes.Communities, { nav.tab(Routes.Communities) }, { Icon(Icons.Default.Groups, null) }, label = { Text(stringResource(R.string.tab_communities)) })
-                    NavigationBarItem(route == Routes.Live, { nav.tab(Routes.Live) }, { Icon(Icons.Default.LiveTv, null) }, label = { Text(stringResource(R.string.tab_live)) })
                     NavigationBarItem(route == Routes.You, { nav.tab(Routes.You) }, { Icon(Icons.Default.Person, null) }, label = { Text(stringResource(R.string.tab_you)) })
                 }
             }
@@ -159,7 +187,14 @@ fun OmcpRoot(
                     onBackup = { nav.navigate(Routes.Backup) },
                 )
             }
-            composable(Routes.Communities) { CommunitiesHomeScreen() }
+            composable(Routes.Communities) { CommunitiesHomeScreen(onOpenLive = { nav.navigate(Routes.Live) }) }
+            composable(Routes.News) { entry ->
+                NewsHomeScreen(vm = newsVm, onOpen = { nav.navigate(Routes.newsStory(it)) }, onSettings = { nav.navigate(Routes.NewsSettings) })
+            }
+            composable(Routes.NewsSettings) { chat.omcp.app.ui.screens.NewsSettingsScreen(newsVm, onBack = { nav.popBackStack() }) }
+            composable(Routes.NewsStory) { entry ->
+                NewsReaderScreen(newsVm, entry.arguments?.getString("id").orEmpty(), repo.core.contacts(), onBack = { nav.popBackStack() })
+            }
             composable(Routes.Live) { LiveTabScreen() }
             composable(Routes.You) {
                 YouScreen(
@@ -173,7 +208,11 @@ fun OmcpRoot(
                     onSecurity = { contacts.firstOrNull()?.let { nav.navigate(Routes.security(it.id)) } },
                     onBackup = { nav.navigate(Routes.Backup) },
                     onStorage = { nav.navigate(Routes.Storage) },
+                    onRelay = { nav.navigate(Routes.Relay) },
                     onMyQr = { nav.navigate(Routes.MyQr) },
+                    onDiagnostics = { nav.navigate(Routes.Diagnostics) },
+                    themeMode = themeMode,
+                    onThemeMode = onThemeMode,
                 )
             }
             composable(Routes.Thread) { entry ->
@@ -217,6 +256,20 @@ fun OmcpRoot(
                     vm = vm { ContactAddViewModel(repo) },
                     onBack = { nav.popBackStack() },
                     onScanTheirs = { nav.navigate(Routes.ContactAdd) { popUpTo(Routes.Chats) } },
+                )
+            }
+            composable(Routes.Diagnostics) {
+                chat.omcp.app.ui.screens.DiagnosticsScreen(
+                    myShortId = repo.core.identity()?.peerIdHex?.take(8),
+                    contacts = contacts.size,
+                    onRequestPermissions = { requestMesh() },
+                    onBack = { nav.popBackStack() },
+                )
+            }
+            composable(Routes.Relay) {
+                chat.omcp.app.ui.screens.MeshRelaySettingsScreen(
+                    vm = vm { chat.omcp.app.ui.vm.MeshRelayViewModel(repo.core) },
+                    onBack = { nav.popBackStack() },
                 )
             }
             composable(Routes.Storage) {

@@ -42,7 +42,8 @@ public protocol FileSink: AnyObject {
 
 public struct ChatMessage: Equatable, Identifiable, Sendable {
     /// `.system`: in-chat notice; `text` = `restored:<ms>` (RS1, §5.95).
-    public enum Status: Sendable { case queued, sent, received, system }
+    /// `.delivered`: end-to-end delivery ack received over the mesh (PROTOCOL §22.8(3)).
+    public enum Status: Sendable { case queued, sent, delivered, received, system }
     public enum BurnState: Sendable { case none, unopened, open, opened }
     public var id: String
     public var contactId: String
@@ -423,6 +424,28 @@ public final class MeshRepository {
         r.mediaRequests.forEach(onMediaRequest)
         r.resendAsks.forEach(onResendAsk)
         r.mediaUpdates.forEach(onMediaUpdate)
+    }
+
+    /// Mesh status changes (handed to a relay → sent, ack → delivered); never goes backwards.
+    public func applyStatusUpdates(_ updates: [MeshStatusUpdate]) {
+        guard !updates.isEmpty else { return }
+        func rank(_ s: ChatMessage.Status) -> Int {
+            switch s {
+            case .queued: return 0
+            case .sent: return 1
+            case .delivered: return 2
+            case .received, .system: return 3
+            }
+        }
+        for u in updates {
+            messages[u.contactId] = messages[u.contactId]?.map { m in
+                guard m.id == u.msgId, m.mine, rank(u.status) > rank(m.status) else { return m }
+                var n = m
+                n.status = u.status
+                return n
+            }
+        }
+        changed()
     }
 
     public func markFlushed(_ contactId: String, count: Int) {

@@ -1,6 +1,13 @@
 //! Relay budgets, eviction, expiry, metered-network rules (PROTOCOL §22.4)
 //! and gateway rendezvous offload (§22.5).
 //!
+//! Storage follows apps/REQUIREMENTS.md "Relay (store and forward)", RL1–RL4
+//! (maintainer decision 2026-10-24), which supersedes the §22.4 storage
+//! presets: one automatic cap of [`RELAY_CAP_BYTES`] (500 MB), lowered by
+//! [`auto_storage_cap`] when free storage is under 10 %. When full, the
+//! lowest [`RelayClass`] goes first (news, then everything else, then
+//! contacts' envelopes, then own chats), oldest first within a class.
+//!
 //! These budgets are **per-device mesh relay** budgets. They are separate
 //! from, and in addition to, the gateway's Internet byte cap
 //! ([`crate::gateway::policy::DEFAULT_DAILY_BYTE_CAP`], 500 MB/day).
@@ -14,6 +21,56 @@ use crate::gateway::policy::{NetworkKind, DAY_MS};
 pub const MB: u64 = 1_000_000;
 pub const DEFAULT_EXPIRY_MS: u64 = 72 * 3_600_000;
 pub const MAX_EXPIRY_MS: u64 = 7 * DAY_MS;
+/// RL2: automatic relay storage cap (500 MB).
+pub const RELAY_CAP_BYTES: u64 = 500 * MB;
+/// RL2: the cap is lowered when free storage is under this percentage.
+pub const LOW_STORAGE_PERCENT: u64 = 10;
+/// §22.4 daily forwarding budget on battery / cellular (kept; RL1–RL4 do
+/// not change it).
+pub const DAILY_FORWARD_BYTES: u64 = 20 * MB;
+
+/// RL2 priority of a stored envelope. Ordered from first-dropped to
+/// last-dropped: `News < Other < Contact < OwnChat`. Forwarding offers the
+/// reverse order (own chats first).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum RelayClass {
+    /// Public news items (§NW, news channel mailbox tags).
+    News = 0,
+    /// Everything else (e.g. handed over by a non-contact).
+    Other = 1,
+    /// Envelopes handed to us by a contact.
+    Contact = 2,
+    /// Our own chats (our outbound envelopes and acks).
+    OwnChat = 3,
+}
+
+impl RelayClass {
+    pub fn to_u8(self) -> u8 {
+        self as u8
+    }
+
+    pub fn from_u8(v: u8) -> Option<Self> {
+        Some(match v {
+            0 => Self::News,
+            1 => Self::Other,
+            2 => Self::Contact,
+            3 => Self::OwnChat,
+            _ => return None,
+        })
+    }
+}
+
+/// RL2: relay storage cap for the device's storage situation. 500 MB while
+/// free storage is at least 10 % of the total; below that the cap shrinks in
+/// proportion (`500 MB × free / (10 % of total)`), reaching 0 when the disk
+/// is full. `total_bytes == 0` (unknown) keeps the full cap.
+pub fn auto_storage_cap(free_bytes: u64, total_bytes: u64) -> u64 {
+    let threshold = u128::from(total_bytes) * u128::from(LOW_STORAGE_PERCENT) / 100;
+    if total_bytes == 0 || u128::from(free_bytes) >= threshold {
+        return RELAY_CAP_BYTES;
+    }
+    (u128::from(RELAY_CAP_BYTES) * u128::from(free_bytes) / threshold) as u64
+}
 
 /// Storage / forwarding limits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,7 +81,17 @@ pub struct RelayBudget {
 }
 
 impl RelayBudget {
-    /// Defaults: 50 MB / 20 MB-per-day on battery or cellular; 500 MB /
+    /// RL2 budget: the automatic 500 MB storage cap (no user setting), with
+    /// the §22.4 daily forwarding budget.
+    pub fn automatic() -> Self {
+        Self {
+            storage_bytes: RELAY_CAP_BYTES,
+            daily_forward_bytes: Some(DAILY_FORWARD_BYTES),
+        }
+    }
+
+    /// Legacy §22.4 presets (simulations only; the engine uses
+    /// [`Self::automatic`]). Defaults: 50 MB / 20 MB-per-day on battery or cellular; 500 MB /
     /// unlimited on Wi-Fi while charging.
     pub fn for_conditions(net: NetworkKind, charging: bool) -> Self {
         let generous = charging && matches!(net, NetworkKind::Wifi { metered: false });
@@ -46,20 +113,26 @@ impl RelayBudget {
 pub struct StoredEnvelope {
     pub id: [u8; 16],
     pub size: u64,
-    pub priority: bool,
+    /// RL2 priority class.
+    pub class: RelayClass,
+    /// Age key: the envelope's `created_ms`, clamped to the time it was
+    /// stored (a future timestamp cannot make an envelope look newer).
+    pub created_ms: u64,
     pub expires_at: u64,
     /// Hops already travelled.
     pub hop_count: u8,
 }
 
 impl StoredEnvelope {
-    /// Eviction key: smallest is evicted first — non-priority before
-    /// priority, then soonest expiry, then most hops travelled.
-    pub fn evict_key(&self) -> (bool, u64, std::cmp::Reverse<u8>) {
+    /// Eviction key (RL2): smallest is evicted first — lowest class first
+    /// (news, other, contacts, own chats), then oldest, then most hops
+    /// travelled, then id (deterministic).
+    pub fn evict_key(&self) -> (RelayClass, u64, std::cmp::Reverse<u8>, [u8; 16]) {
         (
-            self.priority,
-            self.expires_at,
+            self.class,
+            self.created_ms,
             std::cmp::Reverse(self.hop_count),
+            self.id,
         )
     }
 }
@@ -108,6 +181,15 @@ impl RelayStore {
 
     pub fn used(&self) -> u64 {
         self.used
+    }
+
+    /// Bytes used by envelopes of one class.
+    pub fn used_by(&self, class: RelayClass) -> u64 {
+        self.items
+            .values()
+            .filter(|e| e.class == class)
+            .map(|e| e.size)
+            .sum()
     }
 
     pub fn forwarded_today(&self) -> u64 {
@@ -180,6 +262,29 @@ impl RelayStore {
         self.used += env.size;
         self.items.insert(env.id, env);
         InsertOutcome::Stored { evicted }
+    }
+
+    /// Evict the lowest-ranked envelopes of `class` (oldest first) until the
+    /// class uses at most `cap` bytes, e.g. the 20 MB news cap.
+    pub fn evict_class_over(&mut self, class: RelayClass, cap: u64) -> Vec<[u8; 16]> {
+        let mut out = Vec::new();
+        let mut used = self.used_by(class);
+        while used > cap {
+            let Some(id) = self
+                .items
+                .values()
+                .filter(|e| e.class == class)
+                .min_by_key(|e| e.evict_key())
+                .map(|e| e.id)
+            else {
+                break;
+            };
+            if let Some(e) = self.take(&id) {
+                used -= e.size;
+                out.push(id);
+            }
+        }
+        out
     }
 
     pub fn take(&mut self, id: &[u8; 16]) -> Option<StoredEnvelope> {
@@ -260,14 +365,128 @@ pub fn choose_route(gateway_reachable: bool, tag_secret: &[u8], tag_epoch: u64) 
 mod tests {
     use super::*;
 
-    fn env(i: u8, size: u64, prio: bool, exp: u64, hops: u8) -> StoredEnvelope {
+    /// `t` is both the age key and the expiry.
+    fn env(i: u8, size: u64, prio: bool, t: u64, hops: u8) -> StoredEnvelope {
         StoredEnvelope {
             id: [i; 16],
             size,
-            priority: prio,
-            expires_at: exp,
+            class: if prio {
+                RelayClass::OwnChat
+            } else {
+                RelayClass::Contact
+            },
+            created_ms: t,
+            expires_at: t,
             hop_count: hops,
         }
+    }
+
+    fn cls(i: u8, size: u64, class: RelayClass, created: u64) -> StoredEnvelope {
+        StoredEnvelope {
+            id: [i; 16],
+            size,
+            class,
+            created_ms: created,
+            expires_at: u64::MAX,
+            hop_count: 0,
+        }
+    }
+
+    #[test]
+    fn rl2_automatic_cap_is_500_mb() {
+        let b = RelayBudget::automatic();
+        assert_eq!(b.storage_bytes, 500 * MB);
+        assert_eq!(b.storage_bytes, RELAY_CAP_BYTES);
+        assert_eq!(b.daily_forward_bytes, Some(DAILY_FORWARD_BYTES));
+    }
+
+    #[test]
+    fn rl2_cap_lowered_when_free_storage_under_10_percent() {
+        let gb = 1_000 * MB;
+        // ≥ 10 % free: full cap.
+        assert_eq!(auto_storage_cap(64 * gb, 128 * gb), RELAY_CAP_BYTES);
+        assert_eq!(auto_storage_cap(128 * gb / 10, 128 * gb), RELAY_CAP_BYTES);
+        // Unknown total: full cap.
+        assert_eq!(auto_storage_cap(0, 0), RELAY_CAP_BYTES);
+        // Under 10 %: lowered in proportion, 0 when full.
+        assert_eq!(auto_storage_cap(5 * gb, 100 * gb), RELAY_CAP_BYTES / 2);
+        assert_eq!(auto_storage_cap(gb, 100 * gb), RELAY_CAP_BYTES / 10);
+        assert!(auto_storage_cap(10 * gb - 1, 100 * gb) < RELAY_CAP_BYTES);
+        assert_eq!(auto_storage_cap(0, 100 * gb), 0);
+        // Monotone in free space.
+        let mut last = 0;
+        for f in 0..=20 {
+            let c = auto_storage_cap(f * gb / 2, 100 * gb);
+            assert!(c >= last);
+            last = c;
+        }
+    }
+
+    #[test]
+    fn rl2_full_store_drops_by_priority_then_oldest() {
+        let mut s = RelayStore::new(RelayBudget {
+            storage_bytes: 400,
+            daily_forward_bytes: None,
+        });
+        // Own chats (newest of all, still kept), contact, other, news.
+        for e in [
+            cls(1, 100, RelayClass::OwnChat, 50),
+            cls(2, 100, RelayClass::Contact, 10),
+            cls(3, 100, RelayClass::Other, 20),
+            cls(4, 100, RelayClass::News, 5),
+        ] {
+            assert!(matches!(s.insert(e, 0), InsertOutcome::Stored { .. }));
+        }
+        // News goes first, then everything else, then contacts.
+        let order: Vec<[u8; 16]> = [5u8, 6, 7]
+            .iter()
+            .flat_map(
+                |i| match s.insert(cls(*i, 100, RelayClass::OwnChat, 100 + *i as u64), 0) {
+                    InsertOutcome::Stored { evicted } => evicted,
+                    InsertOutcome::Rejected => panic!("own chats outrank the rest"),
+                },
+            )
+            .collect();
+        assert_eq!(order, vec![[4; 16], [3; 16], [2; 16]]);
+        // Only own chats left: the oldest own envelope goes first.
+        assert_eq!(
+            s.insert(cls(8, 100, RelayClass::OwnChat, 200), 0),
+            InsertOutcome::Stored {
+                evicted: vec![[1; 16]]
+            }
+        );
+        // A lower class never pushes out a higher one.
+        assert_eq!(
+            s.insert(cls(9, 100, RelayClass::Contact, 300), 0),
+            InsertOutcome::Rejected
+        );
+        assert_eq!(s.used_by(RelayClass::OwnChat), 400);
+        // Within one class: oldest first.
+        let mut s = RelayStore::new(RelayBudget {
+            storage_bytes: 200,
+            daily_forward_bytes: None,
+        });
+        s.insert(cls(1, 100, RelayClass::Contact, 30), 0);
+        s.insert(cls(2, 100, RelayClass::Contact, 10), 0);
+        assert_eq!(
+            s.insert(cls(3, 100, RelayClass::Contact, 40), 0),
+            InsertOutcome::Stored {
+                evicted: vec![[2; 16]]
+            }
+        );
+        // A full store refuses a newcomer that would be the first victim.
+        assert_eq!(
+            s.insert(cls(4, 50, RelayClass::News, 99), 0),
+            InsertOutcome::Rejected
+        );
+        // Lowering the cap (RL2 low storage) evicts in the same order.
+        assert_eq!(
+            s.set_budget(RelayBudget {
+                storage_bytes: 100,
+                daily_forward_bytes: None
+            }),
+            vec![[1; 16]]
+        );
     }
 
     #[test]
@@ -300,7 +519,7 @@ mod tests {
             s.insert(env(3, 100, false, 90, 5), 0),
             InsertOutcome::Stored { .. }
         ));
-        // Non-priority, same expiry: more hops goes first.
+        // Same class and age: more hops goes first.
         assert_eq!(
             s.insert(env(4, 100, false, 95, 0), 0),
             InsertOutcome::Stored {

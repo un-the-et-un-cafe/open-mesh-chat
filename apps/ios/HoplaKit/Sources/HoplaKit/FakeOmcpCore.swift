@@ -3,6 +3,19 @@ import Foundation
 /// Deterministic in-memory core for SwiftUI previews and unit tests. NOT crypto: backups are
 /// XOR-"sealed" only so tests can check plumbing; the real sealing is in Rust (tested there).
 public final class FakeOmcpCore: OmcpCore {
+    // News fetch test hooks.
+    public var newsPlan = NewsFetchPlan()
+    public var lastNewsWifiOnly: Bool?
+    public var newsIngested: [String] = []
+    public func newsFetchPlan(wifiOnly: Bool, network: NetworkType, metered: Bool, nowMs: Int64) -> NewsFetchPlan {
+        lastNewsWifiOnly = wifiOnly
+        return newsPlan
+    }
+    public func newsIngestRss(feedUrl: String, body: String, nowMs: Int64) throws -> Int {
+        newsIngested.append(feedUrl)
+        return 3
+    }
+
     public let linked = false
     public let suiteLabel = "OMCP-2026-A (fake)"
     private var me: Identity?
@@ -12,6 +25,10 @@ public final class FakeOmcpCore: OmcpCore {
     private var queued: [String: Int] = [:]
     private var burns: [String: (text: String, mime: String?, live: Bool, opened: Bool, spec: BurnSpec)] = [:]
     private var counter = 0
+    /// Test hook: what `meshStats()` returns (the relay itself lives in Rust).
+    public var fakeMeshStats = MeshRelayStats()
+
+    public func meshStats() -> MeshRelayStats { fakeMeshStats }
     public var maxFile: UInt64 = 50_000_000
 
     public init() {}

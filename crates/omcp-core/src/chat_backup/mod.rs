@@ -346,12 +346,17 @@ pub fn restore(key: &[u8; 32], blobs: &[Vec<u8>], store: &Store) -> Result<Resto
         .rposition(|(k, _, _)| *k == KIND_SNAPSHOT)
         .unwrap_or(0);
     let mut msgs: BTreeMap<Vec<u8>, MessageRec> = BTreeMap::new();
+    // Original conversation order: the order messages first appear in the
+    // backup stream (snapshot then logs), not their random ids (CB1).
+    let mut order: BTreeMap<Vec<u8>, usize> = BTreeMap::new();
     let mut chats: BTreeMap<Vec<u8>, ChatRec> = BTreeMap::new();
     let mut names: BTreeMap<Vec<u8>, String> = BTreeMap::new();
     let mut state = BackupState::default();
     for (kind, seq, s) in segs.into_iter().skip(start) {
         for m in s.messages {
             if backupable(&m) {
+                let n = order.len();
+                order.entry(m.id.to_vec()).or_insert(n);
                 msgs.insert(m.id.to_vec(), m);
             }
         }
@@ -371,8 +376,10 @@ pub fn restore(key: &[u8; 32], blobs: &[Vec<u8>], store: &Store) -> Result<Resto
         }
     }
     let mut out = Restored::default();
+    let mut ordered: Vec<&MessageRec> = msgs.values().collect();
+    ordered.sort_by_key(|m| order.get(m.id.as_slice()).copied().unwrap_or(usize::MAX));
     store.transaction(|s| {
-        for m in msgs.values() {
+        for m in ordered {
             let mut m = m.clone();
             if let Some(f) = m.file.as_mut() {
                 f.local_path = None;

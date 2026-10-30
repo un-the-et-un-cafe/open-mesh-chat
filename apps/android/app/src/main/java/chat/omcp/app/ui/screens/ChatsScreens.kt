@@ -2,6 +2,7 @@ package chat.omcp.app.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -151,7 +152,7 @@ fun ChatsListScreen(
                 Callout(
                     stringResource(R.string.backup_banner),
                     CalloutKind.Warn,
-                    Modifier.padding(horizontal = 16.dp, vertical = 8.dp).clickable(onClick = onBackup),
+                    Modifier.padding(horizontal = 16.dp, vertical = 8.dp).heightIn(min = 48.dp).clickable(onClick = onBackup),
                 )
             }
             Row(
@@ -362,18 +363,18 @@ fun ChatThreadScreen(
             )
             if (selfRestored != null && !selfBannerOff) {
                 Callout(stringResource(R.string.restored_self_banner), CalloutKind.Info,
-                    Modifier.padding(horizontal = 16.dp, vertical = 6.dp).clickable { selfBannerOff = true })
+                    Modifier.padding(horizontal = 16.dp, vertical = 6.dp).heightIn(min = 48.dp).clickable { selfBannerOff = true })
             }
             val waiting = msgs.count { it.file?.isPlaceholder == true }
             if (waiting > 0 && !mediaBannerOff) {
                 Callout(stringResource(R.string.media_banner, waiting, peer), CalloutKind.Info,
-                    Modifier.padding(horizontal = 16.dp, vertical = 6.dp).clickable { mediaBannerOff = true })
+                    Modifier.padding(horizontal = 16.dp, vertical = 6.dp).heightIn(min = 48.dp).clickable { mediaBannerOff = true })
             }
             resendAsks.filter { it.contactId == vm.contactId }.forEach { a ->
                 val askText = a.note?.let { stringResource(R.string.media_resend_asked_note, peer, a.name, it) }
                     ?: stringResource(R.string.media_resend_asked, peer, a.name)
                 Callout(askText, CalloutKind.Info,
-                    Modifier.padding(horizontal = 16.dp, vertical = 6.dp).clickable { vm.dismissResendAsk(a.msgId) })
+                    Modifier.padding(horizontal = 16.dp, vertical = 6.dp).heightIn(min = 48.dp).clickable { vm.dismissResendAsk(a.msgId) })
             }
             LazyColumn(
                 modifier = Modifier.weight(1f).fillMaxWidth(),
@@ -408,9 +409,10 @@ fun ChatThreadScreen(
                         )
                     } else {
                         val meta = time(m.timeMs) + " · " + when (m.status) {
-                            ChatMessage.Status.Queued -> "Queued"
-                            ChatMessage.Status.Sent -> "Sent · Mesh"
-                            ChatMessage.Status.Received -> "Mesh"
+                            ChatMessage.Status.Queued -> stringResource(R.string.msg_status_queued)
+                            ChatMessage.Status.Sent -> stringResource(R.string.msg_status_sent)
+                            ChatMessage.Status.Delivered -> stringResource(R.string.msg_status_delivered)
+                            ChatMessage.Status.Received -> stringResource(R.string.msg_status_received)
                             ChatMessage.Status.System -> ""
                         }
                         Bubble(mine = m.mine, text = m.text, meta = meta)
