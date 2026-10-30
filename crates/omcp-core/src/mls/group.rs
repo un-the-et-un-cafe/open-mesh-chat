@@ -534,6 +534,19 @@ impl OmcpMlsMember {
         Ok(s)
     }
 
+    /// Group key fingerprint for in-person comparison (group-security):
+    /// `MLS-Exporter("OMCP-group-fp-v1", "", 32)` at the current epoch. It
+    /// changes with every key rotation; all members see the same value.
+    pub fn key_fingerprint(&self) -> Result<[u8; 32]> {
+        let out = self
+            .group_ref()?
+            .export_secret(self.provider.crypto(), "OMCP-group-fp-v1", &[], 32)
+            .map_err(|_| OmcpError::Mls("export_secret"))?;
+        let mut s = [0u8; 32];
+        s.copy_from_slice(&out);
+        Ok(s)
+    }
+
     /// Community live secret input (PROTOCOL §20.3):
     /// `MLS-Exporter("OMCP-live-v1", community_id ‖ stream_id, 32)` at the
     /// current MLS epoch. Every member derives the same value; non-members can't.

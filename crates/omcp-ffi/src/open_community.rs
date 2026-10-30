@@ -44,9 +44,17 @@ pub struct OpenCommunityPost {
     pub body: String,
     /// Moderator's reason when removed (shown to everyone, moderators too).
     pub removed_reason: Option<String>,
+    /// Our saved name for the author, if they're a contact (§5.138).
+    pub author_contact_name: Option<String>,
 }
 
 impl NodeState {
+    /// Saved contact name for a community member key (identity signing key).
+    fn contact_name_for_key(&self, key: &[u8; 32]) -> Option<String> {
+        let pid = omcp_core::device::peer_id_from_identity(key);
+        self.contacts.get(&pid).map(|c| c.name.clone())
+    }
+
     pub(crate) fn load_open_communities(&mut self) -> Result<(), FfiError> {
         let (open, genesis): (oc::CommunityStore, _) =
             self.db.get_meta(STATE_KEY)?.unwrap_or_default();
@@ -304,6 +312,10 @@ impl OmcpNode {
                 created_ms: sp.created_ms,
                 body: sp.post.as_ref().map(|p| p.body.clone()).unwrap_or_default(),
                 removed_reason: sp.removed_reason.clone(),
+                author_contact_name: sp
+                    .post
+                    .as_ref()
+                    .and_then(|p| st.contact_name_for_key(&p.author)),
             })
             .collect()
     }
@@ -368,6 +380,7 @@ impl OmcpNode {
                 }
                 .into(),
                 is_me: *k == me,
+                contact_name: st.contact_name_for_key(k),
             })
             .collect();
         v.sort_by_key(|m| match m.role.as_str() {
@@ -407,4 +420,6 @@ pub struct OpenCommunityMember {
     pub key_hex: String,
     pub role: String,
     pub is_me: bool,
+    /// Our saved name for them, if they're a contact (§5.138).
+    pub contact_name: Option<String>,
 }

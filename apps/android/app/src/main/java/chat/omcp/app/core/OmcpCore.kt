@@ -392,6 +392,10 @@ interface OmcpCore {
     fun openMembers(communityId: String): List<OpenMemberUi> = emptyList()
     fun openMakeModerator(communityId: String, memberKey: String): Boolean = false
     fun openRemovePost(communityId: String, postId: String, reason: String): Boolean = false
+    fun groupRemoveMember(groupId: String, peerId: String): Boolean = false
+    fun groupSecurity(groupId: String): GroupSecurityUi? = null
+    /** MR29: when we can go live here again, if blocked now. */
+    fun liveBlockedUntilMs(communityId: String): Long? = null
     fun openReportPost(communityId: String, postId: String, reason: Int, note: String?): ByteArray? = null
 
     // Team moderation (PROTOCOL §23.9, TM1–TM4).
@@ -521,10 +525,15 @@ data class OpenPostUi(
     val body: String,
     /** Set when a moderator removed it; the body is gone for everyone. */
     val removedReason: String?,
+    val authorContactName: String? = null,
 )
 
+data class GroupSecurityUi(val fingerprintHex: String, val events: List<GroupKeyEventUi>)
+/** [kind]: "left" or "removed". */
+data class GroupKeyEventUi(val kind: String, val name: String, val atMs: Long, val members: Int)
+
 /** [role]: "founder", "moderator" or "member". */
-data class OpenMemberUi(val key: String, val role: String, val isMe: Boolean)
+data class OpenMemberUi(val key: String, val role: String, val isMe: Boolean, val contactName: String? = null)
 
 /** Post/limit constants shared by UI and tests. */
 object CommunityLimits {

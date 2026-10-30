@@ -18,6 +18,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.contentDescription
@@ -149,6 +150,7 @@ fun CommunityDetailScreen(
     rtc: chat.omcp.app.live.WebRtcPeers?,
     hasInternet: () -> Boolean,
     onBack: () -> Unit,
+    onSecurity: () -> Unit = {},
 ) {
     val c = LocalOmcpColors.current
     val s by vm.state.collectAsState()
@@ -181,10 +183,20 @@ fun CommunityDetailScreen(
         }, onDismiss = { confirmRemove = null })
     }
     report?.let { ReportLiveDialog(it) { report = null } }
+    var removeMember by remember { mutableStateOf<CommunityMemberUi?>(null) }
+    removeMember?.let { m ->
+        GroupRemoveSheet(m.name, (members.size - 2).coerceAtLeast(0), onDismiss = { removeMember = null }) {
+            core.groupRemoveMember(communityId, m.peerId); removeMember = null; members = core.communityMembers(communityId)
+        }
+    }
+    var blockedUntil by remember { mutableStateOf<Long?>(null) }
+    blockedUntil?.let { u -> LiveBlockedDialog(u, onDismiss = { blockedUntil = null }, onLearn = { blockedUntil = null; learn = true }) }
     if (learn) InfoDialog(stringResource(R.string.mod_learn), stringResource(R.string.mod_learn_d)) { learn = false }
     Scaffold(snackbarHost = { SnackbarHost(snack) }, topBar = {
         TopAppBar(title = { Text(k?.name ?: "") }, navigationIcon = {
             IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.back)) }
+        }, actions = {
+            IconButton(onClick = onSecurity) { Icon(Icons.Filled.Lock, stringResource(R.string.d_security)) }
         })
     }) { padding ->
         LazyColumn(Modifier.fillMaxSize().padding(padding), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -211,6 +223,7 @@ fun CommunityDetailScreen(
                     Card(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
                         Column(Modifier.padding(16.dp)) {
                             Text(stringResource(R.string.live_host_t) + " · " + stringResource(R.string.live_badge), color = c.danger, style = MaterialTheme.typography.labelMedium)
+                            Text("🔒 " + stringResource(R.string.d_glive_d, members.size.toString()), color = c.ink2, style = MaterialTheme.typography.bodySmall)
                             Text(h.title, style = MaterialTheme.typography.titleMedium)
                             Text(stringResource(R.string.live_listeners, members.count { !it.isMe && it.peerId !in s.removedViewers }), color = c.ink2)
                             Text(stringResource(R.string.community_live_host_note), color = c.ink2, style = MaterialTheme.typography.bodySmall)
@@ -247,9 +260,13 @@ fun CommunityDetailScreen(
                             Text(stringResource(R.string.community_live_body), color = c.ink2, style = MaterialTheme.typography.bodySmall)
                             OutlinedTextField(title, { title = it.take(120) }, Modifier.fillMaxWidth().padding(top = 8.dp),
                                 label = { Text(stringResource(R.string.live_title_hint)) }, singleLine = true)
-                            val blocked = remember(s.notice) { core.liveStartBlocked(communityId) }
-                            if (blocked) Callout(stringResource(R.string.u_live_blocked), CalloutKind.Warn, Modifier.padding(top = 8.dp))
-                            Button(onClick = { vm.goLiveCommunity(communityId, title, online) }, enabled = !removed && !blocked && k?.checking != true, modifier = Modifier.padding(top = 8.dp)) {
+                            Text(stringResource(R.string.d_glive) + " · " + stringResource(R.string.d_glive_d, members.size.toString()),
+                                color = c.ink2, style = MaterialTheme.typography.bodySmall)
+                            // §5.140: stays enabled so the explanation can be reached.
+                            Button(onClick = {
+                                val u = core.liveBlockedUntilMs(communityId)
+                                if (u != null) blockedUntil = u else vm.goLiveCommunity(communityId, title, online)
+                            }, enabled = !removed && k?.checking != true, modifier = Modifier.padding(top = 8.dp)) {
                                 Text(stringResource(R.string.live_go))
                             }
                         }
@@ -261,6 +278,9 @@ fun CommunityDetailScreen(
                 Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(if (m.isMe) stringResource(R.string.community_you) else m.name, Modifier.weight(1f))
                     if (hostingHere && m.isMe) Text(stringResource(R.string.live_host_label), color = c.ink3)
+                    if (!hostingHere && k?.founderIsMe == true && !m.isMe && !removed) {
+                        OutlinedButton(onClick = { removeMember = m }, Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.d_grm_btn)) }
+                    }
                     if (hostingHere && !m.isMe && m.peerId !in s.removedViewers) {
                         // §5.122: visible button + ⋯ menu, no swipe-only path (WCAG 2.5.7).
                         OutlinedButton(onClick = { confirmRemove = m }, Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.live_remove_viewer)) }
@@ -279,6 +299,11 @@ fun CommunityDetailScreen(
                 item {
                     Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text(stringResource(R.string.community_invite_h), style = MaterialTheme.typography.titleSmall)
+                        // §5.136 MVP interim: contacts only.
+                        Text(stringResource(R.string.d_interim), color = c.ink2, style = MaterialTheme.typography.labelSmall)
+                        Text(stringResource(R.string.u_start_grp_d), color = c.ink2, style = MaterialTheme.typography.bodySmall)
+                        Text(stringResource(R.string.d_inv_contacts), style = MaterialTheme.typography.titleSmall)
+                        Text(stringResource(R.string.u_inv_contacts_note), color = c.ink3, style = MaterialTheme.typography.bodySmall)
                         Text(stringResource(R.string.community_counter, members.size), color = if (full) c.danger else c.ink2)
                         LinearProgressIndicator(
                             progress = { members.size / COMMUNITY_MAX.toFloat() },

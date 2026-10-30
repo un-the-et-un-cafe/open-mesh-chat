@@ -3499,3 +3499,106 @@ fn legacy_moderation_state_migrates_keeping_removed_communities() {
     st.load_moderation().unwrap();
     assert!(st.mesh.moderation.is_community_tombstoned(&gone));
 }
+
+// ---- v0.1.27: report privacy, group remove + key changes ----
+
+fn contains(h: &[u8], needle: &[u8]) -> bool {
+    !needle.is_empty() && h.windows(needle.len()).any(|w| w == needle)
+}
+
+#[test]
+fn report_files_carry_no_reporter_device_or_account_data() {
+    let (a, b) = (node("Alice"), node("Bobbin-Reporter"));
+    befriend_mls(&a, &b);
+    let ab = up(&a, &b);
+    let links = [(ab.0.clone(), ab.1.clone())];
+    let gid = community_of(&a, &[&b], &links);
+    let mid = a.private_group_send(gid.clone(), "bad".into()).unwrap();
+    settle(&links);
+    let g = b
+        .private_group_report(gid.clone(), vec![mid], 10, Some("note".into()))
+        .unwrap();
+    // Community post report too.
+    let oc = a.open_community_create("Open".into()).unwrap();
+    let topic = a
+        .open_community_new_topic(oc.community_id_hex.clone(), "T".into())
+        .unwrap();
+    let pid = a
+        .open_community_post(oc.community_id_hex.clone(), topic, None, "post".into())
+        .unwrap();
+    let c = a
+        .open_community_report_post(oc.community_id_hex, pid, 10, None)
+        .unwrap();
+    let me = hex::decode(b.identity().peer_id_hex).unwrap();
+    let sk = b.signing_key().unwrap().verifying_key().to_bytes();
+    let dev = hex::decode(b.device_info().unwrap().device_key_hex).unwrap();
+    for (file, who, pk, devk, name) in [
+        (
+            &g,
+            me.clone(),
+            sk.to_vec(),
+            dev.clone(),
+            b"Bobbin-Reporter".to_vec(),
+        ),
+        (
+            &c,
+            hex::decode(a.identity().peer_id_hex).unwrap(),
+            vec![],
+            hex::decode(a.device_info().unwrap().device_key_hex).unwrap(),
+            b"Alice".to_vec(),
+        ),
+    ] {
+        assert!(!contains(file, &who), "peer id leaked");
+        assert!(!contains(file, &pk), "identity key leaked");
+        assert!(!contains(file, &devk), "device key leaked");
+        assert!(!contains(file, &name), "name leaked");
+    }
+    // The group report is still valid evidence.
+    assert_eq!(b.evidence_verify(g).unwrap().verified, 1);
+    down(&ab);
+}
+
+#[test]
+fn founder_removes_member_rotates_key_and_logs_it() {
+    let (a, b, c) = (node("A"), node("B"), node("C"));
+    befriend_mls(&a, &b);
+    befriend_mls(&a, &c);
+    let ab = up(&a, &b);
+    let ac = up(&a, &c);
+    let links = [(ab.0.clone(), ab.1.clone()), (ac.0.clone(), ac.1.clone())];
+    let gid = community_of(&a, &[&b, &c], &links);
+    let fp0 = a
+        .private_group_security(gid.clone())
+        .unwrap()
+        .fingerprint_hex;
+    assert_eq!(
+        fp0,
+        b.private_group_security(gid.clone())
+            .unwrap()
+            .fingerprint_hex
+    );
+    assert_eq!(fp0.len(), 60);
+    let cid = c.identity().peer_id_hex;
+    assert!(b
+        .private_group_remove_member(gid.clone(), cid.clone())
+        .is_err());
+    a.private_group_remove_member(gid.clone(), cid).unwrap();
+    settle(&links);
+    let sa = a.private_group_security(gid.clone()).unwrap();
+    let sb = b.private_group_security(gid.clone()).unwrap();
+    assert_ne!(sa.fingerprint_hex, fp0);
+    assert_eq!(sa.fingerprint_hex, sb.fingerprint_hex);
+    assert_eq!(sb.events.len(), 1);
+    assert_eq!(
+        (sb.events[0].kind.as_str(), sb.events[0].members),
+        ("removed", 2)
+    );
+    assert_eq!(a.private_group_members(gid.clone()).len(), 2);
+    // Messages still flow between the remaining members.
+    a.private_group_send(gid.clone(), "after".into()).unwrap();
+    settle(&links);
+    assert_eq!(b.private_group_messages(gid).last().unwrap().body, "after");
+    for l in [&ab, &ac] {
+        down(l);
+    }
+}

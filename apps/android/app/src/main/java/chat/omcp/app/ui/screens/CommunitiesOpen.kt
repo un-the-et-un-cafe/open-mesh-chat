@@ -55,6 +55,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
@@ -261,7 +263,11 @@ fun OpenTopicScreen(core: OmcpCore, id: String, topicId: String, onBack: () -> U
         title = { Text(stringResource(R.string.u_first_t)) }, text = { Text(stringResource(R.string.u_first_d)) },
         confirmButton = { TextButton(onClick = { prefs.edit().putBoolean("first_post_seen", true).apply(); firstNotice = false; send() }) { Text(stringResource(R.string.u_got_it)) } })
     removing?.let { pid ->
-        RemoveReasonDialog(onDismiss = { removing = null }) { reason -> core.openRemovePost(id, pid, reason); removing = null; posts = core.openPosts(id, topicId) }
+        RemoveReasonDialog(onDismiss = { removing = null }) { reason ->
+            // Remove thread = the opening post and its replies.
+            (listOf(pid) + posts.filter { it.parentId == pid && it.removedReason == null }.map { it.id }).forEach { core.openRemovePost(id, it, reason) }
+            removing = null; posts = core.openPosts(id, topicId)
+        }
     }
     reporting?.let { pid ->
         ReportSheet(stringResource(R.string.u_rep_c), onDismiss = { reporting = null }) { r, note -> core.openReportPost(id, pid, r, note) }
@@ -307,17 +313,63 @@ private fun PostRow(p: OpenPostUi, depth: Int, canModerate: Boolean, onReply: ()
             return@Column
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("omcp:" + p.authorKey.take(6), color = c.ink2, style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))
-            var menu by remember { mutableStateOf(false) }
-            IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, stringResource(R.string.u_more_for_post)) }
-            // `comm-mod-tools`: buttons, never swipe-only (WCAG 2.5.7).
-            DropdownMenu(menu, { menu = false }) {
-                DropdownMenuItem(text = { Text(stringResource(R.string.u_reply)) }, onClick = { menu = false; onReply() })
-                DropdownMenuItem(text = { Text(stringResource(R.string.u_report_btn)) }, onClick = { menu = false; onReport() })
-                if (canModerate) DropdownMenuItem(text = { Text(stringResource(R.string.u_remove_post)) }, onClick = { menu = false; onRemove() })
-            }
+            MemberIdentity(p.authorKey, p.authorContactName, null, Modifier.weight(1f))
+            var sheet by remember { mutableStateOf(false) }
+            IconButton(onClick = { sheet = true }) { Icon(Icons.Filled.MoreVert, stringResource(R.string.d_more_p)) }
+            if (sheet) ModToolsSheet(canModerate, isReply = depth > 0, onDismiss = { sheet = false },
+                onReply = { sheet = false; onReply() }, onRemove = { sheet = false; onRemove() }, onReport = { sheet = false; onReport() })
         }
         Text(p.body)
+    }
+}
+
+/**
+ * `comm-mod-tools` as its own modal bottom sheet (§5.141): 48 dp rows, focus
+ * kept in the sheet. Remove member isn't in the protocol yet (not shown).
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ModToolsSheet(canModerate: Boolean, isReply: Boolean, onDismiss: () -> Unit, onReply: () -> Unit, onRemove: () -> Unit, onReport: () -> Unit) {
+    val c = LocalOmcpColors.current
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(Modifier.padding(horizontal = 16.dp)) {
+            Text(stringResource(if (canModerate) R.string.d_mt_t else R.string.d_more_p), style = MaterialTheme.typography.titleLarge)
+            @Composable fun row(text: String, danger: Boolean = false, go: () -> Unit) =
+                Text(text, color = if (danger) c.danger else MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(role = Role.Button, onClick = go).padding(vertical = 14.dp))
+            row(stringResource(R.string.u_reply), go = onReply)
+            if (canModerate) row(stringResource(if (isReply) R.string.d_rm_post else R.string.d_rm_thread), danger = true, go = onRemove)
+            row(stringResource(R.string.d_report), go = onReport)
+            if (canModerate) Text(stringResource(R.string.d_mt_note), color = c.ink2, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
+            Row(Modifier.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Filled.Lock, null, Modifier.size(16.dp)); Text(stringResource(R.string.u_anon), color = c.ink2, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(start = 6.dp))
+            }
+            Box(Modifier.heightIn(min = 24.dp))
+        }
+    }
+}
+
+/** §5.138: pseudonym or saved contact name, always with the short key. */
+@Composable
+fun MemberIdentity(keyHex: String, contactName: String?, role: String?, modifier: Modifier = Modifier) {
+    val c = LocalOmcpColors.current
+    val id = remember(keyHex) { chat.omcp.app.ui.components.Pseudonym.of(keyHex) }
+    val name = contactName ?: id.name
+    val a11y = listOfNotNull(name, role, "key " + id.shortKey).joinToString(", ")
+    Row(modifier.semantics(mergeDescendants = true) { contentDescription = a11y }, verticalAlignment = Alignment.CenterVertically) {
+        if (contactName != null) Box(Modifier.size(40.dp).background(c.brandSoft, RoundedCornerShape(20.dp)), contentAlignment = Alignment.Center) {
+            Text(contactName.take(1).uppercase(), fontWeight = FontWeight.Bold)
+        } else chat.omcp.app.ui.components.Identicon(id)
+        Column(Modifier.padding(start = 10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                // Pseudonyms and keys are LTR English names in every locale.
+                Text(name, style = MaterialTheme.typography.labelLarge.copy(textDirection = androidx.compose.ui.text.style.TextDirection.Ltr))
+                if (contactName != null) Text(stringResource(R.string.d_contact_b), color = c.ink2, style = MaterialTheme.typography.labelSmall,
+                    modifier = Modifier.padding(start = 6.dp).background(c.surface2, RoundedCornerShape(6.dp)).padding(horizontal = 6.dp, vertical = 2.dp))
+            }
+            Text(listOfNotNull(role, id.shortKey).joinToString(" · "), color = c.ink2,
+                style = MaterialTheme.typography.bodySmall.copy(textDirection = androidx.compose.ui.text.style.TextDirection.Ltr))
+        }
     }
 }
 
@@ -347,7 +399,10 @@ fun RemoveReasonDialog(onDismiss: () -> Unit, onRemove: (String) -> Unit) {
 }
 
 /** Report reasons shown in the sheet → protocol reason codes (§23.9). */
-val REPORT_REASONS = listOf(R.string.u_rep_r1 to 6, R.string.u_rep_r2 to 7, R.string.u_rep_r3 to 4, R.string.u_rep_r4 to 2, R.string.u_rep_r5 to 5, R.string.u_rep_r6 to 9)
+val REPORT_REASONS = listOf(
+    R.string.u_rep_r1 to 6, R.string.u_rep_r2 to 7, R.string.u_rep_r3 to 4, R.string.u_rep_r4 to 10,
+    R.string.u_rep_r5 to 2, R.string.u_rep_r6 to 5, R.string.u_rep_r7 to 9,
+)
 
 /**
  * `comm-report`: in-app anonymous report. [make] builds the file in Rust
@@ -419,14 +474,12 @@ fun OpenMembersScreen(core: OmcpCore, id: String, onBack: () -> Unit) {
         })
     }) { padding ->
         LazyColumn(Modifier.fillMaxSize().padding(padding)) {
+            item { Text(stringResource(R.string.d_id_note), color = c.ink2, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp)) }
             item { Text(stringResource(R.string.u_mod_rule), color = c.ink2, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(16.dp)) }
             items(members, key = { it.key }) { m ->
                 Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text(if (m.isMe) stringResource(R.string.u_member_you) else "omcp:" + m.key.take(8))
-                        Text(stringResource(when (m.role) { "founder" -> R.string.u_role_f; "moderator" -> R.string.u_role_m; else -> R.string.u_role_n }),
-                            color = c.ink2, style = MaterialTheme.typography.bodySmall)
-                    }
+                    val role = stringResource(when (m.role) { "founder" -> R.string.u_role_f; "moderator" -> R.string.u_role_m; else -> R.string.u_role_n })
+                    MemberIdentity(m.key, if (m.isMe) stringResource(R.string.u_member_you) else m.contactName, role, Modifier.weight(1f))
                     if (isFounder && m.role == "member") OutlinedButton(onClick = { core.openMakeModerator(id, m.key); members = core.openMembers(id) },
                         Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.u_make_mod)) }
                 }
@@ -452,7 +505,7 @@ fun GroupChatSection(core: OmcpCore, groupId: String, members: Int, checking: Bo
                 Text(stringResource(R.string.u_grp_lbl, members), color = c.ink2, style = MaterialTheme.typography.bodySmall)
             }
         }
-        if (checking) { Callout(stringResource(R.string.u_checking) + "\n" + stringResource(R.string.u_checking_d), CalloutKind.Info); return@Column }
+        if (checking) { RestoreChecking(core.meshStats().neighbours > 0); return@Column }
         msgs.takeLast(50).forEach { m ->
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
@@ -475,6 +528,109 @@ fun GroupChatSection(core: OmcpCore, groupId: String, members: Int, checking: Bo
             Button(enabled = draft.isNotBlank() && bytes <= CommunityLimits.POST_BYTES, modifier = Modifier.padding(start = 8.dp).heightIn(min = 48.dp), onClick = {
                 if (core.groupSend(groupId, draft.trim()) != null) { draft = ""; msgs = core.groupMessages(groupId) }
             }) { Text(stringResource(R.string.u_send)) }
+        }
+    }
+}
+
+
+/** `restore-checking` (§5.139): status callout + 3 steps; messages stay hidden. */
+@Composable
+fun RestoreChecking(foundPhone: Boolean) {
+    val c = LocalOmcpColors.current
+    val step = if (foundPhone) 2 else 1
+    val prog = stringResource(R.string.d_ck_prog, step.toString())
+    Column(Modifier.fillMaxWidth().background(c.surface2, RoundedCornerShape(12.dp)).padding(12.dp)
+        .semantics { liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite }, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(stringResource(R.string.u_checking), style = MaterialTheme.typography.titleMedium)
+        Text(stringResource(R.string.u_checking_d), color = c.ink2, style = MaterialTheme.typography.bodySmall)
+        listOf(R.string.d_ck1, R.string.d_ck2, R.string.d_ck3).forEachIndexed { i, res ->
+            val state = when { i + 1 < step -> R.string.d_ck_done; i + 1 == step -> R.string.d_ck_now; else -> R.string.d_ck_wait }
+            Row(Modifier.fillMaxWidth().heightIn(min = 32.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(if (i + 1 < step) "✓" else if (i + 1 == step) "•" else "○", Modifier.size(24.dp))
+                Text(stringResource(res), Modifier.weight(1f))
+                Text(stringResource(state), color = c.ink2, style = MaterialTheme.typography.bodySmall)
+            }
+        }
+        androidx.compose.material3.LinearProgressIndicator(progress = { step / 3f },
+            modifier = Modifier.fillMaxWidth().semantics { stateDescription = prog })
+        Text(stringResource(R.string.d_ck_hint), color = c.ink3, style = MaterialTheme.typography.bodySmall)
+    }
+}
+
+/** `live-blocked-24h` (§5.140): countdown updated every minute. */
+@Composable
+fun LiveBlockedDialog(untilMs: Long, onDismiss: () -> Unit, onLearn: () -> Unit) {
+    val c = LocalOmcpColors.current
+    var now by remember { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) { while (true) { kotlinx.coroutines.delay(60_000); now = System.currentTimeMillis() } }
+    val left = ((untilMs - now).coerceAtLeast(0) / 60_000)
+    AlertDialog(onDismissRequest = onDismiss,
+        icon = { Icon(Icons.Filled.Lock, null, tint = c.danger) },
+        title = { Text(stringResource(R.string.d_lb_t)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(stringResource(R.string.u_live_blocked))
+                Text(stringResource(R.string.d_lb_left, (left / 60).toString(), (left % 60).toString()),
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.fillMaxWidth().background(c.surface2, RoundedCornerShape(8.dp)).padding(12.dp))
+                Text(stringResource(R.string.d_no_appeal), color = c.ink2)
+                Text(stringResource(R.string.d_lb_other), color = c.ink2)
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("OK") } },
+        dismissButton = { TextButton(onClick = onLearn) { Text(stringResource(R.string.mod_learn)) } })
+}
+
+/** `group-remove` (§5.141): founder-only confirm sheet. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun GroupRemoveSheet(name: String, others: Int, onDismiss: () -> Unit, onRemove: () -> Unit) {
+    val c = LocalOmcpColors.current
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(stringResource(R.string.d_grm_t, name), style = MaterialTheme.typography.titleLarge)
+            Text(stringResource(R.string.d_grm_d, name, others.toString()), color = c.ink2)
+            Text(stringResource(R.string.d_rot_note), color = c.ink3, style = MaterialTheme.typography.bodySmall)
+            Button(onClick = onRemove, colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = c.danger),
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text(stringResource(R.string.d_grm_btn)) }
+            OutlinedButton(onClick = onDismiss, Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text(stringResource(R.string.u_cancel)) }
+            Box(Modifier.heightIn(min = 24.dp))
+        }
+    }
+}
+
+/** `group-security` (§5.141): fingerprint 3×5 groups (LTR monospace) + key changes. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun GroupSecurityScreen(core: OmcpCore, groupId: String, onBack: () -> Unit) {
+    val c = LocalOmcpColors.current
+    val sec = remember(groupId) { core.groupSecurity(groupId) }
+    Scaffold(topBar = {
+        TopAppBar(title = { Text(stringResource(R.string.d_security)) }, navigationIcon = {
+            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.back)) }
+        })
+    }) { padding ->
+        LazyColumn(Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            item { Text(stringResource(R.string.d_fp), style = MaterialTheme.typography.titleMedium) }
+            item {
+                val groups = sec?.fingerprintHex.orEmpty().chunked(4)
+                Text(groups.chunked(5).joinToString("\n") { it.joinToString(" ") },
+                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                    style = MaterialTheme.typography.titleMedium.copy(textDirection = androidx.compose.ui.text.style.TextDirection.Ltr),
+                    modifier = Modifier.fillMaxWidth().background(c.surface2, RoundedCornerShape(8.dp)).padding(12.dp))
+            }
+            item { Text(stringResource(R.string.d_fp_d), color = c.ink2) }
+            item { Text(stringResource(R.string.d_rot), style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 8.dp)) }
+            items(sec?.events.orEmpty().reversed()) { e ->
+                val t = if (e.kind == "left") stringResource(R.string.d_rot1, e.name, e.members.toString())
+                    else stringResource(R.string.d_rot2, e.name)
+                Column {
+                    Text(t)
+                    Text(java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT, java.text.DateFormat.SHORT).format(java.util.Date(e.atMs)),
+                        color = c.ink3, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+            item { Text(stringResource(R.string.d_rot_note), color = c.ink2, style = MaterialTheme.typography.bodySmall) }
         }
     }
 }

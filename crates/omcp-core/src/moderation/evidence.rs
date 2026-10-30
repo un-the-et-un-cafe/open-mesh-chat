@@ -410,7 +410,7 @@ impl EvidenceFile {
         {
             return err("evidence: wire_format");
         }
-        if !(1..=9).contains(&self.reason_code) {
+        if !(1..=10).contains(&self.reason_code) {
             return err("evidence: reason category");
         }
         Ok(())
