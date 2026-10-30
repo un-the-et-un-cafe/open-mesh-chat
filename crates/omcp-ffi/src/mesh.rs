@@ -192,6 +192,9 @@ pub(crate) struct MeshState {
     pub community: crate::private_group::CommunityState,
     /// Open communities (forum-style, signed, not E2EE).
     pub open: omcp_core::community::CommunityStore,
+    /// MR30 post-restore hold: `Some(baseline, digested)` until one full
+    /// digest exchange (and the frames after it) has been processed.
+    pub restore_hold: Option<(u64, bool)>,
     /// Genesis frames (invite links) of open communities.
     pub open_genesis: std::collections::BTreeMap<[u8; 32], Vec<u8>>,
 }
@@ -214,6 +217,7 @@ impl MeshState {
             community: Default::default(),
             open: Default::default(),
             open_genesis: Default::default(),
+            restore_hold: None,
         }
     }
 
@@ -589,6 +593,14 @@ pub(crate) fn refresh_wants(st: &mut NodeState, now: u64) -> Result<(), FfiError
             .keys()
             .map(omcp_core::community::community_tag),
     );
+    let ctags: Vec<MailboxTag> = st
+        .mesh
+        .open
+        .communities
+        .keys()
+        .map(omcp_core::community::community_tag)
+        .collect();
+    st.mesh.engine.set_community_tags(ctags);
     st.mesh.tags = tags;
     st.mesh.tags_for = Some((epoch, fp));
     let ev = st.mesh.engine.set_wants(wants, now);
@@ -825,7 +837,21 @@ impl MeshLink {
             return Ok(()); // live audio: forwarded / played, never stored
         }
         refresh_wants(&mut node, now)?;
+        // MR30: release the post-restore hold on the first frame processed
+        // after a full digest exchange (its team actions are applied by then).
+        if let Some((base, digested)) = node.mesh.restore_hold {
+            if digested {
+                node.mesh.restore_hold = None;
+            } else if node.mesh.engine.full_digests_received() > base {
+                node.mesh.restore_hold = Some((base, true));
+            }
+        }
         let ev = node.mesh.engine.on_frame(self.handle, frame, now)?;
+        if let Some((base, false)) = node.mesh.restore_hold {
+            if node.mesh.engine.full_digests_received() > base {
+                node.mesh.restore_hold = Some((base, true));
+            }
+        }
         let from = node.links_up.get(&self.handle).copied();
         let mut news_via = false;
         for e in &ev {

@@ -1,6 +1,8 @@
 [workspace]
 resolver = "2"
 members = ["crates/omcp-core", "crates/omcp-ffi", "crates/omcp-sim"]
+# vendor/openmls is a patched copy of openmls 0.9.2 (see vendor/README.md).
+exclude = ["vendor"]
 
 [workspace.package]
 edition = "2021"
@@ -25,3 +27,9 @@ opt-level = 2
 
 [profile.dev.package."*"]
 opt-level = 2
+
+# OMCP patch: openmls 0.9.2 + `ProcessedMessage::signed_content()` so receivers
+# can keep the MLS sender signature bytes for reports (PROTOCOL §23.10.1(2)).
+# See vendor/README.md. Remove once upstream exposes them.
+[patch.crates-io]
+openmls = { path = "vendor/openmls" }

@@ -61,6 +61,9 @@ pub struct ReportedMessage {
     pub leaf_node: Vec<u8>,
     pub body: Vec<u8>,
     pub media: Vec<MediaItem>,
+    /// MLS `wire_format`: 2 valid; 1 marks the message unverified; any other
+    /// value makes the file invalid (§23.10.3(3) key 8).
+    pub wire_format: u16,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -274,6 +277,7 @@ impl ReportedMessage {
             (4, V::B(self.signature.clone())),
             (5, V::B(self.leaf_node.clone())),
             (6, V::B(self.body.clone())),
+            (8, V::U(self.wire_format as u64)),
         ];
         if !self.media.is_empty() {
             m.push((
@@ -311,7 +315,12 @@ impl ReportedMessage {
                 })
                 .collect::<Result<_>>()?,
         };
+        let wire_format = match u(need(&mut m, 8)?)? {
+            w @ (1 | 2) => w as u16,
+            _ => return err("evidence: wire_format"),
+        };
         let r = Self {
+            wire_format,
             sender_id: b32(need(&mut m, 0)?)?,
             framed_content: b(need(&mut m, 1)?)?,
             group_context_hash: b32(need(&mut m, 2)?)?,
@@ -393,6 +402,13 @@ impl EvidenceFile {
             .unwrap_or(false)
         {
             return err("evidence: note too long");
+        }
+        if self
+            .messages
+            .iter()
+            .any(|m| !matches!(m.wire_format, 1 | 2))
+        {
+            return err("evidence: wire_format");
         }
         if !(1..=9).contains(&self.reason_code) {
             return err("evidence: reason category");
@@ -606,6 +622,7 @@ pub fn tls_vec(out: &mut Vec<u8>, b: &[u8]) {
 struct Framed<'a> {
     group_id: &'a [u8],
     epoch: u64,
+    leaf_index: u32,
     application_data: &'a [u8],
 }
 
@@ -616,7 +633,7 @@ fn parse_framed(b: &[u8]) -> Option<Framed<'_>> {
     if r.u8()? != 1 {
         return None; // sender_type member
     }
-    r.u32()?; // leaf index
+    let leaf_index = r.u32()?;
     r.vec()?; // authenticated_data
     if r.u8()? != 1 {
         return None; // content_type application
@@ -625,6 +642,7 @@ fn parse_framed(b: &[u8]) -> Option<Framed<'_>> {
     r.0.is_empty().then_some(Framed {
         group_id,
         epoch,
+        leaf_index,
         application_data,
     })
 }
@@ -640,33 +658,119 @@ fn parse_context(b: &[u8]) -> Option<(&[u8], u64)> {
     Some((gid, epoch))
 }
 
-/// (signature_key, credential identity) of a basic-credential LeafNode.
-fn parse_leaf(b: &[u8]) -> Option<(&[u8], &[u8])> {
+struct Leaf<'a> {
+    sig_key: &'a [u8],
+    identity: &'a [u8],
+    /// LeafNodeTBS fields up to (not including) the signature.
+    tbs_prefix: &'a [u8],
+    /// 1 key_package, 2 update, 3 commit.
+    source: u8,
+    signature: &'a [u8],
+}
+
+/// Parse a basic-credential LeafNode (RFC 9420 §7.2).
+fn parse_leaf(b: &[u8]) -> Option<Leaf<'_>> {
     let mut r = Tls(b);
     r.vec()?; // encryption_key
     let sig_key = r.vec()?;
     if r.u16()? != 1 {
         return None; // basic credential
     }
-    Some((sig_key, r.vec()?))
+    let identity = r.vec()?;
+    for _ in 0..5 {
+        r.vec()?; // capabilities: versions, cipher_suites, extensions, proposals, credentials
+    }
+    let source = r.u8()?;
+    match source {
+        1 => {
+            r.u64()?;
+            r.u64()?; // lifetime
+        }
+        2 => {}
+        3 => {
+            r.vec()?; // parent_hash
+        }
+        _ => return None,
+    }
+    r.vec()?; // extensions
+    let tbs_len = b.len() - r.0.len();
+    let signature = r.vec()?;
+    r.0.is_empty().then_some(Leaf {
+        sig_key,
+        identity,
+        tbs_prefix: &b[..tbs_len],
+        source,
+        signature,
+    })
+}
+
+pub(crate) fn sign_content(label: &[u8], content: &[u8]) -> Vec<u8> {
+    let mut l = b"MLS 1.0 ".to_vec();
+    l.extend_from_slice(label);
+    let mut out = Vec::new();
+    tls_vec(&mut out, &l);
+    tls_vec(&mut out, content);
+    out
+}
+
+fn ed25519_ok(key: &[u8], msg: &[u8], sig: &[u8]) -> bool {
+    let (Ok(pk), Ok(sig)) = (<[u8; 32]>::try_from(key), <[u8; 64]>::try_from(sig)) else {
+        return false;
+    };
+    VerifyingKey::from_bytes(&pk)
+        .and_then(|k| k.verify_strict(msg, &Signature::from_bytes(&sig)))
+        .is_ok()
+}
+
+/// The leaf's own signature (RFC 9420 §7.2 `LeafNodeTBS`): for update and
+/// commit leaves the TBS also binds the group ID and leaf index.
+fn leaf_self_signed(l: &Leaf, group_id: &[u8], leaf_index: u32) -> bool {
+    let mut tbs = l.tbs_prefix.to_vec();
+    if l.source != 1 {
+        tls_vec(&mut tbs, group_id);
+        tbs.extend_from_slice(&leaf_index.to_be_bytes());
+    }
+    ed25519_ok(l.sig_key, &sign_content(b"LeafNodeTBS", &tbs), l.signature)
 }
 
 /// RFC 9420 `SignWithLabel` content for `FramedContentTBS`.
-pub fn framed_content_sign_content(framed_content: &[u8], group_context: &[u8]) -> Vec<u8> {
+pub fn framed_content_sign_content(
+    wire_format: u16,
+    framed_content: &[u8],
+    group_context: &[u8],
+) -> Vec<u8> {
     let mut tbs = Vec::new();
     tbs.extend_from_slice(&MLS10.to_be_bytes());
-    tbs.extend_from_slice(&WIRE_FORMAT_PRIVATE_MESSAGE.to_be_bytes());
+    tbs.extend_from_slice(&wire_format.to_be_bytes());
     tbs.extend_from_slice(framed_content);
     tbs.extend_from_slice(group_context);
-    let mut out = Vec::new();
-    tls_vec(&mut out, b"MLS 1.0 FramedContentTBS");
-    tls_vec(&mut out, &tbs);
-    out
+    sign_content(b"FramedContentTBS", &tbs)
+}
+
+impl ReportedMessage {
+    /// Build a reported message from the signed bytes a receiver kept
+    /// ([`crate::mls::group::SignedAppMessage`]) and the decrypted body.
+    pub fn from_signed(s: &crate::mls::group::SignedAppMessage, body: Vec<u8>) -> Result<Self> {
+        let sender_id: [u8; 32] = parse_leaf(&s.sender_leaf_node)
+            .and_then(|l| l.identity.try_into().ok())
+            .ok_or(OmcpError::Sync("sender leaf"))?;
+        Ok(Self {
+            sender_id,
+            framed_content: s.framed_content.clone(),
+            group_context_hash: h256(&[&s.group_context]),
+            group_context: s.group_context.clone(),
+            signature: s.signature.clone(),
+            leaf_node: s.sender_leaf_node.clone(),
+            body,
+            media: Vec::new(),
+            wire_format: s.wire_format,
+        })
+    }
 }
 
 /// §23.10.1(4) steps a–d for one message.
 pub fn verify_message(file_group_ref: &[u8; 32], m: &ReportedMessage) -> bool {
-    let (Some(fc), Some((gid, epoch)), Some((sig_key, identity))) = (
+    let (Some(fc), Some((gid, epoch)), Some(leaf)) = (
         parse_framed(&m.framed_content),
         parse_context(&m.group_context),
         parse_leaf(&m.leaf_node),
@@ -674,25 +778,18 @@ pub fn verify_message(file_group_ref: &[u8; 32], m: &ReportedMessage) -> bool {
         return false;
     };
     // (a) sender signature over FramedContentTBS.
-    let Ok(pk) = <[u8; 32]>::try_from(sig_key) else {
-        return false;
-    };
-    let Ok(sig) = <[u8; 64]>::try_from(m.signature.as_slice()) else {
-        return false;
-    };
-    let msg = framed_content_sign_content(&m.framed_content, &m.group_context);
-    let sig_ok = VerifyingKey::from_bytes(&pk)
-        .and_then(|k| k.verify_strict(&msg, &Signature::from_bytes(&sig)))
-        .is_ok();
-    // (b) the credential binds the leaf to the sender (OMCP credential
-    // identity = PeerID hash = BLAKE2b-256 of the identity key).
-    let sender_ok = identity == m.sender_id;
-    // (c) ids, epochs, context hash and group_ref agree.
+    let msg = framed_content_sign_content(m.wire_format, &m.framed_content, &m.group_context);
+    let sig_ok = ed25519_ok(leaf.sig_key, &msg, &m.signature);
+    // (b) the LeafNode is validly self-signed; (c) its credential names the
+    // sender (OMCP credential identity = PeerID hash).
+    let sender_ok = leaf_self_signed(&leaf, gid, fc.leaf_index) && leaf.identity == m.sender_id;
+    // (d) ids, epochs, context hash, group_ref and wire_format.
     let ctx_ok = fc.group_id == gid
         && fc.epoch == epoch
         && h256(&[&m.group_context]) == m.group_context_hash
         && evidence_group_ref(gid) == *file_group_ref;
-    // (d) body equals the signed application_data.
+    let wf_ok = m.wire_format == WIRE_FORMAT_PRIVATE_MESSAGE;
+    // (e) body equals the signed application_data.
     let body_ok = fc.application_data == m.body.as_slice();
-    sig_ok && sender_ok && ctx_ok && body_ok
+    sig_ok && sender_ok && ctx_ok && wf_ok && body_ok
 }

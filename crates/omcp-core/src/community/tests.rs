@@ -330,3 +330,40 @@ fn mr25_takedown_erases_and_old_backup_restore_does_not_resurrect() {
     s.enforce(&m);
     assert!(s.get(&id).is_none());
 }
+
+#[test]
+fn mr31_posts_carry_the_community_post_tlv_and_relays_can_drop_taken_down_ones() {
+    let (_s, mut m, _f, bob, id) = setup();
+    let (tk, tp) = team();
+    let p = Post::new(&bob, id, T, None, "hello", NOW).unwrap();
+    let env = seal(&Wire::Post(p.clone()), &id, NOW, 3);
+    let tlv = post_tlv(&env.header_aad).expect("0x5B present");
+    assert_eq!(tlv, post_tlv_value(&p));
+    // The TLV holds refs, never the raw community or topic id.
+    assert!(!has(&tlv, &id) && !has(&tlv, &T));
+    assert!(!CommunityBlocks::from_moderation(&m).blocks(&tlv));
+    let pid: [u8; 32] = tlv[64..].try_into().unwrap();
+    m.apply(
+        &tp,
+        &act(TeamAction::post_takedown(id, pid, Reason::Spam, "", 1), &tk),
+        NOW,
+    )
+    .unwrap();
+    assert!(CommunityBlocks::from_moderation(&m).blocks(&tlv));
+    assert!(tlv_under_takedown(&tlv, &m));
+    // Still blocked after restore: the tombstone stays (MR30).
+    m.apply(&tp, &act(TeamAction::item_restore(id, pid, 2), &tk), NOW)
+        .unwrap();
+    assert!(CommunityBlocks::from_moderation(&m).blocks(&tlv));
+    // A topic takedown blocks every post in it.
+    let (_s2, mut m2, _f2, bob2, id2) = setup();
+    let p2 = Post::new(&bob2, id2, T, None, "x", NOW).unwrap();
+    let tlv2 = post_tlv_value(&p2);
+    m2.apply(
+        &tp,
+        &act(TeamAction::topic_takedown(id2, T, Reason::Spam, "", 1), &tk),
+        NOW,
+    )
+    .unwrap();
+    assert!(CommunityBlocks::from_moderation(&m2).blocks(&tlv2));
+}

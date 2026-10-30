@@ -6,7 +6,7 @@
 pub mod group;
 pub mod mls_pq;
 
-pub use group::{OmcpMlsMember, MAX_SMALL_GROUP_MEMBERS, OMCP_MLS_CIPHERSUITE};
+pub use group::{OmcpMlsMember, SignedAppMessage, MAX_SMALL_GROUP_MEMBERS, OMCP_MLS_CIPHERSUITE};
 pub use mls_pq::{
     encapsulate_to_members, mix_exporter, EncapsEntry, MlsPqKemKeyPair, OmcpMlsPqExtensionV1,
     MLS_PQ_EXPORTER_LABEL, MLS_PQ_EXTENSION_TYPE, MLS_PQ_HKDF_INFO, MLS_PQ_MAGIC, MLS_PQ_VERSION,

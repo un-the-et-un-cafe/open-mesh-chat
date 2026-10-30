@@ -13,6 +13,22 @@ use omcp_core::EnvelopeV1;
 
 use crate::{invalid, now_ms, FfiError, NodeState, OmcpNode};
 
+/// 0.1.23 state, discarded on upgrade (tombstones kept, MR32).
+const LEGACY_MOD_KEY: &[u8] = b"team-mod-state";
+
+/// Re-encodes any stored CBOR value as raw CBOR bytes.
+mod serde_bytes_any {
+    pub struct Any(pub Vec<u8>);
+    impl<'de> serde::Deserialize<'de> for Any {
+        fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+            let v = ciborium::Value::deserialize(d)?;
+            let mut b = Vec::new();
+            ciborium::into_writer(&v, &mut b).map_err(serde::de::Error::custom)?;
+            Ok(Any(b))
+        }
+    }
+}
+
 /// v2: per-(target, item) state with tombstones (§23.10).
 const MOD_KEY: &[u8] = b"team-mod-state-v2";
 const SHIPPED_POLICY: &str = include_str!("../../../config/team_moderation.conf");
@@ -21,9 +37,11 @@ const SHIPPED_POLICY: &str = include_str!("../../../config/team_moderation.conf"
 /// environment `OMCP_DEV_MOD_KEY`, only with the cargo feature `dev-mod-key`
 /// (scripts enable it only for debug-flagged builds, never for release). The
 /// production key line in `config/team_moderation.conf` stays empty until v1.0.
-#[cfg(feature = "dev-mod-key")]
+/// Also requires `debug_assertions`, so an optimised release build stays
+/// keyless even if the feature were turned on by mistake.
+#[cfg(all(feature = "dev-mod-key", debug_assertions))]
 const DEV_MOD_KEY: Option<&str> = option_env!("OMCP_DEV_MOD_KEY");
-#[cfg(not(feature = "dev-mod-key"))]
+#[cfg(not(all(feature = "dev-mod-key", debug_assertions)))]
 const DEV_MOD_KEY: Option<&str> = None;
 
 /// Policy from a config plus an optional dev public key. The dev key is used
@@ -103,7 +121,24 @@ impl From<Rejected> for TeamActionResult {
 
 impl NodeState {
     pub(crate) fn load_moderation(&mut self) -> Result<(), FfiError> {
-        self.mesh.moderation = self.db.get_meta(MOD_KEY)?.unwrap_or_default();
+        self.mesh.moderation = match self.db.get_meta(MOD_KEY)? {
+            Some(m) => m,
+            None => {
+                // MR32: 0.1.23 state (kinds 3/4 were Live) is discarded; its
+                // community tombstones are kept; actions re-sync from the mesh.
+                let legacy: Option<serde_bytes_any::Any> =
+                    self.db.get_meta(LEGACY_MOD_KEY).ok().flatten();
+                let m = legacy
+                    .and_then(|l| omcp_core::moderation::ModerationState::from_legacy_v1(&l.0))
+                    .unwrap_or_default();
+                self.db.put_meta(LEGACY_MOD_KEY, &())?;
+                self.db.put_meta(MOD_KEY, &m)?;
+                m
+            }
+        };
+        self.mesh.engine.set_community_blocks(
+            omcp_core::community::CommunityBlocks::from_moderation(&self.mesh.moderation),
+        );
         Ok(())
     }
 
@@ -116,7 +151,13 @@ impl NodeState {
         let policy = self.mesh.team.clone();
         match self.mesh.moderation.apply(&policy, a, now_ms()) {
             Ok(_) => {
+                if a.kind == ActionKind::LiveTakedown {
+                    self.block_live_host_for(a);
+                }
                 self.save_moderation()?;
+                self.mesh.engine.set_community_blocks(
+                    omcp_core::community::CommunityBlocks::from_moderation(&self.mesh.moderation),
+                );
                 // Full erasure on this device (§23.10.2(3), §23.10.6).
                 self.enforce_group_moderation()?;
                 self.enforce_live_moderation();
@@ -124,6 +165,27 @@ impl NodeState {
                 Ok(TeamActionResult::Applied)
             }
             Err(r) => Ok(r.into()),
+        }
+    }
+
+    /// MR29: the stream's host may not start Live in that community for 24 h.
+    fn block_live_host_for(&mut self, a: &TeamAction) {
+        let sid: [u8; 16] = a.item_id[16..].try_into().expect("16");
+        let lv = &self.mesh.live;
+        let host = if let Some(h) = lv.host.as_ref().filter(|h| h.stream_id() == sid) {
+            Some(h.invite(true).host)
+        } else {
+            lv.known.get(&sid).map(|(_, i)| i.host).or_else(|| {
+                lv.listening
+                    .as_ref()
+                    .filter(|l| l.invite.key.stream_id == sid)
+                    .map(|l| l.invite.host)
+            })
+        };
+        if let Some(h) = host {
+            self.mesh
+                .moderation
+                .block_live_host(a.target_id, h, now_ms());
         }
     }
 
@@ -162,6 +224,8 @@ pub struct EvidenceMessage {
     pub group_context: Vec<u8>,
     pub signature: Vec<u8>,
     pub leaf_node: Vec<u8>,
+    /// MLS wire format: 2 = PrivateMessage (verifiable).
+    pub wire_format: u16,
     pub body: Vec<u8>,
 }
 
@@ -312,6 +376,39 @@ impl OmcpNode {
             .map(|r| r.reason.code())
     }
 
+    /// Received private-group messages kept with their MLS signed bytes,
+    /// oldest first, ready to pass to [`Self::report_export_evidence`].
+    pub fn report_kept_messages(
+        &self,
+        group_id_hex: String,
+    ) -> Result<Vec<EvidenceMessage>, FfiError> {
+        let id = hex32(group_id_hex.trim()).ok_or_else(|| invalid("group id"))?;
+        let st = self.inner.lock();
+        let c = st
+            .mesh
+            .community
+            .list
+            .get(&id)
+            .ok_or_else(|| invalid("reports exist only for private groups"))?;
+        Ok(c.signed
+            .iter()
+            .filter_map(|(_, sg, body)| {
+                let r =
+                    omcp_core::moderation::evidence::ReportedMessage::from_signed(sg, body.clone())
+                        .ok()?;
+                Some(EvidenceMessage {
+                    sender_id_hex: hex::encode(r.sender_id),
+                    framed_content: r.framed_content,
+                    group_context: r.group_context,
+                    signature: r.signature,
+                    leaf_node: r.leaf_node,
+                    wire_format: r.wire_format,
+                    body: r.body,
+                })
+            })
+            .collect())
+    }
+
     /// Export an `.omcp-evidence` file (§23.10.3) from messages the reporter
     /// picked in a private group. Never for 1:1 chats. Reports are anonymous:
     /// the file is signed with a fresh one-off key. Contains hashes and the
@@ -345,6 +442,7 @@ impl OmcpNode {
                     group_context: m.group_context,
                     signature: m.signature,
                     leaf_node: m.leaf_node,
+                    wire_format: m.wire_format,
                     body: m.body,
                     media: Vec::new(),
                 })

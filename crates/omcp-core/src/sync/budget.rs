@@ -21,6 +21,10 @@ use crate::gateway::policy::{NetworkKind, DAY_MS};
 pub const MB: u64 = 1_000_000;
 pub const DEFAULT_EXPIRY_MS: u64 = 72 * 3_600_000;
 pub const MAX_EXPIRY_MS: u64 = 7 * DAY_MS;
+/// Relay storage for other people's open-community traffic, separate from
+/// [`RELAY_CAP_BYTES`] and never counted toward the daily forwarding budget.
+pub const COMMUNITY_RELAY_CAP_BYTES: u64 = 50 * MB;
+
 /// RL2: automatic relay storage cap (500 MB).
 pub const RELAY_CAP_BYTES: u64 = 500 * MB;
 /// RL2: the cap is lowered when free storage is under this percentage.
@@ -42,6 +46,9 @@ pub enum RelayClass {
     Contact = 2,
     /// Our own chats (our outbound envelopes and acks).
     OwnChat = 3,
+    /// Open-community posts (§23.10.6): kept in their own store, outside the
+    /// relay cap and the §22.4 daily forwarding budget.
+    Community = 4,
 }
 
 impl RelayClass {
@@ -55,6 +62,7 @@ impl RelayClass {
             1 => Self::Other,
             2 => Self::Contact,
             3 => Self::OwnChat,
+            4 => Self::Community,
             _ => return None,
         })
     }
