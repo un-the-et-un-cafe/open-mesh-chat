@@ -11,12 +11,17 @@
 //! # Signed body
 //!
 //! ```text
-//! "OMCP-team-mod-v1" ‖ 0x00 ‖ kind u8 (1 TAKEDOWN, 2 RESTORE) ‖ community_id[32]
+//! "OMCP-team-mod-v1" ‖ 0x00 ‖ kind u8 (1 TAKEDOWN, 2 RESTORE,
+//!   3 TAKEDOWN_LIVE, 4 RESTORE_LIVE) ‖ target[32]
 //!   ‖ epoch u64 BE ‖ reason_code u8 (0 for RESTORE) ‖ note_len u16 BE ‖ note (UTF-8)
 //! ```
 //!
 //! Wire form of an action: the body fields without the domain prefix, then
 //! `n u8 ‖ n × (public_key[32] ‖ ed25519_signature[64])`.
+//!
+//! `target` is a community id for kinds 1–2 and `stream_id[16] ‖ 0[16]` for
+//! the live kinds 3–4 (same team keys, threshold, epochs and log; the kind is
+//! signed, so a community action can't be replayed as a live one).
 //!
 //! # Ordering and replay
 //!
@@ -124,6 +129,24 @@ impl Reason {
 pub enum ActionKind {
     Takedown = 1,
     Restore = 2,
+    TakedownLive = 3,
+    RestoreLive = 4,
+}
+
+impl ActionKind {
+    pub fn is_live(self) -> bool {
+        matches!(self, Self::TakedownLive | Self::RestoreLive)
+    }
+    pub fn is_takedown(self) -> bool {
+        matches!(self, Self::Takedown | Self::TakedownLive)
+    }
+}
+
+/// 32-byte moderation target of a live stream.
+pub fn live_target(stream_id: &[u8; 16]) -> [u8; 32] {
+    let mut t = [0u8; 32];
+    t[..16].copy_from_slice(stream_id);
+    t
 }
 
 /// One team signature.
@@ -154,6 +177,21 @@ impl TeamAction {
             note: note.to_string(),
             epoch,
             sigs: Vec::new(),
+        }
+    }
+
+    /// Take down one live stream (stops hosts, viewers and relays).
+    pub fn takedown_live(stream_id: [u8; 16], reason: Reason, note: &str, epoch: u64) -> Self {
+        Self {
+            kind: ActionKind::TakedownLive,
+            ..Self::takedown(live_target(&stream_id), reason, note, epoch)
+        }
+    }
+
+    pub fn restore_live(stream_id: [u8; 16], epoch: u64) -> Self {
+        Self {
+            kind: ActionKind::RestoreLive,
+            ..Self::restore(live_target(&stream_id), epoch)
         }
     }
 
@@ -190,12 +228,15 @@ impl TeamAction {
         if self.note.len() > MAX_NOTE {
             return err("team action note too long");
         }
-        match (self.kind, self.reason) {
-            (ActionKind::Takedown, None) => err("takedown needs a reason"),
-            (ActionKind::Takedown, Some(Reason::Other)) if self.note.trim().is_empty() => {
+        if self.kind.is_live() && self.community_id[16..] != [0u8; 16] {
+            return err("live target is stream_id ‖ 16 zero bytes");
+        }
+        match (self.kind.is_takedown(), self.reason) {
+            (true, None) => err("takedown needs a reason"),
+            (true, Some(Reason::Other)) if self.note.trim().is_empty() => {
                 err("reason 9 (other) needs a note")
             }
-            (ActionKind::Restore, Some(_)) => err("restore carries no reason"),
+            (false, Some(_)) => err("restore carries no reason"),
             _ => Ok(()),
         }
     }
@@ -228,16 +269,16 @@ impl TeamAction {
         let kind = match r.u8()? {
             1 => ActionKind::Takedown,
             2 => ActionKind::Restore,
+            3 => ActionKind::TakedownLive,
+            4 => ActionKind::RestoreLive,
             _ => return err("unknown team action kind"),
         };
         let community_id: [u8; 32] = r.take(32)?.try_into().expect("32");
         let epoch = u64::from_be_bytes(r.take(8)?.try_into().expect("8"));
         let rc = r.u8()?;
-        let reason = match (kind, rc) {
-            (ActionKind::Restore, 0) => None,
-            (ActionKind::Takedown, c) => {
-                Some(Reason::from_code(c).ok_or(OmcpError::Sync("unknown reason code"))?)
-            }
+        let reason = match (kind.is_takedown(), rc) {
+            (false, 0) => None,
+            (true, c) => Some(Reason::from_code(c).ok_or(OmcpError::Sync("unknown reason code"))?),
             _ => return err("restore carries no reason"),
         };
         let nl = u16::from_be_bytes(r.take(2)?.try_into().expect("2")) as usize;
@@ -424,6 +465,11 @@ pub struct ModerationState {
     /// Accepted actions as wire bytes, to re-gossip while in force.
     #[serde(default)]
     wire: BTreeMap<[u8; 32], Vec<u8>>,
+    /// Live streams (target = `live_target(stream_id)`), separate epochs.
+    #[serde(default)]
+    lives: BTreeMap<[u8; 32], CommunityMod>,
+    #[serde(default)]
+    live_wire: BTreeMap<[u8; 32], Vec<u8>>,
 }
 
 /// What a client shows for a removed community (§23.9(4)).
@@ -444,23 +490,28 @@ impl ModerationState {
     ) -> std::result::Result<LogEntry, Rejected> {
         let signers = policy.verify(a)?;
         let key = a.community_id;
-        if let Some(c) = self.communities.get(&key) {
+        let (map, wire) = if a.kind.is_live() {
+            (&mut self.lives, &mut self.live_wire)
+        } else {
+            (&mut self.communities, &mut self.wire)
+        };
+        if let Some(c) = map.get(&key) {
             if a.epoch <= c.epoch {
                 return Err(Rejected::Replay);
             }
         }
         let reason_code = a.reason.map(Reason::code).unwrap_or(0);
-        self.communities.insert(
+        map.insert(
             key,
             CommunityMod {
                 epoch: a.epoch,
-                removed: a.kind == ActionKind::Takedown,
+                removed: a.kind.is_takedown(),
                 reason_code,
                 note: a.note.clone(),
             },
         );
         if let Ok(w) = a.encode() {
-            self.wire.insert(key, w);
+            wire.insert(key, w);
         }
         let e = LogEntry {
             kind: a.kind,
@@ -493,6 +544,39 @@ impl ModerationState {
         self.removal(community_id).is_some()
     }
 
+    /// `Some` if the live stream was taken down: hosts stop, viewers stop
+    /// playing, relays stop forwarding its audio and video.
+    pub fn live_removal(&self, stream_id: &[u8; 16]) -> Option<Removal> {
+        let c = self.lives.get(&live_target(stream_id))?;
+        if !c.removed {
+            return None;
+        }
+        Some(Removal {
+            reason: Reason::from_code(c.reason_code)?,
+            note: c.note.clone(),
+            epoch: c.epoch,
+        })
+    }
+
+    pub fn is_live_removed(&self, stream_id: &[u8; 16]) -> bool {
+        self.live_removal(stream_id).is_some()
+    }
+
+    /// Public audio tags of taken-down streams (relays drop these packets).
+    pub fn removed_live_tags(&self) -> BTreeSet<[u8; 8]> {
+        self.lives
+            .iter()
+            .filter(|(_, c)| c.removed)
+            .map(|(t, _)| crate::live::stream_tag(&t[..16].try_into().expect("16")))
+            .collect()
+    }
+
+    /// Whether a live may be played, hosted or relayed: neither the stream
+    /// nor its community (if known) is taken down.
+    pub fn live_allowed(&self, stream_id: &[u8; 16], community_id: Option<&[u8; 32]>) -> bool {
+        !self.is_live_removed(stream_id) && self.relay_allows(community_id)
+    }
+
     /// Relay rule (§23.9(4)): drop envelopes of removed communities.
     pub fn relay_allows(&self, community_id: Option<&[u8; 32]>) -> bool {
         community_id.map(|c| !self.is_removed(c)).unwrap_or(true)
@@ -507,7 +591,11 @@ impl ModerationState {
 
     /// Latest accepted action per community (for re-gossip).
     pub fn current_actions(&self) -> Vec<Vec<u8>> {
-        self.wire.values().cloned().collect()
+        self.wire
+            .values()
+            .chain(self.live_wire.values())
+            .cloned()
+            .collect()
     }
 }
 

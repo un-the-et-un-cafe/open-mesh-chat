@@ -1,4 +1,4 @@
-# OMCP Smartphone Apps — Design Spec v0.1.21
+# OMCP Smartphone Apps — Design Spec v0.1.22
 
 **Platforms:** Android 12+ (Kotlin UI + Rust core), iOS 17+ (SwiftUI + Rust core)  
 **Date:** 2026-10-24 (v0.1.1; v0.1.0 2026-10-23)  
@@ -991,7 +991,7 @@ Banners `role=status` (announced once on entry, not on every scroll). Reputation
 | confirm.title | Allow screenshots? | Autoriser les captures d’écran ? | לאפשר צילומי מסך? |
 | confirm.cta | Allow screenshots / Keep blocking | Autoriser les captures / Garder le blocage | לאפשר צילומי מסך / להמשיך לחסום |
 
-## 5I. v0.1.7 — Approved decisions (the maintainer, 2026-10-24)
+## 5I. v0.1.7 — Approved decisions (Jakob, 2026-10-24)
 
 Generator `/workspace/omcp-v017/gen.py`.
 
@@ -1228,7 +1228,7 @@ Follows REQUIREMENTS “Groups and communities” (Q25). Generator `/workspace/o
 - **Member list:** a footnote explains the tag: “‘Restored, not verified’: this member restored Hopla on a new device. Tap the tag to verify in person.”
 - **A11y:** the tag is `role=button` labelled “Restored, not verified. Tap to verify”. The sender line reads “Alex Rivera, restored, not verified”. The touch target is extended to 44 pt via padding on the name row.
 
-## 5O. v0.1.16 — One-tap Ask to resend; keep media you sent (approved by the maintainer, 2026-10-24)
+## 5O. v0.1.16 — One-tap Ask to resend; keep media you sent (approved by Jakob, 2026-10-24)
 
 Generator `/workspace/omcp-v0116/gen.py` (renders with `render.py`, system python3 Playwright + `/usr/bin/google-chrome`). New mockups `media-resend-note`, `settings-storage`; `media-missing` re-rendered.
 
@@ -1265,7 +1265,7 @@ Replaces the v0.1.12 confirm sheet (§5.94).
 | Presets | 30 days, 90 days, 1 year, Forever · 500 MB, 2 GB, 5 GB, No limit | 30 j, 90 j, 1 an, Toujours · 500 Mo, 2 Go, 5 Go, Sans limite | 30 יום, 90 יום, שנה, לתמיד · 500 מ״ב, 2 ג״ב, 5 ג״ב, ללא הגבלה |
 
 
-## 5P. v0.1.17 — Dark-mode WCAG AA overhaul; backup copy covers chats (requested by the maintainer, 2026-10-24)
+## 5P. v0.1.17 — Dark-mode WCAG AA overhaul; backup copy covers chats (requested by Jakob, 2026-10-24)
 
 Generator `/workspace/omcp-v0117/` (`gen.py` patches the v0.1.16 pack, `render.py`, `contrast.py`, `table.py`, `compose.py`). All 70 mockups re-rendered (445 frames).
 
@@ -1282,11 +1282,11 @@ Generator `/workspace/omcp-v0117/` (`gen.py` patches the v0.1.16 pack, `render.p
 - Applied to `onboarding-secure` (sub, honest note, password sheet), `onboarding-secure-phrase`, `onboarding-secure-reminder`, `onboarding-restore`, `settings-backup` (method lines, honest note, delete sheet), `restore-source` (“My 24 words” row), `restore-error--corrupted`, `restore-password` (forgot hint, lockout), `restore-reinstall` (forgot hint). Copy tables §5.21, §5.26–5.30, §5.31, §5.89 updated in place (EN/FR).
 - No Arabic copy exists in the pack yet (EN/FR only), so there is nothing to change in AR; RTL stays a §5 checklist item. *(v0.1.18: Hebrew added as the first RTL locale, §5.105–5.106.)*
 
-## 5Q. v0.1.18 — Light-mode WCAG AA matched to dark; Hebrew (RTL) locale draft (requested by the maintainer, 2026-10-24)
+## 5Q. v0.1.18 — Light-mode WCAG AA matched to dark; Hebrew (RTL) locale draft (requested by Jakob, 2026-10-24)
 
 Generator `/workspace/omcp-v0118/` (`gen.py` light tokens + disabled/scrim fixes, `he.py` + `he_strings.py` Hebrew frames, `he_spec.py` Hebrew copy column, `contrast.py`, `table18.py`, `compose18.py`, `docs18.py`, `render.py`). All mockups re-rendered.
 
-### 5.104 Light theme contrast (light token values changed with the maintainer’s approval)
+### 5.104 Light theme contrast (light token values changed with Jakob’s approval)
 - **Rule:** every light frame meets WCAG 2.1 AA like dark (§5.102): text 4.5:1, icons, control boundaries, toggle tracks/thumbs, focus rings 3:1. Disabled controls target 3:1 in both themes (no `opacity` dimming).
 - **Light token values:** `--ink-2` #4a5b70 → #3b495a, `--ink-3` #6b7c90 → #515e6d, `--line` #d8dee8 → #73849a, `--line-strong` #b8c2d0 → #617289. Dark values, soft tints and brand hues unchanged.
 - **Matched pair:** each light step has the same contrast on light `--surface` as the dark step on dark `--surface`: ink-2 9.18 / 9.18, ink-3 6.62 / 6.60, line 3.82 / 3.82, line-strong 4.91 / 4.87. Table and side-by-side in `a11y/light-vs-dark.png`.
@@ -1310,7 +1310,7 @@ Generator `/workspace/omcp-v0118/` (`gen.py` light tokens + disabled/scrim fixes
 - **Bidi:** wrap Latin/number runs inside Hebrew text in isolates (`<bdi>`, `\u2066…\u2069`, Android `BidiFormatter`, iOS `NSLocale`-aware formatting) so “Merci, à demain !”, “< 1 km”, “22:00 – 07:00” and IDs keep their order; prefer Hebrew-first phrasing for mixed chips (“4 בסביבה · Mesh”). Units in Hebrew: ג״ב, מ״ב, ק״מ, דק׳, שע׳.
 - **Dates:** “12 באוק׳ 2026, 21:40” (24 h clock). Week days as letters with geresh (א׳ … ש׳).
 
-## 5R. Hopla News (REQUIREMENTS § Hopla News v0.4, draft, revised 2026-10-24 — **all v0.4**) — v0.1.19, revised v0.1.20 (the maintainer’s decisions, 2026-10-24)
+## 5R. Hopla News (REQUIREMENTS § Hopla News v0.4, draft, revised 2026-10-24 — **all v0.4**) — v0.1.19, revised v0.1.20 (Jakob’s decisions, 2026-10-24)
 
 Generator `/workspace/omcp-v0120/` (`gen.py`, `strings.py`, `news.css`, `render.py`, `a11y/dark-contrast.py`, `docs20.py`); v0.1.19 generator kept at `/workspace/omcp-v0119/`. 18 mockups × 6 frames (EN, FR, HE draft; light + dark) = **108 PNGs**. No tokens added or changed (`news.css` composes existing tokens); `tokens.css` and `brand/` untouched. All people, contacts, places and stories are fictional; images are generated abstract art.
 
@@ -1341,7 +1341,7 @@ Generator `/workspace/omcp-v0120/` (`gen.py`, `strings.py`, `news.css`, `render.
 - Detail: body, shelter row, **Read on Google News**, toggle **Notify me about emergency alerts — on by default** (“You can turn this off”), mirrored in Settings › Notifications. *(Q27, Q30 resolved.)*
 
 ### 5.112 Sources — Google News RSS only (replaces Sources and curators)
-- There is no source management: for now the only source is **Google News RSS** (X dropped from v0.1.20 by the maintainer’s correction; an X news RSS feed comes later from a separate project — see §5.109). Phones with internet fetch them and relay stories over the mesh in normal envelopes; duplicates (same source + link) appear once (NW2).
+- There is no source management: for now the only source is **Google News RSS** (X dropped from v0.1.20 by Jakob’s correction; an X news RSS feed comes later from a separate project — see §5.109). Phones with internet fetch them and relay stories over the mesh in normal envelopes; duplicates (same source + link) appear once (NW2).
 - **Relay settings — placeholder:** the Relay settings screen will follow once the open relay questions are answered. Not designed yet.
 
 ### 5.113 Share to chat or community — `news-share`, `news-share-bubble`
@@ -1450,7 +1450,7 @@ Generator `/workspace/omcp-v0120/` (`gen.py`, `strings.py`, `news.css`, `render.
 | `news.le_d` | Try another city or check back when you meet someone nearby. | Essayez une autre ville ou revenez quand vous croisez quelqu’un. | אפשר לנסות עיר אחרת או לחזור כשתפגשו מישהו בסביבה. |
 | `news.le_btn` | Change city | Changer de ville | שינוי עיר |
 
-## 5S. v0.1.21 — WCAG 2.2 additions (2.5.8, 2.4.11, 2.5.7) and glass-bar contrast (requested by the maintainer, 2026-10-26)
+## 5S. v0.1.21 — WCAG 2.2 additions (2.5.8, 2.4.11, 2.5.7) and glass-bar contrast (requested by Jakob, 2026-10-26)
 
 Applies to every screen. Normative for Proggy.
 
@@ -1470,6 +1470,108 @@ Applies to every screen. Normative for Proggy.
 | Swipe-back / sheet swipe-down | Back button / Close button always visible |
 
 **Glass bars (iOS translucent tab bar / nav bar).** Mockups use opaque `--surface` bars, so measured contrast is the opaque one. **Rule:** if the iOS build uses system material/“Liquid Glass” bars, add a scrim under the blur of at least **85 % `--surface` (light) / 85 % `--surface` (dark)** or use `.systemThickMaterial`/opaque appearance, so that over the worst content behind (white photo in dark mode, black photo in light mode) labels and selected/unselected tab icons keep **≥ 4.5:1 (text) / ≥ 3:1 (icons)**. Verify with screenshots over a pure white and a pure black image in both themes; if it fails, fall back to an opaque bar. With Reduce Transparency on, bars are opaque.
+
+## 5T. v0.1.22 — Communities with Live (PR #19; PROTOCOL §23.9 kinds 3/4) — requested by Jakob, 2026-10-29
+
+All screens: 6 frames (EN/FR/HE-draft × light/dark). Names of people and communities are fictional. Files: `mockups/comm-*.html`, `mockups/live-*.html` (generator `omcp-v0122/live.py`).
+
+### 5.120 Communities tab — `comm-list`, `comm-detail`
+Live now sits at the top of Communities (§5.107 nav decision): one card per active live (host, title, community, Live badge with icon + text, **Listen**). Below: your communities with `community_sub` / `community_sub_live`. Detail shows active lives, **Go live**, the encryption note (`community_live_body`), members. Empty live state uses `community_no_live`.
+
+### 5.121 Create, invite, accept — `comm-create`, `comm-invite`, `comm-invite-full`, `comm-invite-accept`
+Founder-only invite (non-founders don't see the + button). Counter “N of 32 members” as text **and** progress bar (aria-valuenow/max=32). At 32: warn callout, Invite buttons `aria-disabled` (still focusable so the reason is read out), bar turns danger. Invitee sees community, inviter, member count, Join / Not now.
+
+### 5.122 Remove from live (host) — `live-host-members`, `live-remove-confirm`, `live-removed-toast`
+Each listener row has a visible **Remove from live** button (44 pt / 48 dp) plus a ⋯ menu with the same action — **no swipe/drag-only path** (WCAG 2.5.7). Confirmation sheet (danger + Cancel, focus starts on the sheet). After removal, a status toast confirms the rekey (“New key sent to N people”). Focus ring shown on the first Remove button.
+
+### 5.123 Live taken down by the Hopla team — `live-takedown-host`, `live-takedown-viewer`
+Triggered by a signed §23.9 `TAKEDOWN_LIVE` (kind 3). Host sees reason + **Appeal** (→ `mod-appeal`); viewer sees `live_taken_down` only (no reason, no appeal). Shield icon + text, never colour alone.
+
+### 5.124 Live-start notification, default (non-Private) mode — `live-notif-shade`, `live-notif-lock`
+Unlocked shade: “{host} is live in {community}” + title, actions **Listen** / **Mute community**. Lock screen stays generic “Hopla · New message” (§5.36; PR `MeshNotifications`/`NotificationPolicy`). In Private mode the shade is generic too (unchanged §5.36).
+
+### 5.125 Community taken down — `comm-removed`
+Danger callout at top of the community (`community_removed` / `community_removed_body`) + “How moderation works”; Go live disabled; member list still readable.
+
+### 5.126 Report this live — `live-report`
+Shows the stream ID (16 bytes = 32 hex, grouped in 4s, monospace, `dir=ltr` also in HE, selectable) with a 48 dp **Copy** button; reason radio list; **Send report**. The team signs `TAKEDOWN_LIVE` with target `stream_id ‖ 0[16]` (`team_mod takedown-live`).
+
+### 5.127 Copy table (EN / FR / HE draft)
+| Key | EN | FR | HE (draft) |
+|---|---|---|---|
+| `communities` | Communities | Communautés | קהילות |
+| `live_now` | Live now | En direct | בשידור חי |
+| `your_comms` | Your communities | Vos communautés | הקהילות שלך |
+| `new` | New community | Nouvelle communauté | קהילה חדשה |
+| `members` | {n} members | {n} membres | {n} חברים |
+| `members_live` | {n} members · {l} live now | {n} membres · {l} en direct | {n} חברים · {l} בשידור חי |
+| `t1` | Rehearsal warm-up | Échauffement de répétition | חימום לחזרה |
+| `t2` | Sunday ride check-in | Point avant la sortie du dimanche | עדכון לפני רכיבת יום ראשון |
+| `join` | Join | Rejoindre | הצטרפות |
+| `listen` | Listen | Écouter | האזנה |
+| `start_live` | Go live | Lancer un direct | לשדר בחי |
+| `no_live` | Nobody in this community is live right now. | Personne n’est en direct dans cette communauté. | אף אחד בקהילה לא משדר כרגע. |
+| `live_body` | Every member can listen and gets a notification. The key comes from the community’s encrypted group, so phones in between can’t listen. | Tous les membres peuvent écouter et reçoivent une notification. La clé vient du groupe chiffré de la communauté : les téléphones intermédiaires ne peuvent pas écouter. | כל החברים יכולים להאזין ומקבלים התראה. המפתח מגיע מהקבוצה המוצפנת של הקהילה, כך שטלפונים בדרך לא יכולים להאזין. |
+| `create_t` | Create a community | Créer une communauté | יצירת קהילה |
+| `create_d` | Up to 32 people you invite from your contacts. Everything stays end-to-end encrypted. | Jusqu’à 32 personnes invitées parmi vos contacts. Tout reste chiffré de bout en bout. | עד 32 אנשים שתזמינו מאנשי הקשר. הכול נשאר מוצפן מקצה לקצה. |
+| `name` | Name | Nom | שם |
+| `create` | Create | Créer | יצירה |
+| `invite_h` | Invite a contact | Inviter un contact | הזמנת איש קשר |
+| `invite` | Invite | Inviter | הזמנה |
+| `invited` | Invited | Invité | הוזמן |
+| `counter` | {n} of 32 members | {n} membres sur 32 | {n} מתוך 32 חברים |
+| `founder` | Only you, the founder, can invite. | Seul·e le fondateur ou la fondatrice peut inviter. | רק את/ה, המייסד/ת, יכול/ה להזמין. |
+| `full_t` | This community is full | Cette communauté est complète | הקהילה מלאה |
+| `full_d` | 32 members is the limit. Someone has to leave before you can invite anyone else. | La limite est de 32 membres. Quelqu’un doit partir avant que vous puissiez inviter. | המגבלה היא 32 חברים. מישהו צריך לעזוב לפני שאפשר להזמין עוד. |
+| `inv_t` | Join {c}? | Rejoindre {c} ? | להצטרף ל{c}? |
+| `inv_from` | Invited by {h} | Invitation de {h} | הזמנה מ{h} |
+| `accept` | Join | Rejoindre | הצטרפות |
+| `decline` | Not now | Plus tard | לא עכשיו |
+| `inv_note` | Members see your name and can listen to lives here. You can leave at any time. | Les membres voient votre nom et peuvent écouter les directs ici. Vous pouvez partir à tout moment. | החברים רואים את שמך ויכולים להאזין לשידורים כאן. אפשר לעזוב בכל עת. |
+| `host_t` | Your live | Votre direct | השידור שלך |
+| `viewers` | Listening ({n}) | À l’écoute ({n}) | מאזינים ({n}) |
+| `you_l` | You | Vous | את/ה |
+| `host` | Host | Hôte | מארח/ת |
+| `remove` | Remove from live | Retirer du direct | הסרה מהשידור |
+| `more` | More options for {h} | Plus d’options pour {h} | אפשרויות נוספות עבור {h} |
+| `host_note` | Tap Remove from live next to a member to stop them listening. The key changes for everyone else. | Touchez Retirer du direct à côté d’un membre pour l’empêcher d’écouter. La clé change pour tous les autres. | הקישו על הסרה מהשידור ליד חבר כדי להפסיק את ההאזנה שלו. המפתח מתחלף לכל השאר. |
+| `rm_t` | Remove {h} from this live? | Retirer {h} de ce direct ? | להסיר את {h} מהשידור? |
+| `rm_d` | They stop hearing this live straight away. They stay in the community and can join the next one. | Cette personne n’entend plus le direct immédiatement. Elle reste dans la communauté et peut rejoindre le prochain. | ההאזנה תיפסק מיד. הם נשארים בקהילה ויכולים להצטרף לשידור הבא. |
+| `cancel` | Cancel | Annuler | ביטול |
+| `rm_done` | {h} removed. New key sent to 3 people. | {h} retiré·e. Nouvelle clé envoyée à 3 personnes. | {h} הוסר/ה. מפתח חדש נשלח ל־3 אנשים. |
+| `end` | End live | Arrêter le direct | סיום השידור |
+| `td_t` | Live taken down | Direct retiré | השידור הוסר |
+| `td_host` | The Hopla team took your live down. It stopped on every phone. Your community is not affected. | L’équipe Hopla a retiré votre direct. Il s’est arrêté sur tous les téléphones. Votre communauté n’est pas concernée. | צוות Hopla הסיר את השידור שלך. הוא נעצר בכל הטלפונים. הקהילה שלך לא מושפעת. |
+| `td_view` | The Hopla team took this live down. It stopped on this phone. | L’équipe Hopla a retiré ce direct. Il s’est arrêté sur ce téléphone. | צוות Hopla הסיר את השידור הזה. הוא נעצר בטלפון הזה. |
+| `why` | Reason: {r} | Motif : {r} | סיבה: {r} |
+| `reason` | Harassment | Harcèlement | הטרדה |
+| `appeal` | Appeal | Contester | ערעור |
+| `ok` | OK | OK | אישור |
+| `learn` | How moderation works | Comment fonctionne la modération | איך עובד הפיקוח |
+| `n_app` | Hopla | Hopla | Hopla |
+| `n_now` | now | maintenant | עכשיו |
+| `n_title` | {h} is live in {c} | {h} est en direct dans {c} | {h} בשידור חי ב{c} |
+| `n_body` | {t} · Tap to listen | {t} · Touchez pour écouter | {t} · הקישו להאזנה |
+| `n_lock` | New message | Nouveau message | הודעה חדשה |
+| `n_act` | Listen | Écouter | האזנה |
+| `n_mute` | Mute community | Couper la communauté | השתקת הקהילה |
+| `rem_t` | Removed by the Hopla team | Retirée par l’équipe Hopla | הוסרה על ידי צוות Hopla |
+| `rem_d` | The Hopla team removed this community. Its lives can’t be started or watched, and its posts aren’t passed on. | L’équipe Hopla a retiré cette communauté. Ses directs ne peuvent plus être lancés ni regardés, et ses publications ne sont plus relayées. | צוות Hopla הסיר את הקהילה הזו. אי אפשר להתחיל או לצפות בשידורים שלה, והפוסטים שלה לא מועברים. |
+| `rep_t` | Report this live | Signaler ce direct | דיווח על השידור |
+| `rep_d` | Your report goes to the Hopla team. They need the stream ID below to sign a takedown. | Votre signalement va à l’équipe Hopla. Elle a besoin de l’identifiant ci-dessous pour signer un retrait. | הדיווח נשלח לצוות Hopla. הם צריכים את מזהה השידור שלמטה כדי לחתום על הסרה. |
+| `sid` | Stream ID | Identifiant du direct | מזהה השידור |
+| `copy` | Copy stream ID | Copier l’identifiant | העתקת המזהה |
+| `copied` | Copied | Copié | הועתק |
+| `rep_why` | What’s wrong? | Quel est le problème ? | מה הבעיה? |
+| `r1` | Harassment or hate | Harcèlement ou haine | הטרדה או שנאה |
+| `r2` | Violence or threats | Violence ou menaces | אלימות או איומים |
+| `r3` | Sexual content | Contenu sexuel | תוכן מיני |
+| `r4` | Spam or scam | Spam ou arnaque | ספאם או הונאה |
+| `r5` | Something else | Autre chose | משהו אחר |
+| `send` | Send report | Envoyer | שליחת דיווח |
+| `rep_note` | The host won’t know who reported. Reporting does not stop the live by itself. | L’hôte ne saura pas qui a signalé. Signaler n’arrête pas le direct à lui seul. | המארח/ת לא יידע/תדע מי דיווח. הדיווח לבדו לא עוצר את השידור. |
+
+**Accessibility:** AA contrast 0 failures (light + dark, `a11y/dark-contrast.py` on the 15 new files); targets ≥ 44 pt / 48 dp; `:focus-visible` ring (news.css); no drag-only actions.
 
 ## 6. Path indicator component (normative UX)
 
@@ -1598,7 +1700,7 @@ Resolved in v0.1.2: v0.1.1 Q1 (skip phrase confirm) — superseded by REQUIREMEN
 3. **Wrong-password limits:** O4 asks for rate-limited retries; mockups assume 3 tries then 5-minute cooldown (escalating). Confirm numbers with the Rust core.
 Resolved in v0.1.5 by the maintainer (REQUIREMENTS § Decisions): Q4 calls → “Hopla · Incoming call”; Q5 per-chat opt-out allowed; Q6 Android lock → “Hopla · New message”; Q7 Nearby must be a pleasure on iOS → sessions + Live Activity + area mode (§5.58); Q8 no screenshots anywhere (§5.57).
 
-Resolved 2026-10-24 (the maintainer approved; REQUIREMENTS Decision 5 / SS1 updated by Writey):
+Resolved 2026-10-24 (Jakob approved; REQUIREMENTS Decision 5 / SS1 updated by Writey):
 - ~~Q4 Live Activity on Private notifications~~ → counts hidden (§5.73).
 - ~~Q5 Android recents~~ → black when Block screenshots is on, normal preview when off (§5.72).
 - ~~Q6 Session length~~ → superseded 2026-10-24: no time limit; auto-pause + 4 h check-in (§5.75).
@@ -1621,14 +1723,14 @@ Open (v0.1.10):
 17. ~~**Partner no longer has the file:**~~ → **Resolved 2026-10-24** (§5.94) REQUIREMENTS only covers re-fetch from a partner who still holds it. `media-missing--gone` assumes the protocol gets a “not found” reply for the hash. Is there such a reply, or does the placeholder wait forever (and for how long)?
 18. ~~**Requester privacy:**~~ → **Resolved 2026-10-24** (§5.94; superseded by the restore indicator §5.95: the restore is announced, and re-requests carry no extra metadata) does an auto re-request reveal to the partner that I restored (and when)? Copy assumes it's fine.
 19. ~~**Chunk resume / Wi-Fi:**~~ → **Resolved 2026-10-24** (§5.94) should media re-fetch over a gateway respect the backup's Wi-Fi-only default, or always use mesh/gateway freely?
-20. ~~**Safety number after a restore**~~ → **Resolved 2026-10-24 (the maintainer: yes)**: the safety number covers the identity key + current device key, a restore resets every contact's verified badge, and re-verification is in person by QR (§5.98, RS2).
+20. ~~**Safety number after a restore**~~ → **Resolved 2026-10-24 (Jakob: yes)**: the safety number covers the identity key + current device key, a restore resets every contact's verified badge, and re-verification is in person by QR (§5.98, RS2).
 21. ~~**Default types when media backup is turned on:**~~ → **Resolved 2026-10-24:** every type is pre-selected except Videos, as mocked.  the mockup pre-selects everything except Videos (size). Confirm, or select all?
 22. ~~**Media backup cadence:**~~ → **Resolved 2026-10-24:** media is backed up in a separate daily pass, Wi-Fi only by default. Copy: “Backed up daily on Wi-Fi” (§5.96).  the chat backup runs at most hourly, padded to 64 KiB buckets. Should media follow the same cadence and padding (padding large videos gets costly), or use a separate daily pass?
 23. ~~**Partial restore:**~~ → **Resolved 2026-10-24:** a partial media restore falls back to placeholders that refill from nearby contacts (`restore-media--partial`, §5.97).  if media download fails mid-restore (quota or offline), do the remaining items fall back to placeholders and contact re-fetch automatically? Assumed yes.
 24. ~~**REQUIREMENTS O3 wording:**~~ → **Resolved 2026-10-24:** REQUIREMENTS O3 is reworded (“your verifications of contacts are restored; contacts' verification of you resets, RS2”).
 25. ~~**Group / community chats:**~~ → **Resolved 2026-10-24:** compact tag in groups and communities, with the system notice in 1:1 only (§5.99).
 
-Hopla News questions (v0.1.19) — closed in v0.1.20 by the maintainer’s decisions and the revised REQUIREMENTS (2026-10-24):
+Hopla News questions (v0.1.19) — closed in v0.1.20 by Jakob’s decisions and the revised REQUIREMENTS (2026-10-24):
 - ~~Q26 tab bar~~ → News tab; Live at the top of Communities (§5.107).
 - ~~Q27 alert notification default~~ → on by default (§5.111).
 - ~~Q28 unsigned/invalid states~~, ~~Q29 verified vs signed~~ → obsolete: no per-story signature checks or trust levels (§5.109).
@@ -1640,13 +1742,15 @@ Hopla News questions (v0.1.19) — closed in v0.1.20 by the maintainer’s decis
 - ~~Q35 Read more online~~ → link opens the browser with an inline “leaves Hopla” note, no confirm.
 - Q36 Relay settings → still a placeholder until the relay questions are answered.
 Open (v0.1.20):
-37. **REQUIREMENTS still lists the X API** as a second source (and its account/tier as an open decision); the design follows the maintainer’s correction (Google News RSS only). REQUIREMENTS should be updated to match.
+37. **REQUIREMENTS still lists the X API** as a second source (and its account/tier as an open decision); the design follows Jakob’s correction (Google News RSS only). REQUIREMENTS should be updated to match.
 38. **Mute a topic:** mocked as long-press on a chip + a Muted topics row; confirm, or add an explicit Mute in the topic’s overflow menu.
 39. **City from location:** reverse-geocoding to a city name needs a geocoder; on-device dataset vs OS geocoder (Apple/Google, which sends coordinates) — the copy says the location is never sent, so this must be on-device or the copy changes.
 
 ---
 
 ## Document control
+
+- v0.1.22 (2026-10-29): §5T Communities with Live (PR #19).
 
 | Version | Date | Notes |
 |---------|------|-------|

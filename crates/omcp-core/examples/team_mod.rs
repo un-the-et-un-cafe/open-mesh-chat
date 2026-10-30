@@ -5,7 +5,11 @@
 //! team_mod pub <secret-file>                 # prints the public key
 //! team_mod takedown <secret-file> <community_id_hex> <reason 1|2|3|4|5|9> <epoch> [note]
 //! team_mod restore  <secret-file> <community_id_hex> <epoch>
+//! team_mod takedown-live <secret-file> <stream_id_hex (32 chars)> <reason> <epoch> [note]
+//! team_mod restore-live  <secret-file> <stream_id_hex> <epoch>
 //! ```
+//! Live actions use the same team key and log; the stream id is shown to
+//! reporters in the app (Live screen, "Report").
 //! `takedown` / `restore` print the signed action as hex, to paste into the
 //! app's "Publish team action" field (debug builds) or hand to a gateway.
 //! Keep the secret file offline, never in the repository.
@@ -53,6 +57,22 @@ fn main() {
                 TeamAction::takedown(c, r, a.get(5).map(String::as_str).unwrap_or(""), epoch)
             } else {
                 TeamAction::restore(c, arg(3).parse().expect("epoch"))
+            };
+            act.sign(&k);
+            println!("{}", hex::encode(act.encode().expect("valid action")));
+        }
+        "takedown-live" | "restore-live" => {
+            let k = load(arg(1));
+            let sid: [u8; 16] = hex::decode(arg(2))
+                .ok()
+                .and_then(|b| b.try_into().ok())
+                .expect("stream id: 32 hex chars");
+            let mut act = if arg(0) == "takedown-live" {
+                let r = Reason::from_code(arg(3).parse().expect("reason")).expect("reason code");
+                let epoch = arg(4).parse().expect("epoch");
+                TeamAction::takedown_live(sid, r, a.get(5).map(String::as_str).unwrap_or(""), epoch)
+            } else {
+                TeamAction::restore_live(sid, arg(3).parse().expect("epoch"))
             };
             act.sign(&k);
             println!("{}", hex::encode(act.encode().expect("valid action")));

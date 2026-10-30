@@ -35,8 +35,8 @@ android {
         applicationId = "chat.omcp.app"
         minSdk = 31 // Android 12+
         targetSdk = 35
-        versionCode = 21
-        versionName = "0.1.21"
+        versionCode = 23
+        versionName = "0.1.23"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
@@ -46,7 +46,7 @@ android {
         buildConfigField("String", "GOOGLE_OAUTH_CLIENT_ID", "\"$googleOAuthClientId\"")
         buildConfigField("boolean", "SIMULATED_DRIVE_BACKUP", "false")
         buildConfigField("String", "GIT_COMMIT", "\"$gitCommit\"")
-        buildConfigField("String", "DESIGN_VERSION", "\"0.1.21\"")
+        buildConfigField("String", "DESIGN_VERSION", "\"0.1.22\"")
         // Live video (WebRTC) ships by default (owner decision: APK budget ~35 MB, docs/LIVE.md).
         buildConfigField("boolean", "LIVE_VIDEO", "true")
     }

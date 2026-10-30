@@ -1,4 +1,4 @@
-# OMCP App Design Pack v0.1.21 — Hopla
+# OMCP App Design Pack v0.1.22 — Hopla
 
 **Date:** 2026-10-26 (Europe/Paris) · v0.1.20 2026-10-24 · v0.1.19 2026-10-24 · v0.1.18 2026-10-24 · v0.1.17 2026-10-24 · v0.1.16 2026-10-24 · v0.1.15 2026-10-24 · v0.1.14 2026-10-24 · v0.1.13 2026-10-24 · v0.1.12 2026-10-24 · v0.1.11 2026-10-24 · v0.1.10 2026-10-24 · v0.1.9 2026-10-24 · v0.1.8 2026-10-24 · v0.1.7 2026-10-24 · v0.1.6 2026-10-24 · v0.1.5 2026-10-24 · v0.1.4 2026-10-24 · v0.1.3 2026-10-24 · v0.1.2 2026-10-24 · v0.1.1 2026-10-24 · v0.1.0 2026-10-23  
 **App name:** Hopla (consumer app) · **Protocol:** OMCP. Logo: approved `brand/hopla-v2/icon.svg` (inlined in welcome, done, restore mockups).  
@@ -14,6 +14,7 @@
 4. Locales: EN, FR and **Hebrew (he, RTL) — DRAFT, pending native-speaker review**. Hebrew frames are the `*--he.png` / `*--he-dark.png` screenshots; RTL rules in DESIGN_SPEC §5.106.
 5. **Hopla News (v0.4, v0.1.20)** — DESIGN_SPEC §5R: `mockups/news-*.html` (18 screens × EN/FR/HE, light/dark = 108 PNGs). Bar: Chats · News · Communities · Nearby · You; Live at the top of Communities. Source: Google News RSS only (neutral text label; second source can be added later) + “via ‹contact›”. Contrast: `a11y/news-contrast.md`. **Relay settings screen: placeholder — will follow once the relay questions are answered.**
 5a. **WCAG 2.2 (v0.1.21)** — DESIGN_SPEC §5S: target size, focus not obscured, drag alternatives, iOS glass-bar scrim.
+5b. **Communities with Live (v0.1.22)** — DESIGN_SPEC §5T (5.120–5.127): `comm-*`, `live-*` mockups (15 screens × 6 frames).
 5b. Use **PNG screenshots** (`mockups/*.png`) in tickets and PR descriptions.
 6. Mirror copy for Proggy/Pipely: `/home/box/shared/omcp-design/` (identical tree).
 

@@ -26,6 +26,39 @@ Scope: REQUIREMENTS "Live", PROTOCOL §20.3 (0x50 RTC signalling), DESIGN §5.12
 
 FLAG_SECURE and the privacy rules are unchanged; the Live screen lives inside the same secured activity.
 
+## Live inside a community
+- **Communities** (minimal v0.2 cut, `omcp-ffi/src/community.rs`): one MLS group per community (OpenMLS, ≤ 32 members in this build). The founder invites contacts. An invitee accepts and sends a KeyPackage, then gets the Welcome, and the other members get the Commit. Control messages are pairwise E2EE app messages (`application/omcp-community`, no chat row). Only the founder adds members.
+- **Key (PROTOCOL §20.3, "MLS epoch exporter + per-stream random").**
+  ```text
+  exporter = MLS-Exporter("OMCP-live-v1", community_id ‖ stream_id, 32)
+  secret   = HKDF-SHA-256(salt = nonce[32], ikm = exporter, info = "OMCP-community-live-v1" ‖ community_id ‖ stream_id)
+  ```
+  Epoch 0 of the stream key is this secret; the audio key and the SFrame base key are derived from it exactly as before. Every member derives it, and outsiders and other streams can't (`live::community` tests). The label is domain-separated from the mailbox-tag exporter.
+- **Announcement.** `CommunityLive {community_id, stream_id, nonce, title, started_ms, video, max_hops, live, host_key}` is an MLS application message of the community group, so MLS authenticates the sender and only members can read it. `host_key` must hash to the sender's PeerID. Members forward it unchanged to their own contacts in the roster (dedup by hash), so members who aren't the host's contacts still hear about it. The end of the stream (`live = false`) travels the same way.
+- **Listing and notification.** `live_community_streams(id)` lists the active lives, and `CommunityInfo.live_count` counts them. `live_take_started()` feeds the notification (DESIGN §5.124). In default mode the unlocked shade shows "{host} is live in {community}" and "{title} · Tap to listen", with a Listen action. The lock screen always shows "Hopla · New message": on Android through `VISIBILITY_PRIVATE` with a generic public version; on iOS through a category without `hiddenPreviewsShowTitle` and with the placeholder "New message". That only holds while iOS previews are set to "When Unlocked" (the default) or "Never". In Private mode (global, or per community id) the notification is generic everywhere (§5.36).
+- **Contact-picked lives stay.** REQUIREMENTS still says "MLS group of the community **or chat**". The epoch-0 key there is random and sent in each 1:1 MLS chat.
+- **Remove viewer.** The host taps **Remove** next to a member. `live_remove_listener` rotates to a *random* secret at `key_epoch + 1`, which the removed member can't derive from the exporter. It travels as a host-signed `Rekey {community, stream, epoch, secret, excluded[], host_key, sig}` inside pairwise E2EE chats, forwarded member to member and never to the excluded PeerIDs. The list of excluded viewers is cumulative and signed, so nobody can strip it. The host also drops the viewer from the video tree. Leaving doesn't rotate: a leaver is still a member and could derive epoch 0 anyway, so rotating on leave buys nothing in a community.
+- **Moderation.** See docs/MODERATION.md "Lives". A removed community can't start or join lives, and its announcements aren't applied or forwarded. A live takedown (`TAKEDOWN_LIVE`, same team key) stops the host, the viewers and the relays.
+
+## Host frame authentication
+Members hold the stream key, so AEAD alone can't stop a relaying member from injecting frames.
+- **Mesh audio (done).** Packet version 2 appends `sig = Ed25519(host identity key, "OMCP-live-audio-sig-v1" ‖ header-without-hop ‖ nonce ‖ ciphertext)`. Listeners need the host key from the invite or announcement, and they check it against the sender's PeerID (`BLAKE2b-256(identity key)`) or the pinned identity key. Unsigned packets, packets signed by someone else and tampered packets are dropped. Relays bump the hop byte, which is outside the signature. Overhead: 64 B per 100 ms packet, that is **5.1 kbit/s on top of 12 kbit/s Opus** (≈ +29 % on the BLE link), plus one Ed25519 sign per packet on the host and one verify per packet per listener (≈ 50 µs on a phone, 10 per second). Batching (one signature over the hashes of ten packets, once per second) would cut this to ≈ 0.8 kbit/s but adds 1 s of latency before playout; we chose per-packet signing.
+- **Video (not done).** Encoded video frames are only reachable inside the WebRTC frame cryptor, which exposes no hook for our own signature. Signing key-frame hashes needs the frame-transformer work below. Until then a relaying viewer, who is a member and holds the key, could inject video into its own subtree (not into the audio). Open risk.
+
+## SFrame pass-through plan
+Goals: (1) RFC 9605 SFrame bytes on the wire from our Rust codec (`live/sframe.rs`), (2) relaying viewers forward ciphertext without decoding and re-encoding, (3) host signatures on key frames.
+
+| Step | Android (`io.github.webrtc-sdk:android` 150.7871.04) | iOS (`WebRTC.xcframework` 150.7871.04) | Fork? |
+|---|---|---|---|
+| A. Tap encoded frames | Custom `VideoDecoderFactory` that wraps the built-in decoder. `VideoDecoder.decode(EncodedImage)` sees every encoded frame after the frame cryptor has decrypted it. | Custom `RTCVideoDecoderFactory` with `RTCVideoDecoder.decode(RTCEncodedImage…)`. | No |
+| B. Re-send encoded frames to children | Custom `VideoEncoderFactory` with a "pass-through encoder" that ignores the input `VideoFrame` and emits the queued `EncodedImage` (driven by a dummy capturer at the same frame rate). | Same with `RTCVideoEncoder`. | No, but fragile (see risks) |
+| C. Verify host key-frame signatures | In the decoder wrapper: hash each key frame (BLAKE2b-256), check it against a host-signed batch of key-frame hashes sent as a 0x50 signal every second, and drop the subtree's video on a mismatch. | Same. | No |
+| D. RFC 9605 bytes on the wire | Replace the frame cryptor with our own `FrameTransformerInterface` that calls Rust `sframe::protect/unprotect` over a C ABI. The Java and ObjC wrappers only expose the frame cryptor, and the SDK's `.so` doesn't export the C++ symbols. | Same (the ObjC API exposes no `RTCFrameTransformer`). | **Yes**: patch `sdk/android` and `sdk/objc` to expose `RtpSender/RtpReceiver.setFrameTransformer` |
+
+Effort: A–C without a fork ≈ 6–8 dev-days per platform plus 3–4 days of device testing. D needs a fork: ≈ 2–3 weeks (libwebrtc checkout ≈ 30 GB, about 2 h per ABI build, CI caching, then keeping up with upstream releases).
+Risks: (B) WebRTC's RTP packetizer needs codec-specific info (VP8 picture id, temporal layers) that the Java and ObjC `CodecSpecificInfo` don't carry. Pass-through may break keyframe requests (PLI/FIR) and bitrate adaptation, because children's PLIs can't be answered without asking the host. Simulcast layers can't be re-chosen per child. (D) A fork means we own security updates for libwebrtc.
+**Decision: not implemented in this PR.** A–C are feasible without a fork but can't be tested here (no devices). They are the next step once a device test bench exists. D stays deferred.
+
 ## Codec
 Android uses the platform Opus codec through `MediaCodec` (`c2.android.opus`, AOSP, Apache-2.0, libopus BSD-3-Clause). No codec is bundled. MediaCodec exposes no in-band FEC decode, so a lost frame plays as silence (PLC); the FEC bit is still set on encode for future decoders.
 
@@ -51,11 +84,14 @@ The spec allows public STUN and no TURN. `STUN_SERVERS = ["stun:stun.l.google.co
 WebRTC is no longer behind a flag: `io.github.webrtc-sdk:android:150.7871.04` (BSD-3-Clause) is always included (owner decision: budget ~35 MB). The sideload APK is arm64-v8a only (other WebRTC ABIs dropped, native libs stripped). Measured arm64 sideload APK (`.debug` package, libs stored uncompressed, R8 off): 33.7 MB (33,739,342 bytes) — WebRTC .so 12.3 MB, omcp_ffi 7.3 MB. iOS links the same release (`WebRTC.xcframework` 150.7871.04 from `webrtc-sdk/Specs`, ~12 MB arm64) through a local SwiftPM wrapper (`apps/ios/Packages/WebRTCBinary`, pinned checksum), because the upstream manifest needs a newer PackageDescription than the CI Xcode.
 
 ## Deferred
+- Video frame signatures and pass-through relaying (see "SFrame pass-through plan").
 - RFC 9605 byte layout on the wire and pass-through relaying (custom frame transformer, see above).
 - Audio in the WebRTC tree (today audio is mesh-only, so an online viewer outside Bluetooth range of the mesh gets video without sound).
 - Wi-Fi Direct / LAN relay, recording.
 
 ## Risks
+- Community MLS epochs: members must be at the founder's epoch to derive the same live key. A member who missed a Commit derives a different key and hears nothing (no error shown yet). Commits travel pairwise from the founder, with no resync protocol yet.
+- Communities are limited to 32 members (OpenMLS small-group cap in this build). Only the founder can add members, and nobody can remove members yet.
 - Real-hardware latency: BLE connection intervals and multi-hop scheduling are simulated, not measured; LV1 needs an on-device run.
 - MediaCodec Opus availability differs by vendor (Android 10+ has it in AOSP).
 - NAT traversal without TURN will fail for some carrier-grade/symmetric NATs (graceful fallback to mesh audio).

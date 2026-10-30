@@ -67,6 +67,8 @@ private object Routes {
     const val Chats = "chats"
     const val Communities = "communities"
     const val Live = "live"
+    const val Community = "community/{id}"
+    fun community(id: String) = "community/$id"
     const val News = "news"
     const val NewsStory = "news/{id}"
     const val NewsSettings = "news-settings"
@@ -188,7 +190,29 @@ fun OmcpRoot(
                     onBackup = { nav.navigate(Routes.Backup) },
                 )
             }
-            composable(Routes.Communities) { CommunitiesHomeScreen(onOpenLive = { nav.navigate(Routes.Live) }) }
+            composable(Routes.Communities) {
+                CommunitiesHomeScreen(repo.core, onOpenLive = { nav.navigate(Routes.Live) }, onOpen = { nav.navigate(Routes.community(it)) })
+            }
+            composable(Routes.Community) { entry ->
+                val liveVm = vm {
+                    chat.omcp.app.ui.vm.LiveViewModel(
+                        repo.core,
+                        chat.omcp.app.live.LiveAudioEngine(repo.core) { repo.kick?.kick("") },
+                        if (chat.omcp.app.ui.vm.LiveViewModel.VIDEO_ENABLED) runCatching {
+                            chat.omcp.app.live.WebRtcLiveVideo(chat.omcp.app.live.WebRtcPeers(ctx, repo.core), repo.core)
+                        }.getOrNull() else null,
+                    )
+                }
+                chat.omcp.app.ui.screens.CommunityDetailScreen(
+                    entry.arguments?.getString("id").orEmpty(), repo.core, liveVm, contacts, liveVm.webRtc,
+                    hasInternet = {
+                        val cm = ctx.getSystemService(android.net.ConnectivityManager::class.java)
+                        cm?.getNetworkCapabilities(cm.activeNetwork)
+                            ?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true
+                    },
+                    onBack = { nav.popBackStack() },
+                )
+            }
             composable(Routes.News) { entry ->
                 NewsHomeScreen(vm = newsVm, onOpen = { nav.navigate(Routes.newsStory(it)) }, onSettings = { nav.navigate(Routes.NewsSettings) })
             }

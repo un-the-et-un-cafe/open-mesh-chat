@@ -2,7 +2,7 @@
 
 use std::collections::BTreeSet;
 
-use super::audio::{seal_audio, FRAMES_PER_PACKET};
+use super::audio::{open_audio_auth, seal_audio_signed, FRAMES_PER_PACKET};
 use super::{LiveInvite, StreamKey, DEFAULT_MAX_HOPS};
 use crate::error::Result;
 
@@ -17,23 +17,61 @@ pub struct HostSession {
     listeners: BTreeSet<[u8; 32]>,
     seq: u32,
     pending: Vec<Vec<u8>>,
+    signer: Option<ed25519_dalek::SigningKey>,
+    pub community_id: Option<[u8; 32]>,
 }
 
 impl HostSession {
     pub fn start(host: [u8; 32], title: &str, video: bool, now_ms: u64) -> Result<Self> {
         let mut id = [0u8; 16];
         getrandom::getrandom(&mut id).map_err(|_| crate::OmcpError::Sync("rng"))?;
+        Self::with_key(host, title, video, now_ms, StreamKey::random(id, 0)?)
+    }
+
+    /// Start with a given epoch-0 key (community live: derived from the MLS exporter).
+    pub fn with_key(
+        host: [u8; 32],
+        title: &str,
+        video: bool,
+        now_ms: u64,
+        key: StreamKey,
+    ) -> Result<Self> {
         Ok(Self {
             host,
             title: title.chars().take(super::MAX_TITLE).collect(),
             started_ms: now_ms,
             video,
             max_hops: DEFAULT_MAX_HOPS,
-            key: StreamKey::random(id, 0)?,
+            key,
             listeners: BTreeSet::new(),
             seq: 0,
             pending: Vec::new(),
+            signer: None,
+            community_id: None,
         })
+    }
+
+    /// Sign every packet with the host identity key (audio version 2).
+    pub fn set_signer(&mut self, sk: ed25519_dalek::SigningKey) {
+        self.signer = Some(sk);
+    }
+
+    pub fn host_key(&self) -> [u8; 32] {
+        self.signer
+            .as_ref()
+            .map(|s| s.verifying_key().to_bytes())
+            .unwrap_or([0; 32])
+    }
+
+    /// Rotate to a fresh random secret (new epoch) without changing listeners:
+    /// used when a community member is removed from the stream.
+    pub fn rotate(&mut self) -> Result<()> {
+        self.key = StreamKey::random(self.key.stream_id, self.key.key_epoch + 1)?;
+        Ok(())
+    }
+
+    pub fn signer(&self) -> Option<&ed25519_dalek::SigningKey> {
+        self.signer.as_ref()
     }
 
     pub fn key(&self) -> &StreamKey {
@@ -53,6 +91,8 @@ impl HostSession {
             max_hops: self.max_hops,
             key: self.key.clone(),
             live,
+            host_key: self.host_key(),
+            community_id: self.community_id,
         }
     }
 
@@ -83,8 +123,9 @@ impl HostSession {
             self.pending.push(f);
             if self.pending.len() == FRAMES_PER_PACKET {
                 let batch = std::mem::take(&mut self.pending);
-                out.push(seal_audio(
+                out.push(seal_audio_signed(
                     &self.key,
+                    self.signer.as_ref(),
                     self.seq,
                     self.max_hops,
                     now_ms,
@@ -127,7 +168,8 @@ impl ListenerSession {
     /// Decrypt one packet into the jitter buffer. `false` if it is not ours
     /// or does not open.
     pub fn on_packet(&mut self, pkt: &[u8], now_ms: u64) -> bool {
-        match super::audio::open_audio(&self.invite.key, pkt) {
+        let hk = (self.invite.host_key != [0; 32]).then_some(&self.invite.host_key);
+        match open_audio_auth(&self.invite.key, hk, pkt) {
             Ok((h, frames)) => {
                 let base = h.seq as u64 * FRAMES_PER_PACKET as u64;
                 for (k, f) in frames.into_iter().enumerate() {

@@ -85,6 +85,12 @@ public final class LiveVideoController {
     public func poll(now: UInt64) {
         lock.lock(); defer { lock.unlock() }
         guard state != .off else { return }
+        // No key = the stream ended or was taken down by the team: close every
+        // connection, so we neither play nor forward video to our children.
+        if core.liveMediaKey() == nil && key != nil {
+            peers.closeAll(); children = []; parent = nil; key = nil; state = .off
+            return
+        }
         refreshKey()
         for s in core.liveTakeSignals() {
             switch s.kind {

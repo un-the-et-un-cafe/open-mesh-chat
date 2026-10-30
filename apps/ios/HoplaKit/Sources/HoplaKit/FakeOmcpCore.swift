@@ -40,6 +40,20 @@ public final class FakeOmcpCore: OmcpCore {
     public func liveTakeSignals() -> [LiveSignalModel] { defer { fakeSignals = [] }; return fakeSignals }
     public func liveVideoDrop(peerHex: String) { droppedPeers.append(peerHex) }
     public func liveMediaKey() -> LiveMediaKeyModel? { fakeMediaKey }
+    public var fakeCommunities: [CommunityModel] = []
+    public var fakeMembers: [String: [CommunityMemberModel]] = [:]
+    public var fakeStreams: [LiveStreamModel] = []
+    public var fakeEnded: [LiveEndedModel] = []
+    public var fakeLiveReason: Int?
+    public var removedListeners: [String] = []
+    public func communities() -> [CommunityModel] { fakeCommunities }
+    public func communityMembers(communityId: String) -> [CommunityMemberModel] { fakeMembers[communityId] ?? [] }
+    public func liveStreams() -> [LiveStreamModel] { fakeStreams }
+    public func liveTakeEnded() -> [LiveEndedModel] { defer { fakeEnded = [] }; return fakeEnded }
+    public func moderationLiveRemovedReason(streamIdHex: String) -> Int? { fakeLiveReason }
+    public func liveRemoveListener(contactId: String) { removedListeners.append(contactId) }
+    public var fakeLiveStarted: [(String, String)] = []
+    public func liveTakeStarted() -> [(String, String)] { defer { fakeLiveStarted = [] }; return fakeLiveStarted }
 
     public func meshStats() -> MeshRelayStats { fakeMeshStats }
     public var maxFile: UInt64 = 50_000_000

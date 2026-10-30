@@ -648,6 +648,21 @@ public protocol OmcpCore: AnyObject {
     func liveVideoDrop(peerHex: String)
     func liveMediaKey() -> LiveMediaKeyModel?
     func liveStunServers() -> [String]
+    // Communities (MLS groups) and Live inside a community.
+    func communities() -> [CommunityModel]
+    func communityCreate(name: String) -> CommunityModel?
+    @discardableResult func communityInvite(communityId: String, contactId: String) -> Bool
+    func communityInvites() -> [CommunityInviteModel]
+    @discardableResult func communityAccept(communityId: String) -> Bool
+    func communityDecline(communityId: String)
+    func communityMembers(communityId: String) -> [CommunityMemberModel]
+    func liveStartCommunity(communityId: String, title: String, video: Bool) -> String?
+    func liveRemoveListener(contactId: String)
+    /// Community lives that started since the last call: (stream id, community id).
+    func liveTakeStarted() -> [(String, String)]
+    /// Streams stopped by a team takedown: stop mic/camera, close every WebRTC peer.
+    func liveTakeEnded() -> [LiveEndedModel]
+    func moderationLiveRemovedReason(streamIdHex: String) -> Int?
     /// Team moderation (PROTOCOL §23.9, TM1–TM4).
     func moderationHasTeam() -> Bool
     func moderationLog() -> [TeamLogEntryModel]
@@ -768,6 +783,18 @@ public extension OmcpCore {
     func liveVideoDrop(peerHex: String) {}
     func liveMediaKey() -> LiveMediaKeyModel? { nil }
     func liveStunServers() -> [String] { ["stun:stun.l.google.com:19302"] }
+    func communities() -> [CommunityModel] { [] }
+    func communityCreate(name: String) -> CommunityModel? { nil }
+    @discardableResult func communityInvite(communityId: String, contactId: String) -> Bool { false }
+    func communityInvites() -> [CommunityInviteModel] { [] }
+    @discardableResult func communityAccept(communityId: String) -> Bool { false }
+    func communityDecline(communityId: String) {}
+    func communityMembers(communityId: String) -> [CommunityMemberModel] { [] }
+    func liveStartCommunity(communityId: String, title: String, video: Bool) -> String? { nil }
+    func liveRemoveListener(contactId: String) {}
+    func liveTakeStarted() -> [(String, String)] { [] }
+    func liveTakeEnded() -> [LiveEndedModel] { [] }
+    func moderationLiveRemovedReason(streamIdHex: String) -> Int? { nil }
     func moderationHasTeam() -> Bool { false }
     func moderationLog() -> [TeamLogEntryModel] { [] }
     func moderationPublish(actionHex: String) -> String { "no_team" }
@@ -820,10 +847,58 @@ public struct LiveStreamModel: Equatable, Identifiable, Sendable {
     public var listening: Bool
     public var video: Bool
     public var startedMs: Int64
-    public init(streamIdHex: String, title: String, hostContactId: String, mine: Bool, listening: Bool, video: Bool, startedMs: Int64) {
+    /// Hex community id for a community live, empty for a contact-picked one.
+    public var communityId: String
+    public init(streamIdHex: String, title: String, hostContactId: String, mine: Bool, listening: Bool, video: Bool, startedMs: Int64,
+                communityId: String = "") {
         self.streamIdHex = streamIdHex; self.title = title; self.hostContactId = hostContactId
         self.mine = mine; self.listening = listening; self.video = video; self.startedMs = startedMs
+        self.communityId = communityId
     }
+}
+
+/// A community (MLS group) the user belongs to (Rust `CommunityInfo`).
+public struct CommunityModel: Equatable, Identifiable, Sendable {
+    public var id: String
+    public var name: String
+    public var members: Int
+    public var founderIsMe: Bool
+    /// Team takedown reason code (§23.9), nil if not removed.
+    public var removedReason: Int?
+    public var liveCount: Int
+    public init(id: String, name: String, members: Int, founderIsMe: Bool, removedReason: Int? = nil, liveCount: Int = 0) {
+        self.id = id; self.name = name; self.members = members; self.founderIsMe = founderIsMe
+        self.removedReason = removedReason; self.liveCount = liveCount
+    }
+}
+
+public struct CommunityInviteModel: Equatable, Identifiable, Sendable {
+    public var id: String { communityId }
+    public var communityId: String
+    public var name: String
+    public var fromContactId: String
+    public init(communityId: String, name: String, fromContactId: String) {
+        self.communityId = communityId; self.name = name; self.fromContactId = fromContactId
+    }
+}
+
+public struct CommunityMemberModel: Equatable, Identifiable, Sendable {
+    public var id: String { peerId }
+    public var peerId: String
+    public var name: String
+    public var isContact: Bool
+    public var isMe: Bool
+    public init(peerId: String, name: String, isContact: Bool, isMe: Bool) {
+        self.peerId = peerId; self.name = name; self.isContact = isContact; self.isMe = isMe
+    }
+}
+
+/// A stream stopped here; `reason` "taken_down" = team moderation.
+public struct LiveEndedModel: Equatable, Sendable {
+    public var streamIdHex: String
+    public var reason: String
+    public var mine: Bool
+    public init(streamIdHex: String, reason: String, mine: Bool) { self.streamIdHex = streamIdHex; self.reason = reason; self.mine = mine }
 }
 
 public struct LiveStatsModel: Equatable, Sendable {

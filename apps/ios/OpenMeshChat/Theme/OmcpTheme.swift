@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Design tokens v0.1.21 (DESIGN_SPEC §2.1, §5.102 dark, §5.104 light). WCAG AA.
+/// Design tokens v0.1.22 (DESIGN_SPEC §2.1, §5.102 dark, §5.104 light). WCAG AA.
 struct OmcpColors {
     let bg: Color
     let surface: Color

@@ -56,6 +56,7 @@ use zeroize::Zeroizing;
 uniffi::setup_scaffolding!();
 
 mod chatbackup;
+mod community;
 mod files;
 mod live;
 mod mesh;
@@ -1743,6 +1744,12 @@ impl MeshLink {
 
     /// Flush any queued texts for this peer (e.g. after queueing elsewhere).
     pub fn flush(&self) -> Result<LinkOutput, FfiError> {
+        // Community messages produced while handling PDUs (founder Welcome,
+        // gossip) are queued here, outside the node lock.
+        OmcpNode {
+            inner: self.node.clone(),
+        }
+        .drain_community_outbox();
         let mut st = self.lock();
         let mut out = LinkOutput::default();
         self.flush_locked(&mut st, &mut out)?;
@@ -1867,6 +1874,10 @@ impl MeshLink {
                 node.db().put_message(&received(&t, None, None))?;
                 rt.text = t;
                 out.received.push(rt);
+            }
+            (None, AppContent::Media { mime, bytes }) if mime == community::COMMUNITY_MIME => {
+                // Community control / live announcement; no chat row.
+                node.on_community_msg(peer, &bytes)?;
             }
             (None, AppContent::Media { mime, bytes }) if mime == omcp_core::live::INVITE_MIME => {
                 // Live invite: stream key over the E2EE chat; no chat row.

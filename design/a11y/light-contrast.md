@@ -18,7 +18,7 @@ Thresholds (WCAG 2.1 AA): text 4.5:1; large text 3:1; icons, UI boundaries, focu
 | Worst disabled | **1.07:1** (ui-disabled, #d8dee8 on #eeebf8, nearby-skeleton--default `button.rbtn(border)`) | **3.50:1** (ui-disabled, #73849a on #f3f5f8, onboarding-recovery-confirm--in-progress `onb>button.btn.btn-block.disabled(border)`) |
 | Exempt measurements (see below) | 489 | 503 |
 
-## Light token changes (`:root` in `mockups/tokens.css`; approved by the maintainer for v0.1.18)
+## Light token changes (`:root` in `mockups/tokens.css`; approved by Jakob for v0.1.18)
 
 | Token | v0.1.17 | v0.1.18 | On `--surface` | Worst light tint | Matched dark step (on dark `--surface`) |
 |---|---|---|---|---|---|

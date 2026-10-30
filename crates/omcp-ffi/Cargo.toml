@@ -28,8 +28,9 @@ zeroize = "=1.9.1"
 getrandom = "=0.2.15"
 blake3 = "=1.5.5"
 serde = { version = "1", features = ["derive"] }
+ciborium = "=0.2.2"
+ed25519-dalek = { version = "=2.2.0", default-features = false, features = ["std", "zeroize"] }
+blake2 = "=0.10.6"
 
 [dev-dependencies]
 tempfile = "=3.14.0"
-ed25519-dalek = { version = "=2.2.0", default-features = false, features = ["std", "zeroize"] }
-blake2 = "=0.10.6"

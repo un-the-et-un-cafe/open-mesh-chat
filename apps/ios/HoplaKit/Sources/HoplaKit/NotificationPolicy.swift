@@ -11,6 +11,8 @@ public struct NotificationContent: Equatable {
     public var hideOnLockScreen: Bool
     /// Thread grouping; generic when private so the history never groups by sender.
     public var threadId: String
+    /// "message", or "live" (category with a Listen action, previews hidden on the lock screen).
+    public var kind: String = "message"
 }
 
 /// Pure notification policy (REQUIREMENTS "Notifications (v0.1.2)" + product decisions 1–3).
@@ -44,6 +46,25 @@ public enum NotificationPolicy {
             title: sender, body: text, showAvatar: true, isPrivate: false,
             hiddenPreviewsPlaceholder: genericBody, hideOnLockScreen: store.hideOnLockScreen,
             threadId: chatId)
+    }
+
+    /// A community live started (DESIGN §5.124). Default mode: "{host} is live in
+    /// {community}" + "{title} · Tap to listen" in the unlocked list. The lock
+    /// screen stays generic: the content always uses the hidden-previews category
+    /// (no title, placeholder "New message"). That only holds while iOS previews
+    /// are "When Unlocked" (the default) or "Never"; with "Always" iOS shows the
+    /// content on the lock screen. Private mode (global or per community id):
+    /// generic everywhere (§5.36).
+    public static func liveStartedContent(
+        _ store: AppStore, communityId: String, title: String, body: String, genericBody: String
+    ) -> NotificationContent {
+        let priv = isPrivate(store, chatId: communityId)
+        var n = NotificationContent(
+            title: priv ? appName : title, body: priv ? genericBody : body, showAvatar: false, isPrivate: priv,
+            hiddenPreviewsPlaceholder: genericBody, hideOnLockScreen: true,
+            threadId: "hopla")
+        n.kind = "live"
+        return n
     }
 
     /// Incoming call (decision 1). Private: "Hopla · Incoming call", no caller name.

@@ -10,7 +10,7 @@ struct YouView: View {
         let info = Bundle.main.infoDictionary
         let v = info?["CFBundleShortVersionString"] as? String ?? "?"
         let commit = info?["OMCPGitCommit"] as? String ?? "dev"
-        return L("about_version", v, "0.1.21") + " · " + commit
+        return L("about_version", v, "0.1.22") + " · " + commit
     }
 
     var body: some View {

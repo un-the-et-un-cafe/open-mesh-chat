@@ -2805,6 +2805,347 @@ fn live_video_signalling_through_host_and_shared_media_key() {
     }
 }
 
+// ---- Live inside a community + live takedown (Task: community live) ----
+
+/// A founds a community and adds `members` (each a direct MLS contact of A).
+fn community_of(
+    a: &Arc<OmcpNode>,
+    members: &[&Arc<OmcpNode>],
+    links: &[(Arc<MeshLink>, Arc<MeshLink>)],
+) -> String {
+    let cid = a
+        .community_create("River club".into())
+        .unwrap()
+        .community_id_hex;
+    for m in members {
+        a.community_invite(cid.clone(), m.identity().peer_id_hex)
+            .unwrap();
+        settle(links);
+        let inv = m.community_invites();
+        assert_eq!(inv.len(), 1, "{inv:?}");
+        assert_eq!(inv[0].name, "River club");
+        m.community_accept(cid.clone()).unwrap();
+        settle(links);
+        assert_eq!(m.communities().len(), 1, "joined");
+    }
+    settle(links);
+    cid
+}
+
+fn push(n: &OmcpNode, i: u8) {
+    n.live_push_audio((0..5).map(|k| vec![i.wrapping_add(k); 30]).collect())
+        .unwrap();
+}
+
+#[test]
+fn community_live_members_derive_the_key_and_listen_non_members_cant() {
+    // B — A — C, plus D (A's contact, not a member). B and C are not contacts.
+    let (a, b, c, d) = (node("A"), node("B"), node("C"), node("D"));
+    befriend_mls(&a, &b);
+    befriend_mls(&a, &c);
+    befriend_mls(&a, &d);
+    let ab = up(&a, &b);
+    let ac = up(&a, &c);
+    let ad = up(&a, &d);
+    let links = [
+        (ab.0.clone(), ab.1.clone()),
+        (ac.0.clone(), ac.1.clone()),
+        (ad.0.clone(), ad.1.clone()),
+    ];
+    let cid = community_of(&a, &[&b, &c], &links);
+    assert_eq!(a.communities()[0].members, 3);
+    assert_eq!(c.community_members(cid.clone()).len(), 3);
+    // B goes live in the community; C hears about it through A (gossip).
+    let sid = b
+        .live_start_community(cid.clone(), "Weekend tips".into(), false)
+        .unwrap();
+    settle(&links);
+    for n in [&a, &c] {
+        let s = n.live_community_streams(cid.clone());
+        assert_eq!(s.len(), 1, "{s:?}");
+        assert_eq!(s[0].stream_id_hex, sid);
+        assert_eq!(s[0].host_contact_id, b.identity().peer_id_hex);
+        assert_eq!(n.communities()[0].live_count, 1);
+        let started = n.live_take_started();
+        assert_eq!(started.len(), 1);
+        assert_eq!(started[0].community_id_hex, cid);
+    }
+    assert!(
+        b.live_take_started().is_empty(),
+        "no notification for our own live"
+    );
+    assert!(d.live_streams().is_empty() && d.live_take_started().is_empty());
+    assert!(d.live_join(sid.clone(), false).is_err());
+    // Same media key from the community exporter on host and members.
+    c.live_join(sid.clone(), false).unwrap();
+    a.live_join(sid.clone(), false).unwrap();
+    assert_eq!(b.live_media_key(), c.live_media_key());
+    assert_eq!(a.live_media_key(), c.live_media_key());
+    let t0 = now_ms();
+    for i in 0..4 {
+        push(&b, i * 5);
+        settle(&links);
+    }
+    assert_eq!(
+        c.live_take_audio(t0 + 10_000)
+            .iter()
+            .filter(|p| !p.lost)
+            .count(),
+        20
+    );
+    assert!(d.live_take_audio(t0 + 10_000).is_empty());
+    // The announcement is not a chat message.
+    assert!(c
+        .stored_messages(a.identity().peer_id_hex)
+        .unwrap()
+        .is_empty());
+    // End: members drop it.
+    b.live_stop().unwrap();
+    settle(&links);
+    assert!(c.live_community_streams(cid.clone()).is_empty());
+    assert!(a.live_streams().is_empty());
+    for l in [&ab, &ac, &ad] {
+        down(l);
+    }
+}
+
+#[test]
+fn community_remove_viewer_rotates_the_key_for_everyone_else() {
+    let (a, b, c) = (node("A"), node("B"), node("C"));
+    befriend_mls(&a, &b);
+    befriend_mls(&a, &c);
+    let ab = up(&a, &b);
+    let ac = up(&a, &c);
+    let links = [(ab.0.clone(), ab.1.clone()), (ac.0.clone(), ac.1.clone())];
+    let cid = community_of(&a, &[&b, &c], &links);
+    let sid = a.live_start_community(cid, "t".into(), false).unwrap();
+    settle(&links);
+    b.live_join(sid.clone(), false).unwrap();
+    c.live_join(sid, false).unwrap();
+    let k0 = a.live_media_key().unwrap();
+    a.live_remove_listener(c.identity().peer_id_hex).unwrap();
+    settle(&links);
+    let k1 = a.live_media_key().unwrap();
+    assert_ne!(k0, k1);
+    assert_eq!(b.live_media_key().unwrap(), k1, "B got the signed rekey");
+    assert_eq!(c.live_media_key().unwrap(), k0, "C kept the old key");
+    let t0 = now_ms();
+    push(&a, 1);
+    settle(&links);
+    assert_eq!(
+        b.live_take_audio(t0 + 5_000)
+            .iter()
+            .filter(|p| !p.lost)
+            .count(),
+        5
+    );
+    assert!(c.live_take_audio(t0 + 5_000).iter().all(|p| p.lost));
+    for l in [&ab, &ac] {
+        down(l);
+    }
+}
+
+#[test]
+fn injected_unsigned_frames_are_rejected_by_listeners() {
+    let (a, c) = (node("A"), node("C"));
+    befriend_mls(&a, &c);
+    let ac = up(&a, &c);
+    let links = [(ac.0.clone(), ac.1.clone())];
+    let sid = a
+        .live_start("t".into(), false, vec![c.identity().peer_id_hex])
+        .unwrap();
+    settle(&links);
+    c.live_join(sid, false).unwrap();
+    let now = now_ms();
+    {
+        // C holds the stream key (like any member) and forges a packet.
+        let mut st = c.inner.lock();
+        let key = st.mesh.live.listening.as_ref().unwrap().invite.key.clone();
+        let forged =
+            omcp_core::live::audio::seal_audio(&key, 99, 3, now, &[vec![9u8; 30]]).unwrap();
+        st.on_live_frame(12345, &forged, now);
+    }
+    assert!(c.live_take_audio(now + 5_000).iter().all(|p| p.lost));
+    assert_eq!(c.live_stats().played, 0);
+    // Signed frames from the host still play.
+    push(&a, 0);
+    settle(&links);
+    assert!(c.live_stats().played + c.live_take_audio(now_ms() + 5_000).len() as u64 > 0);
+    down(&ac);
+}
+
+#[test]
+fn community_takedown_blocks_its_lives_and_announcements() {
+    use omcp_core::moderation::{Reason, TeamAction};
+    let team = team_key();
+    let (a, b) = (node("A"), node("B"));
+    befriend_mls(&a, &b);
+    with_team(&a, &team);
+    with_team(&b, &team);
+    let ab = up(&a, &b);
+    let links = [(ab.0.clone(), ab.1.clone())];
+    let cid = community_of(&a, &[&b], &links);
+    let sid = a
+        .live_start_community(cid.clone(), "t".into(), false)
+        .unwrap();
+    settle(&links);
+    b.live_join(sid.clone(), false).unwrap();
+    let cb: [u8; 32] = hex::decode(&cid).unwrap().try_into().unwrap();
+    let td = team_hex(TeamAction::takedown(cb, Reason::Hate, "", 1), &team);
+    assert_eq!(b.moderation_publish(td).unwrap(), TeamActionResult::Applied);
+    settle(&links);
+    // Host refuses to keep broadcasting, the viewer stops, nothing can restart.
+    assert!(a.live_push_audio(vec![vec![1; 30]; 5]).is_err());
+    let ended = a.live_take_ended();
+    assert_eq!(ended.len(), 1);
+    assert!(ended[0].mine && ended[0].reason == "taken_down");
+    assert_eq!(b.live_take_ended()[0].reason, "taken_down");
+    assert!(b.live_streams().is_empty());
+    assert!(a
+        .live_start_community(cid.clone(), "again".into(), false)
+        .is_err());
+    assert_eq!(a.communities()[0].removed_reason, Some(1));
+    down(&ab);
+}
+
+#[test]
+fn live_takedown_stops_host_viewer_and_relay() {
+    use omcp_core::moderation::{Reason, TeamAction};
+    let team = team_key();
+    // A — B — C: A hosts, C listens, B only relays.
+    let (a, b, c) = (node("A"), node("B"), node("C"));
+    befriend(&a, &b);
+    befriend(&b, &c);
+    befriend_mls(&a, &c);
+    let ab = up(&a, &b);
+    let bc = up(&b, &c);
+    let links = [(ab.0.clone(), ab.1.clone()), (bc.0.clone(), bc.1.clone())];
+    let sid = a
+        .live_start("t".into(), false, vec![c.identity().peer_id_hex])
+        .unwrap();
+    settle(&links);
+    c.live_join(sid.clone(), false).unwrap();
+    let s: [u8; 16] = hex::decode(&sid).unwrap().try_into().unwrap();
+
+    // 1) Only the relay B runs the team policy: it stops forwarding.
+    with_team(&b, &team);
+    let td = team_hex(TeamAction::takedown_live(s, Reason::Terror, "", 1), &team);
+    assert_eq!(
+        b.moderation_publish(td.clone()).unwrap(),
+        TeamActionResult::Applied
+    );
+    assert_eq!(b.moderation_live_removed_reason(sid.clone()), Some(3));
+    settle(&links);
+    let t0 = now_ms();
+    push(&a, 0); // A doesn't know the policy here (other app): keeps sending
+    settle(&links);
+    assert!(b.live_stats().dropped_moderation > 0);
+    assert_eq!(
+        c.live_take_audio(t0 + 5_000)
+            .iter()
+            .filter(|p| !p.lost)
+            .count(),
+        0
+    );
+
+    // 2) Host and viewer run it too: the takedown reaches them over the mesh.
+    with_team(&a, &team);
+    with_team(&c, &team);
+    let td2 = team_hex(TeamAction::takedown_live(s, Reason::Terror, "", 2), &team);
+    assert_eq!(
+        b.moderation_publish(td2).unwrap(),
+        TeamActionResult::Applied
+    );
+    settle(&links);
+    assert_eq!(a.moderation_live_removed_reason(sid.clone()), Some(3));
+    assert!(
+        a.live_push_audio(vec![vec![1; 30]; 5]).is_err(),
+        "host refuses"
+    );
+    assert!(a.live_take_ended()[0].mine);
+    assert_eq!(c.live_take_ended()[0].reason, "taken_down");
+    assert!(c.live_streams().is_empty());
+    assert!(c.live_media_key().is_none(), "no key left for WebRTC");
+    assert!(c.live_join(sid.clone(), false).is_err());
+    assert!(a.moderation_log().iter().any(|e| e.kind == "takedown_live"));
+    for l in [&ab, &bc] {
+        down(l);
+    }
+}
+
+#[test]
+fn unsigned_foreign_or_replayed_live_takedowns_are_ignored() {
+    use omcp_core::moderation::{Reason, TeamAction};
+    let team = team_key();
+    let (a, c) = (node("A"), node("C"));
+    befriend_mls(&a, &c);
+    with_team(&a, &team);
+    with_team(&c, &team);
+    let ac = up(&a, &c);
+    let links = [(ac.0.clone(), ac.1.clone())];
+    let sid = a
+        .live_start("t".into(), false, vec![c.identity().peer_id_hex])
+        .unwrap();
+    settle(&links);
+    c.live_join(sid.clone(), false).unwrap();
+    let s: [u8; 16] = hex::decode(&sid).unwrap().try_into().unwrap();
+    let unsigned = hex::encode(
+        TeamAction::takedown_live(s, Reason::Spam, "", 1)
+            .encode()
+            .unwrap(),
+    );
+    assert_eq!(
+        c.moderation_publish(unsigned).unwrap(),
+        TeamActionResult::BelowThreshold
+    );
+    let foreign = team_hex(
+        TeamAction::takedown_live(s, Reason::Spam, "", 1),
+        &team_key(),
+    );
+    assert_eq!(
+        c.moderation_publish(foreign).unwrap(),
+        TeamActionResult::NotWhitelisted
+    );
+    // A valid takedown then restore; replaying the old takedown changes nothing.
+    let td = team_hex(TeamAction::takedown_live(s, Reason::Spam, "", 1), &team);
+    assert_eq!(
+        c.moderation_publish(td.clone()).unwrap(),
+        TeamActionResult::Applied
+    );
+    let rs = team_hex(TeamAction::restore_live(s, 2), &team);
+    assert_eq!(c.moderation_publish(rs).unwrap(), TeamActionResult::Applied);
+    assert_eq!(c.moderation_publish(td).unwrap(), TeamActionResult::Replay);
+    settle(&links);
+    assert_eq!(a.moderation_live_removed_reason(sid.clone()), None);
+    // The host was stopped by the takedown; it can go live again after the restore.
+    assert!(a
+        .live_start("t2".into(), false, vec![c.identity().peer_id_hex])
+        .is_ok());
+    down(&ac);
+}
+
+#[test]
+fn communities_survive_restart() {
+    let phrase = generate_recovery_phrase().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let id = {
+        let n = open_node(&phrase, "N", dir.path());
+        n.community_create("Climbing".into())
+            .unwrap()
+            .community_id_hex
+    };
+    let n = open_node(&phrase, "N", dir.path());
+    let c = n.communities();
+    assert_eq!(c.len(), 1);
+    assert_eq!(
+        (c[0].community_id_hex.as_str(), c[0].name.as_str()),
+        (id.as_str(), "Climbing")
+    );
+    assert!(c[0].founder_is_me);
+    // The MLS group still works after the restart (exporter for a live).
+    assert!(n.live_start_community(id, "t".into(), false).is_ok());
+}
+
 #[test]
 fn news_ingests_real_google_news_fr_response() {
     let xml = include_str!("../../omcp-core/src/news/fixtures/google_news_world_fr_live.xml");
