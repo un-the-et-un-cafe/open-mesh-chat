@@ -344,4 +344,67 @@ impl OmcpNode {
             .map(|c| c.can_join_live(&me))
             .unwrap_or(false)
     }
+
+    /// Members with their role ("founder", "moderator", "member").
+    pub fn open_community_members(&self, community_id_hex: String) -> Vec<OpenCommunityMember> {
+        let (Ok(id), Ok((_, me))) = (parse_id(&community_id_hex), self.key_and_me()) else {
+            return Vec::new();
+        };
+        let st = self.inner.lock();
+        let Some(c) = st.mesh.open.get(&id) else {
+            return Vec::new();
+        };
+        let mut v: Vec<OpenCommunityMember> = c
+            .members
+            .iter()
+            .map(|k| OpenCommunityMember {
+                key_hex: hex::encode(k),
+                role: if *k == c.founder {
+                    "founder"
+                } else if c.moderators.contains(k) {
+                    "moderator"
+                } else {
+                    "member"
+                }
+                .into(),
+                is_me: *k == me,
+            })
+            .collect();
+        v.sort_by_key(|m| match m.role.as_str() {
+            "founder" => 0,
+            "moderator" => 1,
+            _ => 2,
+        });
+        v
+    }
+
+    /// Anonymous report of a community post: the author-signed post plus a
+    /// reason and optional note. No reporter key or identity (Q40).
+    pub fn open_community_report_post(
+        &self,
+        community_id_hex: String,
+        post_id_hex: String,
+        reason_code: u8,
+        note: Option<String>,
+    ) -> Result<Vec<u8>, FfiError> {
+        let id = parse_id(&community_id_hex)?;
+        let pid = parse_id(&post_id_hex)?;
+        let st = self.inner.lock();
+        let p = st
+            .mesh
+            .open
+            .get(&id)
+            .and_then(|c| c.posts.get(&pid))
+            .and_then(|sp| sp.post.clone())
+            .ok_or_else(|| invalid("post not available"))?;
+        let note: String = note.unwrap_or_default().chars().take(500).collect();
+        Ok(cbor(&("OMCP-community-report-v1", p, reason_code, note)))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct OpenCommunityMember {
+    pub key_hex: String,
+    pub role: String,
+    pub is_me: bool,
 }
