@@ -47,6 +47,102 @@ const CTRL_DOMAIN: &[u8] = b"OMCP-community-ctrl-v1\x00";
 const TAG_DOMAIN: &[u8] = b"OMCP-community-tag-v1\x00";
 const ENVELOPE_FLAGS: u16 = flags::RELAY_OK | flags::STORE_OK;
 
+/// `header_aad` TLV `community_post` (§21.8, §23.10.6), len 96.
+pub const AAD_TLV_COMMUNITY_POST: u8 = 0x5B;
+const COMMUNITY_REF_DOMAIN: &[u8] = b"OMCP-community-ref-v1\x00";
+const TOPIC_REF_DOMAIN: &[u8] = b"OMCP-topic-ref-v1\x00";
+
+/// `BLAKE2b-256("OMCP-community-ref-v1" ‖ 0x00 ‖ community_id)`.
+pub fn community_ref(community_id: &[u8; 32]) -> [u8; 32] {
+    h256(&[COMMUNITY_REF_DOMAIN, community_id])
+}
+
+/// `BLAKE2b-256("OMCP-topic-ref-v1" ‖ 0x00 ‖ topic_id)`; zero for announcements.
+pub fn topic_ref(topic_id: &[u8; 32]) -> [u8; 32] {
+    if *topic_id == [0u8; 32] {
+        return [0u8; 32];
+    }
+    h256(&[TOPIC_REF_DOMAIN, topic_id])
+}
+
+/// `community_ref ‖ topic_ref ‖ post_id`.
+pub fn post_tlv_value(p: &Post) -> [u8; 96] {
+    let mut v = [0u8; 96];
+    v[..32].copy_from_slice(&community_ref(&p.community_id));
+    v[32..64].copy_from_slice(&topic_ref(&p.topic_id));
+    v[64..].copy_from_slice(&p.id());
+    v
+}
+
+/// The `0x5B` TLV of an envelope, if present and well-formed.
+pub fn post_tlv(aad: &[u8]) -> Option<[u8; 96]> {
+    let mut i = 0;
+    while i + 2 <= aad.len() {
+        let (t, l) = (aad[i], aad[i + 1] as usize);
+        if i + 2 + l > aad.len() {
+            return None;
+        }
+        if t == AAD_TLV_COMMUNITY_POST {
+            return aad[i + 2..i + 2 + l].try_into().ok();
+        }
+        i += 2 + l;
+    }
+    None
+}
+
+/// MR31: whether a post envelope is covered by a post, topic or community
+/// takedown (any tombstone state), judged from the TLV alone.
+pub fn tlv_under_takedown(tlv: &[u8; 96], m: &ModerationState) -> bool {
+    let (cr, tr, pid) = (&tlv[..32], &tlv[32..64], &tlv[64..]);
+    m.tombstones().iter().any(|t| {
+        community_ref(&t.target_id) == cr
+            && match t.kind {
+                ActionKind::Takedown => true,
+                ActionKind::TopicTakedown => topic_ref(&t.item_id) == tr,
+                ActionKind::PostTakedown => t.item_id == pid,
+                _ => false,
+            }
+    })
+}
+
+/// Takedowns in TLV form, for relays (any tombstone state).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CommunityBlocks {
+    communities: BTreeSet<[u8; 32]>,
+    topics: BTreeSet<([u8; 32], [u8; 32])>,
+    posts: BTreeSet<[u8; 32]>,
+}
+
+impl CommunityBlocks {
+    pub fn from_moderation(m: &ModerationState) -> Self {
+        let mut b = Self::default();
+        for t in m.tombstones() {
+            let cr = community_ref(&t.target_id);
+            match t.kind {
+                ActionKind::Takedown => {
+                    b.communities.insert(cr);
+                }
+                ActionKind::TopicTakedown => {
+                    b.topics.insert((cr, topic_ref(&t.item_id)));
+                }
+                ActionKind::PostTakedown => {
+                    b.posts.insert(t.item_id);
+                }
+                _ => {}
+            }
+        }
+        b
+    }
+    pub fn blocks(&self, tlv: &[u8; 96]) -> bool {
+        let cr: [u8; 32] = tlv[..32].try_into().expect("32");
+        let tr: [u8; 32] = tlv[32..64].try_into().expect("32");
+        let pid: [u8; 32] = tlv[64..].try_into().expect("32");
+        self.communities.contains(&cr)
+            || self.topics.contains(&(cr, tr))
+            || self.posts.contains(&pid)
+    }
+}
+
 /// Flag for the app's "community posts are public" notice.
 pub fn posts_are_public() -> bool {
     POSTS_ARE_PUBLIC
@@ -387,8 +483,8 @@ impl CommunityStore {
         if !c.verify() {
             return err("community control signature");
         }
-        if m.is_removed(&c.community_id) {
-            return err("community removed by the team");
+        if m.is_community_tombstoned(&c.community_id) {
+            return err("community removed by the team (ID never reused)");
         }
         if let ControlKind::Create { name } = &c.kind {
             if name.trim().is_empty() || name.len() > MAX_NAME {
@@ -449,7 +545,7 @@ impl CommunityStore {
                 if !com.is_member(&c.actor) || title.trim().is_empty() || title.len() > MAX_NAME {
                     return err("new topic");
                 }
-                if m.is_item_removed(&c.community_id, topic_id) {
+                if m.is_item_tombstoned(&c.community_id, topic_id) {
                     return err("topic removed by the team");
                 }
                 com.topics.entry(*topic_id).or_insert(Topic {
@@ -485,13 +581,15 @@ impl CommunityStore {
         if !p.verify() {
             return err("post signature");
         }
-        if m.is_removed(&p.community_id) || m.is_item_removed(&p.community_id, &p.topic_id) {
+        if m.is_community_tombstoned(&p.community_id)
+            || m.is_item_tombstoned(&p.community_id, &p.topic_id)
+        {
             return err("removed by the team");
         }
         let id = p.id();
-        if m.is_item_removed(&p.community_id, &id)
+        if m.is_item_tombstoned(&p.community_id, &id)
             || p.parent
-                .map(|x| m.is_item_removed(&p.community_id, &x))
+                .map(|x| m.is_item_tombstoned(&p.community_id, &x))
                 .unwrap_or(false)
         {
             return err("removed by the team");
@@ -582,6 +680,10 @@ pub fn seal(w: &Wire, community_id: &[u8; 32], now_ms: u64, ttl_hops: u8) -> Env
     let mut header_aad = Vec::new();
     put_tag_in_aad(&mut header_aad, &community_tag(community_id));
     put_expires_in_aad(&mut header_aad, now_ms.saturating_add(HISTORY_MAX_AGE_MS));
+    if let Wire::Post(p) = w {
+        header_aad.extend_from_slice(&[AAD_TLV_COMMUNITY_POST, 96]);
+        header_aad.extend_from_slice(&post_tlv_value(p));
+    }
     EnvelopeV1 {
         version: ENVELOPE_VERSION_V1,
         suite_id: SUITE_OMCP_2026_A,
@@ -603,5 +705,13 @@ pub fn open(env: &EnvelopeV1, community_id: &[u8; 32]) -> Result<Wire> {
     {
         return err("community envelope");
     }
-    ciborium::from_reader(env.ciphertext.as_slice()).map_err(|_| OmcpError::Sync("community frame"))
+    let w: Wire = ciborium::from_reader(env.ciphertext.as_slice())
+        .map_err(|_| OmcpError::Sync("community frame"))?;
+    if let Wire::Post(p) = &w {
+        // MR31: every post envelope carries a matching 0x5B TLV.
+        if post_tlv(&env.header_aad) != Some(post_tlv_value(p)) {
+            return err("community post TLV");
+        }
+    }
+    Ok(w)
 }

@@ -86,7 +86,16 @@ pub(crate) struct Community {
     pub founder: [u8; 32],
     pub roster: BTreeMap<[u8; 32], String>,
     pub member: OmcpMlsMember,
+    /// Received application messages with their MLS signed bytes (newest
+    /// last), for reports. Erased with the group.
+    pub signed: std::collections::VecDeque<KeptSigned>,
 }
+
+/// (message id, signed bytes, body).
+pub(crate) type KeptSigned = ([u8; 16], omcp_core::mls::SignedAppMessage, Vec<u8>);
+/// Signed messages kept per group (= the evidence file maximum).
+const MAX_KEPT_SIGNED: usize = 500;
+const SIGNED_KEY: &[u8] = b"group-signed-v1";
 
 /// (id, name, founder, roster, MLS state)
 type SavedCommunity = (
@@ -146,6 +155,9 @@ pub struct CommunityInfo {
     pub removed_reason: Option<u8>,
     /// Active lives in this community (ours included).
     pub live_count: u32,
+    /// After a backup restore: "Checking…" until one full digest exchange
+    /// and its team actions are applied (MR30). Nothing is shown or relayed.
+    pub checking: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -176,6 +188,7 @@ impl NodeState {
                         founder,
                         roster: roster.into_iter().collect(),
                         member,
+                        signed: Default::default(),
                     },
                 );
             }
@@ -189,6 +202,13 @@ impl NodeState {
             }
         }
         c.invited = s.invited.into_iter().collect();
+        let kept: Vec<([u8; 32], Vec<KeptSigned>)> =
+            self.db.get_meta(SIGNED_KEY)?.unwrap_or_default();
+        for (id, v) in kept {
+            if let Some(k) = self.mesh.community.list.get_mut(&id) {
+                k.signed = v.into_iter().collect();
+            }
+        }
         Ok(())
     }
 
@@ -213,17 +233,25 @@ impl NodeState {
         }
         s.invited = c.invited.iter().copied().collect();
         self.db.put_meta(STATE_KEY, &s)?;
+        let kept: Vec<([u8; 32], Vec<KeptSigned>)> = c
+            .list
+            .iter()
+            .filter(|(_, k)| !k.signed.is_empty())
+            .map(|(id, k)| (*id, k.signed.iter().cloned().collect()))
+            .collect();
+        self.db.put_meta(SIGNED_KEY, &kept)?;
         Ok(())
     }
 
-    /// Whether a team `GROUP_TAKEDOWN` is in force for this group.
+    /// Whether this group has a team tombstone (taken down, or restored:
+    /// a re-formed group needs a new random ID, MR25).
     fn removed(&self, id: &[u8; 32]) -> bool {
         self.mesh
             .community
             .list
             .get(id)
             .and_then(|c| c.member.moderation_group_ref().ok())
-            .map(|r| self.mesh.moderation.is_group_removed(&r))
+            .map(|r| self.mesh.moderation.is_group_tombstoned(&r))
             .unwrap_or(false)
     }
 
@@ -413,7 +441,7 @@ impl NodeState {
                     .map_err(mls)?;
                 let tomb = member
                     .moderation_group_ref()
-                    .map(|r| self.mesh.moderation.is_group_removed(&r))
+                    .map(|r| self.mesh.moderation.is_group_tombstoned(&r))
                     .unwrap_or(true);
                 if tomb {
                     member.erase_group();
@@ -426,6 +454,7 @@ impl NodeState {
                         founder,
                         roster: roster.into_iter().collect(),
                         member,
+                        signed: Default::default(),
                     },
                 );
                 self.save_communities()?;
@@ -449,6 +478,9 @@ impl NodeState {
 
     fn on_group(&mut self, peer: [u8; 32], id: [u8; 32], ct: Vec<u8>) -> Result<(), FfiError> {
         let h = h32(&[&ct]);
+        if self.mesh.restore_hold.is_some() {
+            return Ok(()); // MR30: not shown or relayed until checked
+        }
         if !self.mesh.community.seen.insert(h) || self.removed(&id) {
             return Ok(()); // duplicate, or community taken down: not applied, not forwarded
         }
@@ -456,9 +488,18 @@ impl NodeState {
             let Some(c) = self.mesh.community.list.get_mut(&id) else {
                 return Ok(());
             };
-            let Ok((plain, _aad, leaf)) = c.member.decrypt_app_message_with_aad(&ct) else {
+            let Ok((plain, _aad, leaf, signed)) = c.member.decrypt_app_message_full(&ct) else {
                 return Ok(());
             };
+            // §23.10.1(2): keep the signed bytes with every application
+            // message so a member can report it later.
+            if let Some(sg) = signed {
+                c.signed
+                    .push_back((h32(&[&ct])[..16].try_into().expect("16"), sg, plain.clone()));
+                while c.signed.len() > MAX_KEPT_SIGNED {
+                    c.signed.pop_front();
+                }
+            }
             let ids = c.member.member_identities().map_err(mls)?;
             let Some(sender) = ids
                 .into_iter()
@@ -476,7 +517,12 @@ impl NodeState {
         if a.community_id != id || !a.host_matches(&sender) {
             return Ok(());
         }
-        if !self.mesh.moderation.live_allowed(&a.stream_id, Some(&id)) {
+        if !self.mesh.moderation.live_allowed(&a.stream_id, Some(&id))
+            || self
+                .mesh
+                .moderation
+                .live_host_blocked(&id, &sender, now_ms())
+        {
             return Ok(());
         }
         // Gossip on, unchanged, to members we know directly.
@@ -578,6 +624,7 @@ impl NodeState {
             founder_is_me: &c.founder == me,
             removed_reason: self.mesh.moderation.removal(id).map(|r| r.reason.code()),
             live_count: mine + others,
+            checking: self.mesh.restore_hold.is_some(),
         }
     }
 }
@@ -636,6 +683,7 @@ impl OmcpNode {
                 founder: me,
                 roster,
                 member,
+                signed: Default::default(),
             },
         );
         st.save_communities()?;
@@ -780,6 +828,10 @@ impl OmcpNode {
             let mut st = self.inner.lock();
             if st.removed(&id) {
                 return Err(invalid("community removed"));
+            }
+            // MR29: 24 h after a Live takedown the host can't restart here.
+            if st.mesh.moderation.live_host_blocked(&id, &me, now_ms()) {
+                return Err(invalid("live blocked for 24 h after a takedown"));
             }
             let mut sid = [0u8; 16];
             let mut nonce = [0u8; 32];

@@ -164,3 +164,34 @@ only appears in builds that ship a team. If a key is compromised, remove it in t
 - **Known limits**: a takedown cannot erase screenshots, exported copies or devices
   that never receive it, and a modified app can ignore it.
 - `team_mod v2 …` (example tool) signs v2 actions offline.
+
+## v0.1.25: real MLS signatures in evidence, tombstones, community budget
+
+- **Evidence uses the sender's real MLS signature.** A patched openmls
+  (`vendor/README.md`) exposes the signed bytes of every received
+  private-group application message; the app keeps them (up to 500 per group,
+  erased with the group) and `report_kept_messages` hands them to
+  `report_export_evidence`. Key 8 `wire_format`: 2 verifiable, 1 shown as
+  unverified, anything else makes the file invalid. Verification (§23.10.1(4)
+  a–e) checks the leaf's own signature, identity = sender, then the
+  `FramedContentTBS` signature with the leaf's key.
+- **Restores carry reason 8**; reason 0 or missing is rejected (MR28).
+- **Tombstones are never deleted**; a restore marks them `restored`. Backups
+  merge tombstones without comparing clocks. Tombstoned groups (either state)
+  refuse Welcomes, commits and messages; a re-formed group needs a new random
+  ID (MR25/MR30). After a backup restore groups show "Checking…" until one full
+  digest exchange (MR30).
+- **Live restart block**: 24 h per (community, host) after a Live takedown; a
+  restore doesn't shorten it (MR29).
+- **TLV 0x5B `community_post`** (community_ref, topic_ref, post_id) on posts;
+  relays drop posts under a takedown (MR31).
+- **Legacy (0.1.23) moderation state** is discarded on upgrade; removed
+  communities stay tombstoned (MR32).
+- **Community traffic budget**: relay class `Community`, own 50 MB store, not
+  counted toward the 500 MB / daily relay budget (§22.4).
+- **Dev moderation key**: `OMCP_DEV_MOD_KEY` (public key) is compiled in only
+  for debug builds (`OMCP_RUST_PROFILE=debug`) and only with
+  `debug_assertions`. Release builds are always keyless.
+- **Not yet**: inviting community members who aren't contacts into a private
+  group — deferred: public delivery would show the team who is invited, which
+  breaks the hard rule; needs a sealed-delivery spec.

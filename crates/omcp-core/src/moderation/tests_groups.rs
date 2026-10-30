@@ -74,7 +74,17 @@ fn group_takedown_and_restore_follow_epochs_and_threshold() {
     let rs = signed(TeamAction::group_restore(r, 3), &team);
     st.apply(&p, &rs, 13).unwrap();
     assert!(!st.is_group_removed(&r));
-    assert!(st.tombstones().is_empty());
+    // MR14: the tombstone stays, marked restored; the old ref stays refused.
+    let ts = st.tombstones();
+    assert_eq!(ts.len(), 1);
+    assert!(ts[0].restored);
+    assert!(st.is_group_tombstoned(&r));
+    // MR28: a restore with reason 0 is rejected on the wire.
+    let mut w = signed(TeamAction::group_restore(r, 9), &team)
+        .encode()
+        .unwrap();
+    w[1 + 32 + 32 + 8] = 0;
+    assert!(TeamAction::decode(&w).is_err());
 }
 
 #[test]
@@ -249,19 +259,30 @@ fn context(gid: &[u8], epoch: u64) -> Vec<u8> {
     tls_vec(&mut b, b"");
     b
 }
-fn leaf(sig_key: &[u8; 32], identity: &[u8; 32]) -> Vec<u8> {
+fn leaf(k: &SigningKey, identity: &[u8; 32]) -> Vec<u8> {
     let mut b = Vec::new();
     tls_vec(&mut b, &[1; 32]);
-    tls_vec(&mut b, sig_key);
+    tls_vec(&mut b, &pk(k));
     b.extend_from_slice(&1u16.to_be_bytes());
     tls_vec(&mut b, identity);
+    for _ in 0..5 {
+        tls_vec(&mut b, b"");
+    }
+    b.push(1); // key_package source
+    b.extend_from_slice(&0u64.to_be_bytes());
+    b.extend_from_slice(&u64::MAX.to_be_bytes());
+    tls_vec(&mut b, b"");
+    let sig = k
+        .sign(&super::evidence::sign_content(b"LeafNodeTBS", &b))
+        .to_bytes();
+    tls_vec(&mut b, &sig);
     b
 }
 fn msg(sender_leaf: &SigningKey, sender_id: [u8; 32], body: &[u8]) -> ReportedMessage {
     let fc = framed(&GID, 5, body);
     let gc = context(&GID, 5);
     let sig = sender_leaf
-        .sign(&framed_content_sign_content(&fc, &gc))
+        .sign(&framed_content_sign_content(2, &fc, &gc))
         .to_bytes();
     ReportedMessage {
         sender_id,
@@ -269,9 +290,10 @@ fn msg(sender_leaf: &SigningKey, sender_id: [u8; 32], body: &[u8]) -> ReportedMe
         group_context_hash: h256(&[&gc]),
         group_context: gc,
         signature: sig.to_vec(),
-        leaf_node: leaf(&pk(sender_leaf), &sender_id),
+        leaf_node: leaf(sender_leaf, &sender_id),
         body: body.to_vec(),
         media: Vec::new(),
+        wire_format: 2,
     }
 }
 
@@ -302,6 +324,23 @@ fn mr11_unchanged_message_verifies_and_one_bit_changes_fail() {
         assert!(!verify_message(&r, &x));
     }
     assert!(!verify_message(&[0; 32], &m)); // wrong group_ref
+                                            // (a) wrong message signature from another key.
+    let mut x = m.clone();
+    x.signature = key().sign(b"other").to_bytes().to_vec();
+    assert!(!verify_message(&r, &x));
+    // (b) LeafNode with a broken own signature.
+    let mut x = m.clone();
+    let n = x.leaf_node.len();
+    x.leaf_node[n - 1] ^= 1;
+    assert!(!verify_message(&r, &x));
+    // (c) credential identity differs from sender_id (re-signed leaf).
+    let mut x = m.clone();
+    x.leaf_node = leaf(&s, &[0x22; 32]);
+    assert!(!verify_message(&r, &x));
+    // wire_format other than 2 (1 = unverified).
+    let mut x = m.clone();
+    x.wire_format = 1;
+    assert!(!verify_message(&r, &x));
 }
 
 fn export(n: usize, rep: &SigningKey, others: &[[u8; 32]]) -> Vec<u8> {
@@ -409,4 +448,78 @@ fn mr12_mr19_evidence_holds_hashes_and_selected_senders_only() {
     .unwrap();
     assert!(with.windows(32).any(|w| w == carol_id));
     assert!(verify(&with).unwrap().reporter_sig_ok);
+}
+
+// ---- end to end: real OpenMLS signatures (vendored openmls patch) ----
+
+#[test]
+fn e2e_real_group_message_exported_by_member_verifies_and_tampering_fails() {
+    let (a_id, b_id, c_id) = ([0xA1u8; 32], [0xB2u8; 32], [0xC3u8; 32]);
+    let mut g = group_with(&[&a_id, &b_id, &c_id]);
+    // Alice's leaf now has source `commit` (she committed the adds), so the
+    // leaf self-signature check needs the group ID and leaf index.
+    let ct = g[0]
+        .encrypt_app_message(b"meet at 9, bring the stuff")
+        .unwrap();
+    let (body, signed) = g[1].decrypt_app_message_signed(&ct).unwrap();
+    let signed = signed.expect("signed bytes kept by the receiver");
+    assert_eq!(signed.wire_format, 2);
+    let gid = g[1].group_id().unwrap();
+    let rm = ReportedMessage::from_signed(&signed, body.clone()).unwrap();
+    assert_eq!(rm.sender_id, a_id);
+    let reporter = key();
+    let file =
+        EvidenceFile::export(&gid, vec![rm.clone()], 7, None, None, vec![], &reporter, 1).unwrap();
+    let v = verify(&file).unwrap();
+    assert!(v.reporter_sig_ok);
+    assert_eq!(v.verified(), 1, "real MLS signature verifies (a)-(e)");
+    // The file names no other member (Carol) and holds no group secret.
+    assert!(!file.windows(32).any(|w| w == c_id));
+    // Tampered body → unverified.
+    let mut bad = rm.clone();
+    bad.body = b"meet at 9, bring the cake".to_vec();
+    let f2 = EvidenceFile::export(&gid, vec![bad], 7, None, None, vec![], &reporter, 1).unwrap();
+    assert_eq!(verify(&f2).unwrap().verified(), 0);
+    // Claiming Carol sent it → unverified.
+    let mut bad = rm.clone();
+    bad.sender_id = c_id;
+    let f3 = EvidenceFile::export(&gid, vec![bad], 7, None, None, vec![], &reporter, 1).unwrap();
+    assert_eq!(verify(&f3).unwrap().verified(), 0);
+    // Real signature, wrong group_ref → unverified.
+    let f4 = EvidenceFile::export(
+        &[9u8; 32],
+        vec![rm.clone()],
+        7,
+        None,
+        None,
+        vec![],
+        &reporter,
+        1,
+    )
+    .unwrap();
+    assert_eq!(verify(&f4).unwrap().verified(), 0);
+    // Carol's own receive keeps identical verifiable bytes.
+    let (_, s2) = g[2].decrypt_app_message_signed(&ct).unwrap();
+    let rm2 = ReportedMessage::from_signed(&s2.unwrap(), body).unwrap();
+    assert!(verify_message(&group_ref(&gid), &rm2));
+}
+
+#[test]
+fn evidence_wire_format_other_than_1_or_2_makes_the_file_invalid() {
+    let rep = key();
+    let s = key();
+    let mut m = msg(&s, [0x11; 32], b"x");
+    m.wire_format = 1;
+    let f = EvidenceFile::export(&GID, vec![m.clone()], 1, None, None, vec![], &rep, 1).unwrap();
+    assert_eq!(verify(&f).unwrap().verified(), 0); // 1 → unverified
+                                                   // Anything else → invalid file: refused at export and at decode.
+    let mut d = EvidenceFile::decode(&f).unwrap();
+    m.wire_format = 3;
+    assert!(EvidenceFile::export(&GID, vec![m.clone()], 1, None, None, vec![], &rep, 1).is_err());
+    // Hand-patch the encoded key 8 (0x08 0x01 → 0x08 0x03) of a valid file.
+    let i = f.windows(2).rposition(|w| w == [0x08, 0x01]).unwrap();
+    let mut x = f.clone();
+    x[i + 1] = 0x03;
+    assert!(verify(&x).is_err());
+    d.messages.clear();
 }

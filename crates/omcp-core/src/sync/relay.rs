@@ -77,7 +77,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use super::budget::{
     auto_storage_cap, InsertOutcome, RelayBudget, RelayClass, RelayStore, StoredEnvelope,
-    DEFAULT_EXPIRY_MS, MAX_EXPIRY_MS,
+    COMMUNITY_RELAY_CAP_BYTES, DEFAULT_EXPIRY_MS, MAX_EXPIRY_MS,
 };
 use super::cuckoo::{CuckooFilter, DigestDelta};
 use super::hello::{digest_id32, HelloTimer, LinkControl, DIGEST_ID_FULL, DIGEST_REFRESH_MS};
@@ -208,6 +208,14 @@ pub struct RelayEngine {
     hello: HelloTimer,
     last_full_ms: u64,
     store: RelayStore,
+    /// Open-community envelopes: own cap, no daily forwarding budget.
+    community_store: RelayStore,
+    /// Registered open-community tags (envelopes on them are Community class).
+    community_tags: BTreeSet<MailboxTag>,
+    /// Takedowns relays apply to `0x5B` post envelopes.
+    community_blocks: crate::community::CommunityBlocks,
+    /// Full digests received from neighbours (post-restore hold, MR30).
+    full_digests: u64,
     items: HashMap<[u8; 16], CarryItem>,
     neighbours: BTreeMap<u64, Neighbour>,
     sent_to: HashMap<[u8; 16], HashSet<Vec<u8>>>,
@@ -298,6 +306,13 @@ impl RelayEngine {
             digest,
             hello: HelloTimer::new(now_ms),
             last_full_ms: now_ms,
+            community_store: RelayStore::new(RelayBudget {
+                storage_bytes: COMMUNITY_RELAY_CAP_BYTES,
+                daily_forward_bytes: None,
+            }),
+            community_tags: BTreeSet::new(),
+            community_blocks: Default::default(),
+            full_digests: 0,
             store: RelayStore::new(cfg.budget),
             items: HashMap::new(),
             neighbours: BTreeMap::new(),
@@ -379,6 +394,32 @@ impl RelayEngine {
         self.news_cap
     }
 
+    /// Open-community envelope: TLV `0x5B` or a registered community tag.
+    pub fn is_community(&self, env: &EnvelopeV1, tags: &[MailboxTag]) -> bool {
+        crate::community::post_tlv(&env.header_aad).is_some()
+            || tags.iter().any(|t| self.community_tags.contains(t))
+    }
+
+    /// Register the open-community tags this node relays (separate budget).
+    pub fn set_community_tags(&mut self, tags: impl IntoIterator<Item = MailboxTag>) {
+        self.community_tags = tags.into_iter().collect();
+    }
+
+    /// Update the community takedowns relays enforce (from team actions).
+    pub fn set_community_blocks(&mut self, b: crate::community::CommunityBlocks) {
+        self.community_blocks = b;
+    }
+
+    /// Number of full digests received so far (§22.7(11)).
+    pub fn full_digests_received(&self) -> u64 {
+        self.full_digests
+    }
+
+    /// Bytes of community traffic held (outside the relay cap).
+    pub fn community_bytes(&self) -> u64 {
+        self.community_store.used()
+    }
+
     /// RL2 news hook: the envelope is news if it carries the news channel
     /// TLV or travels on a registered news tag.
     pub fn is_news(&self, env: &EnvelopeV1, tags: &[MailboxTag]) -> bool {
@@ -387,7 +428,9 @@ impl RelayEngine {
 
     /// RL2 class of an envelope handed over by a neighbour of class `from`.
     fn classify(&self, env: &EnvelopeV1, tags: &[MailboxTag], from: RelayClass) -> RelayClass {
-        if self.is_news(env, tags) {
+        if self.is_community(env, tags) {
+            RelayClass::Community
+        } else if self.is_news(env, tags) {
             RelayClass::News
         } else {
             from
@@ -412,6 +455,22 @@ impl RelayEngine {
     /// Put `item` in the capped store; evicted items are dropped (events).
     /// `false` if the store refused it (RL2: it would be the first victim).
     fn admit(&mut self, item: &CarryItem, now_ms: u64, ev: &mut Vec<RelayEvent>) -> bool {
+        if item.class == RelayClass::Community {
+            return match self
+                .community_store
+                .insert(Self::meta(item, now_ms), now_ms)
+            {
+                InsertOutcome::Rejected => false,
+                InsertOutcome::Stored { evicted } => {
+                    for e in evicted {
+                        self.items.remove(&e);
+                        self.sent_to.remove(&e);
+                        ev.push(RelayEvent::Removed(e));
+                    }
+                    true
+                }
+            };
+        }
         match self.store.insert(Self::meta(item, now_ms), now_ms) {
             InsertOutcome::Rejected => false,
             InsertOutcome::Stored { mut evicted } => {
@@ -430,6 +489,12 @@ impl RelayEngine {
                 }
                 kept
             }
+        }
+    }
+
+    fn take_any(&mut self, id: &[u8; 16]) {
+        if self.store.take(id).is_none() {
+            self.community_store.take(id);
         }
     }
 
@@ -496,7 +561,7 @@ impl RelayEngine {
         match self.items.get(id) {
             Some(it) if it.own => {
                 self.items.remove(id);
-                self.store.take(id);
+                self.take_any(id);
                 self.sent_to.remove(id);
                 vec![RelayEvent::Removed(*id)]
             }
@@ -692,7 +757,7 @@ impl RelayEngine {
             .collect();
         for id in expired {
             if self.items.remove(&id).is_some() {
-                self.store.take(&id);
+                self.take_any(&id);
             }
             self.sent_to.remove(&id);
             ev.push(RelayEvent::Removed(id));
@@ -812,6 +877,7 @@ impl RelayEngine {
                 if let Some(n) = self.neighbours.get_mut(&link) {
                     n.digest = Some(f);
                 }
+                self.full_digests = self.full_digests.saturating_add(1);
                 self.after_digest(link, now_ms, &mut ev);
             }
             FRAME_DIGEST_DELTA if body.first() == Some(&DELTA_MODE_DELTA) => {
@@ -882,7 +948,7 @@ impl RelayEngine {
             .collect();
         for id in hit {
             self.items.remove(&id);
-            self.store.take(&id);
+            self.take_any(&id);
             self.sent_to.remove(&id);
             ev.push(RelayEvent::Removed(id));
         }
@@ -937,6 +1003,13 @@ impl RelayEngine {
             return Ok(());
         }
         let tags = routing.route_tags();
+        if let Some(tlv) = crate::community::post_tlv(&env.header_aad) {
+            if self.community_blocks.blocks(&tlv) {
+                // MR31: post / topic / community under takedown: drop.
+                self.mark_seen(id, expires_at);
+                return Ok(());
+            }
+        }
         let is_news = self.is_news(&env, &tags);
         if is_news && (ack_of.is_some() || news::open_news(&env, now_ms).is_err()) {
             // Not from the RSS ingest path (or a forged ack on a news tag):
@@ -1096,7 +1169,8 @@ impl RelayEngine {
         let Ok(bytes) = env.encode() else {
             return;
         };
-        if !own && self.store.try_forward(bytes.len() as u64, now_ms).is_err() {
+        let community = self.items.get(id).map(|i| i.class) == Some(RelayClass::Community);
+        if !own && !community && self.store.try_forward(bytes.len() as u64, now_ms).is_err() {
             return; // daily forwarding budget spent (§22.4)
         }
         let first = self.sent_to.get(id).is_none_or(|s| s.is_empty());
@@ -1936,5 +2010,54 @@ mod tests {
             now,
         );
         assert_eq!(delivered_ids(&got, 2), vec![good.envelope_id]);
+    }
+
+    #[test]
+    fn community_traffic_has_its_own_budget_and_blocked_posts_are_dropped() {
+        let now = 1_000_000;
+        let mut b = RelayEngine::new(RelayConfig::default(), now, 1);
+        b.set_community_tags([[0x77; 8]]);
+        b.link_up(1, &[1], true, now);
+        let mut c = env(1, [0x22; 8], 8, now - 10);
+        c.header_aad.clear();
+        put_tag_in_aad(&mut c.header_aad, &[0x77; 8]);
+        b.on_frame(1, &data(&c), now).unwrap();
+        assert_eq!(b.item(&c.envelope_id).unwrap().class, RelayClass::Community);
+        assert!(b.community_bytes() > 0);
+        let s = b.stats();
+        assert_eq!(s.storage_used_bytes, 0, "not in the 500 MB store");
+        assert_eq!(s.forwarded_today_bytes, 0);
+        // An envelope with the 0x5B TLV is Community even on an unknown tag.
+        let mut tlv = [0u8; 96];
+        tlv[..32].copy_from_slice(&[0x31; 32]);
+        let mut p = env(2, [0x22; 8], 8, now - 10);
+        p.header_aad
+            .extend_from_slice(&[crate::community::AAD_TLV_COMMUNITY_POST, 96]);
+        p.header_aad.extend_from_slice(&tlv);
+        b.on_frame(1, &data(&p), now).unwrap();
+        assert_eq!(b.item(&p.envelope_id).unwrap().class, RelayClass::Community);
+        const { assert!(COMMUNITY_RELAY_CAP_BYTES < 500_000_000) };
+        // MR31: after a community takedown, relays drop its posts.
+        let k = ed25519_dalek::SigningKey::from_bytes(&[7; 32]);
+        let pol =
+            crate::moderation::TeamPolicy::from_public_keys(&[k.verifying_key().to_bytes()], 1);
+        let mut m = crate::moderation::ModerationState::default();
+        let mut a = crate::moderation::TeamAction::takedown(
+            [0x44; 32],
+            crate::moderation::Reason::Spam,
+            "",
+            1,
+        );
+        a.sign(&k);
+        m.apply(&pol, &a, now).unwrap();
+        b.set_community_blocks(crate::community::CommunityBlocks::from_moderation(&m));
+        let mut q = env(3, [0x22; 8], 8, now - 10);
+        q.header_aad
+            .extend_from_slice(&[crate::community::AAD_TLV_COMMUNITY_POST, 96]);
+        q.header_aad
+            .extend_from_slice(&crate::community::community_ref(&[0x44; 32]));
+        q.header_aad.extend_from_slice(&[0u8; 64]);
+        b.on_frame(1, &data(&q), now).unwrap();
+        assert!(b.item(&q.envelope_id).is_none());
     }
 }

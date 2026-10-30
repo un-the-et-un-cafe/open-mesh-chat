@@ -1,0 +1,249 @@
+diff -ru -x benches -x examples -x tests -x Cargo.lock -x Cargo.toml.orig openmls-orig/Cargo.toml b/Cargo.toml
+--- a/Cargo.toml	2026-10-30 15:20:42.537085146 +0100
++++ b/Cargo.toml	2026-10-30 15:20:42.557085878 +0100
+@@ -116,115 +116,6 @@
+ name = "openmls"
+ path = "src/lib.rs"
+ 
+-[[example]]
+-name = "large-groups"
+-path = "examples/large-groups.rs"
+-
+-[[test]]
+-name = "app_data_update"
+-path = "tests/app_data_update.rs"
+-
+-[[test]]
+-name = "app_ephemeral"
+-path = "tests/app_ephemeral.rs"
+-
+-[[test]]
+-name = "book_code"
+-path = "tests/book_code.rs"
+-
+-[[test]]
+-name = "book_code_app_data"
+-path = "tests/book_code_app_data.rs"
+-
+-[[test]]
+-name = "book_code_discard_commit"
+-path = "tests/book_code_discard_commit.rs"
+-
+-[[test]]
+-name = "book_code_discard_welcome"
+-path = "tests/book_code_discard_welcome.rs"
+-
+-[[test]]
+-name = "book_code_fork_resolution"
+-path = "tests/book_code_fork_resolution.rs"
+-
+-[[test]]
+-name = "book_code_past_epoch"
+-path = "tests/book_code_past_epoch.rs"
+-
+-[[test]]
+-name = "data_next_epoch"
+-path = "tests/data_next_epoch.rs"
+-
+-[[test]]
+-name = "decryption_key_index"
+-path = "tests/decryption_key_index.rs"
+-
+-[[test]]
+-name = "extension_length"
+-path = "tests/extension_length.rs"
+-
+-[[test]]
+-name = "external_commit"
+-path = "tests/external_commit.rs"
+-
+-[[test]]
+-name = "grease"
+-path = "tests/grease.rs"
+-
+-[[test]]
+-name = "interop_scenarios"
+-path = "tests/interop_scenarios.rs"
+-
+-[[test]]
+-name = "join"
+-path = "tests/join.rs"
+-
+-[[test]]
+-name = "managed_api"
+-path = "tests/managed_api.rs"
+-
+-[[test]]
+-name = "mls_group"
+-path = "tests/mls_group.rs"
+-
+-[[test]]
+-name = "nested_extension_stack_overflow"
+-path = "tests/nested_extension_stack_overflow.rs"
+-
+-[[test]]
+-name = "nested_ratchet_tree_recursion"
+-path = "tests/nested_ratchet_tree_recursion.rs"
+-
+-[[test]]
+-name = "opaque_extension"
+-path = "tests/opaque_extension.rs"
+-
+-[[test]]
+-name = "own_messages"
+-path = "tests/own_messages.rs"
+-
+-[[test]]
+-name = "readd"
+-path = "tests/readd.rs"
+-
+-[[test]]
+-name = "store"
+-path = "tests/store.rs"
+-
+-[[test]]
+-name = "treesync_api"
+-path = "tests/treesync_api.rs"
+-
+-[[test]]
+-name = "virtual_clients"
+-path = "tests/virtual_clients.rs"
+-
+-[[bench]]
+-name = "benchmark"
+-path = "benches/benchmark.rs"
+-harness = false
+-
+ [dependencies.backtrace]
+ version = "0.3"
+ optional = true
+diff -ru -x benches -x examples -x tests -x Cargo.lock -x Cargo.toml.orig openmls-orig/src/ciphersuite/signature.rs b/src/ciphersuite/signature.rs
+--- a/src/ciphersuite/signature.rs	2026-10-30 15:20:42.541085292 +0100
++++ b/src/ciphersuite/signature.rs	2026-10-30 15:21:07.453997257 +0100
+@@ -136,6 +136,11 @@
+     pub(super) fn value(&self) -> &[u8] {
+         self.value.as_slice()
+     }
++
++    /// OMCP patch: raw signature bytes.
++    pub(crate) fn raw_bytes(&self) -> &[u8] {
++        self.value.as_slice()
++    }
+ }
+ 
+ impl<T> SignedStruct<T> for Signature {
+diff -ru -x benches -x examples -x tests -x Cargo.lock -x Cargo.toml.orig openmls-orig/src/framing/mls_auth_content.rs b/src/framing/mls_auth_content.rs
+--- a/src/framing/mls_auth_content.rs	2026-10-30 15:20:42.541085292 +0100
++++ b/src/framing/mls_auth_content.rs	2026-10-30 15:20:42.557085878 +0100
+@@ -223,6 +223,12 @@
+         )
+     }
+ 
++    /// OMCP patch: TLS-encoded `FramedContent` as signed.
++    pub(crate) fn framed_content_bytes(&self) -> Result<Vec<u8>, tls_codec::Error> {
++        use tls_codec::Serialize as _;
++        self.content.tls_serialize_detached()
++    }
++
+     /// Get the signature.
+     pub(crate) fn signature(&self) -> &Signature {
+         &self.auth.signature
+diff -ru -x benches -x examples -x tests -x Cargo.lock -x Cargo.toml.orig openmls-orig/src/framing/validation.rs b/src/framing/validation.rs
+--- a/src/framing/validation.rs	2026-10-30 15:20:42.541085292 +0100
++++ b/src/framing/validation.rs	2026-10-30 15:20:42.557085878 +0100
+@@ -401,6 +401,8 @@
+ /// A message that has passed all syntax and semantics checks.
+ #[derive(Debug)]
+ pub struct ProcessedMessage {
++    /// OMCP patch: bytes to re-verify the sender's signature later.
++    signed_content: Option<SignedContentExport>,
+     group_id: GroupId,
+     epoch: GroupEpoch,
+     sender: Sender,
+@@ -420,7 +422,36 @@
+     safe_aad_prefix_len: usize,
+ }
+ 
++/// OMCP patch (vendor/README.md): what a receiver needs to re-check the
++/// sender's signature on an application message later (RFC 9420 §6.1):
++/// `SignWithLabel(leaf.signature_key, "FramedContentTBS",
++/// version || wire_format || framed_content || group_context)`.
++#[derive(Debug, Clone, PartialEq, Eq)]
++pub struct SignedContentExport {
++    /// TLS-encoded `FramedContent`, exactly as signed.
++    pub framed_content: Vec<u8>,
++    /// `wire_format` (2 = PrivateMessage).
++    pub wire_format: u16,
++    /// TLS-encoded `GroupContext` of the message's epoch.
++    pub group_context: Vec<u8>,
++    /// Raw signature bytes.
++    pub signature: Vec<u8>,
++    /// TLS-encoded sender `LeafNode` at that epoch.
++    pub sender_leaf_node: Vec<u8>,
++}
++
+ impl ProcessedMessage {
++    /// OMCP patch: signed bytes of an application message from a member,
++    /// when the message is from the current epoch.
++    pub fn signed_content(&self) -> Option<&SignedContentExport> {
++        self.signed_content.as_ref()
++    }
++
++    pub(crate) fn with_signed_content(mut self, s: Option<SignedContentExport>) -> Self {
++        self.signed_content = s;
++        self
++    }
++
+     /// Create a new `ProcessedMessage`.
+     pub(crate) fn new(
+         group_id: GroupId,
+@@ -432,6 +463,7 @@
+         #[cfg(feature = "virtual-clients-draft")] emulator_sender_leaf_index: Option<LeafNodeIndex>,
+     ) -> Self {
+         Self {
++            signed_content: None,
+             group_id,
+             epoch,
+             sender,
+diff -ru -x benches -x examples -x tests -x Cargo.lock -x Cargo.toml.orig openmls-orig/src/group/mls_group/processing.rs b/src/group/mls_group/processing.rs
+--- a/src/group/mls_group/processing.rs	2026-10-30 15:20:42.541085292 +0100
++++ b/src/group/mls_group/processing.rs	2026-10-30 15:21:07.453997257 +0100
+@@ -927,6 +927,28 @@
+         let sender = content.sender().clone();
+         let authenticated_data = content.authenticated_data().to_owned();
+         let epoch = content.epoch();
++        // OMCP patch: keep the signed bytes of application messages.
++        let signed_content = match (&sender, content.content()) {
++            (Sender::Member(leaf), FramedContentBody::Application(_))
++                if epoch == self.context().epoch() =>
++            {
++                use tls_codec::Serialize as _;
++                (|| {
++                    Some(crate::framing::SignedContentExport {
++                        framed_content: content.framed_content_bytes().ok()?,
++                        wire_format: content.wire_format() as u16,
++                        group_context: self.context().tls_serialize_detached().ok()?,
++                        signature: content.signature().raw_bytes().to_vec(),
++                        sender_leaf_node: self
++                            .public_group()
++                            .leaf(*leaf)?
++                            .tls_serialize_detached()
++                            .ok()?,
++                    })
++                })()
++            }
++            _ => None,
++        };
+ 
+         let content = match content.content() {
+             FramedContentBody::Application(application_message) => {
+@@ -1073,7 +1095,8 @@
+             credential,
+             #[cfg(feature = "virtual-clients-draft")]
+             emulator_sender_leaf_index,
+-        ))
++        )
++        .with_signed_content(signed_content))
+     }
+ 
+     ///  - ValSem240

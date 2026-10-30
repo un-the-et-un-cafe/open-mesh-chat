@@ -722,7 +722,8 @@ Computed per community, and per stream host, from **participant attestations**:
 | `0x56` | `recipient_subtags` | 8·n | §22.7(9) |
 | `0x58` | `outer_expiry` | 4 | §22.8(2) |
 | `0x5A` | `team_mod` | 1 | §23.10.7 |
-| `0x55`, `0x57`, `0x59`, `0x5B`–`0x7F` | unassigned (extension process §16) | — | — |
+| `0x5B` | `community_post` | 96 | §23.10.6 |
+| `0x55`, `0x57`, `0x59`, `0x5C`–`0x7F` | unassigned (extension process §16) | — | — |
 | `0x80`–`0xFF` | experimental / private use | — | — |
 
 
@@ -766,24 +767,27 @@ This section extends §23.9 to private end-to-end encrypted groups, adds reports
 #### 23.10.1 Verifying reported messages with MLS sender signatures
 OMCP adds no extra seal. Report verification uses the signature MLS already puts on every private-group message (OMCP MLS profile, §22.7(5), §22.8(1)).
 
-1. **What is signed.** For an application message from a member, the sender signs `FramedContentTBS = {version, wire_format, FramedContent{group_id, epoch, sender (leaf index), authenticated_data, content_type, application_data}, GroupContext}` with its leaf signature key. The leaf's credential binds that signature key to the sender's OMCP Ed25519 identity key.
+1. **What is signed.** For an application message from a member (MLS `wire_format` 2 = `mls_private_message`, the only form OMCP uses for application messages; 1 = `mls_public_message` is used for handshake messages only), the sender signs `FramedContentTBS = {version, wire_format, FramedContent{group_id, epoch, sender (leaf index), authenticated_data, content_type, application_data}, GroupContext}` with its leaf signature key. The leaf's credential binds that signature key to the sender's OMCP Ed25519 identity key.
 2. **What receivers keep.** A receiving client MUST keep, with each stored message, the bytes needed to re-check the signature: the serialized `FramedContent`, the `GroupContext` of that epoch (stored once per epoch), the signature, and the sender's `LeafNode` for that epoch. They are deleted with the message (including by disappearing timers) and on takedown (§23.10.2).
 3. **No plaintext group metadata (profile rule).** So that evidence holds only hashes and random values: the OMCP `group_id` MUST be 32 random bytes with no meaning, and `GroupContext` extensions MUST NOT carry a group name, description, avatar or any other human-readable metadata; those travel only inside encrypted application messages. `authenticated_data` MUST NOT hold plaintext metadata either. With this rule the GroupContext holds only the random group ID, epoch, tree hash, confirmed transcript hash and capability extensions.
 4. **Verification by the team.** For each reported message in an evidence file, the verifier MUST:
-   a. rebuild `FramedContentTBS` from the submitted `FramedContent` and `GroupContext` and verify the submitted signature with the signature key in the submitted `LeafNode`;
-   b. verify that the `LeafNode` is validly self-signed and that its credential binds that key to the identity key whose BLAKE2b-256 hash is the submitted `sender_id`;
-   c. check that `group_id` and `epoch` agree between `FramedContent` and `GroupContext`, that `BLAKE2b-256(GroupContext)` equals the submitted `group_context_hash`, and that `BLAKE2b-256("OMCP-group-ref-v1" || 0x00 || group_id)` equals the file's `group_ref`;
-   d. check that the submitted `body` equals the `application_data` in the signed `FramedContent`.
-   Only if all four pass is the message marked **verified genuine**. Any failure marks it **unverified**; the team MAY still consider it but MUST record that in the log (§23.10.4).
+   a. **message signature:** rebuild `FramedContentTBS` from the submitted `wire_format`, `FramedContent` and `GroupContext`, and verify the submitted signature with the leaf signature key (`signature_key`) in the submitted `LeafNode`;
+   b. **leaf node signature:** verify the `LeafNode`'s own signature (RFC 9420 §7.2, `LeafNodeTBS`, with that same `signature_key`); for a `leaf_node_source` of `commit` or `update` this needs the group ID and leaf index, which are taken from the `FramedContent`;
+   c. **credential matches sender:** verify that the `LeafNode`'s credential is a valid OMCP credential binding `signature_key` to an Ed25519 identity key, and that BLAKE2b-256 of that identity key equals the submitted `sender_id`;
+   d. check that `group_id` and `epoch` agree between `FramedContent` and `GroupContext`, that `BLAKE2b-256(GroupContext)` equals the submitted `group_context_hash`, and that `BLAKE2b-256("OMCP-group-ref-v1" || 0x00 || group_id)` equals the file's `group_ref`; and that `wire_format` is an allowed value (§23.10.3(3));
+   e. check that the submitted `body` equals the `application_data` in the signed `FramedContent`.
+   Only if all checks (a)–(e) pass is the message marked **verified genuine**. Any failure marks it **unverified**; the team MAY still consider it but MUST record that in the log (§23.10.4).
 5. **Scope (stated plainly).** A verified message proves who sent it and that it was not altered. It does **not** prove the group's membership, or anything about the group beyond what is signed (the random group ID, the epoch, and the tree and transcript hashes). It does not prove that anyone received the message, or when it was sent (MLS does not sign the sender's clock). Reported messages lose deniability: anyone holding the evidence can prove who sent them. This applies to every message, old or new, for which a member still has the stored signature data. Users MUST be told this in the app (Settings > Privacy and the group info screen): "Members can report a message to the Hopla team and prove you sent it."
 
 #### 23.10.2 Private-group takedown and restore
 0. **1:1 chats are never affected.** A 1:1 chat (a 2-member MLS group created as a 1:1 chat, §22.7(5)) is never a target. Apps MUST NOT apply a `GROUP_TAKEDOWN` or `GROUP_RESTORE` to a 1:1 chat, even if its `group_ref` matches, and do not offer evidence export there (§23.10.3(2)). This keeps §23.9(4), MR10 and REQUIREMENTS TM4 true: no team action ever touches a 1:1 chat, and no team action ever reads any private chat.
 1. **Actions.** Two new team actions use the §23.9 signed-action format with new `kind` values: `3 GROUP_TAKEDOWN` and `4 GROUP_RESTORE`. They apply only to private groups that are not 1:1 chats. The 32-byte target is `group_ref` (§23.10 terms), so the action does not reveal the raw MLS group ID to relays. Fields: `GROUP_TAKEDOWN{group_ref, reason_code, evidence_hash, note, epoch, sigs[]}`, `GROUP_RESTORE{group_ref, epoch, sigs[]}` (§23.10.7 gives the byte layout).
 2. **Spread.** Gossiped exactly like a community TAKEDOWN (§23.9(2)): well-known team-moderation tag, `PRIORITY`, outer expiry 30 d, re-sent while in force. Relays cannot tell which group is meant without knowing its `group_id`.
-3. **Effect on compliant members' apps (full erasure).** A member's app computes `group_ref` for each of its groups. On a valid `GROUP_TAKEDOWN` with a higher moderation epoch than the last applied one, it MUST, within the same run of the app: (a) delete every message, reaction, draft and media file of the group, including cached thumbnails and search-index entries; (b) delete the group's MLS state: ratchet tree, epoch secrets, exporter secrets, pending proposals, and its KeyPackages and mailbox/sub-tags; (c) delete queued and relayed envelopes for the group's tags; (d) record a **tombstone** `{group_ref, takedown epoch, reason_code}` and refuse any future MLS Welcome, commit or envelope whose group ID hashes to that `group_ref`; and (e) show a single notice "A group was removed by the Hopla team" with the reason, without the group's name or content. It MUST NOT send anything about the group to the team. Deletion means the data is unrecoverable by the app: rows deleted and the database vacuumed, files removed, and keys erased from the keystore.
-4. **Backups.** The group's portion of every encrypted chat backup MUST be erased too. The next backup after a takedown MUST NOT contain the group, and MUST contain the tombstone list. On restore, the app MUST first apply all tombstones it knows (from the device, from the backup being restored, and from team actions received since) and drop every group whose `group_ref` matches, before anything is written to the chat store. An app restoring a backup older than a takedown therefore does not bring the group back, provided the takedown or tombstone is known to it; until it has synced team actions from the mesh after a restore (at least one full digest exchange, §22.7(11)), it MUST NOT show restored groups. Tombstones are kept for as long as the takedown is in force and MUST be kept for at least 2 years after it.
-4a. **Restore.** Content is erased, so a valid `GROUP_RESTORE` with a higher epoch can never bring content back. It only lifts the ban on the `group_ref`: the tombstone is removed and members may re-form the group or rejoin it (a new MLS group or a fresh Welcome), starting empty. Members are told "This group is no longer blocked; earlier messages were erased and cannot be restored".
+3. **Effect on compliant members' apps (full erasure).** A member's app computes `group_ref` for each of its groups. On a valid `GROUP_TAKEDOWN` with a higher moderation epoch than the last applied one, it MUST, within the same run of the app: (a) delete every message, reaction, draft and media file of the group, including cached thumbnails and search-index entries; (b) delete the group's MLS state: ratchet tree, epoch secrets, exporter secrets, pending proposals, and its KeyPackages and mailbox/sub-tags; (c) delete queued and relayed envelopes for the group's tags; (d) record a **tombstone** (erase record) `{group_ref, takedown_epoch, reason_code, erased_at_ms, state = banned}` (`erased_at_ms` is informational only and MUST NOT be used for any decision) and refuse, in either state, any MLS Welcome, commit or envelope whose group ID hashes to that `group_ref`; and (e) show a single notice "A group was removed by the Hopla team" with the reason, without the group's name or content. It MUST NOT send anything about the group to the team. Deletion means the data is unrecoverable by the app: rows deleted and the database vacuumed, files removed, and keys erased from the keystore.
+4. **Backups.** The group's portion of every encrypted chat backup MUST be erased too. The next backup after a takedown MUST NOT contain the group, and MUST contain the tombstone list. On restore, the app MUST first apply all tombstones it knows (from the device, from the backup being restored, and from team actions received since), before anything is written to the chat store: it drops everything belonging to any tombstoned `group_ref`, whether the tombstone's state is `banned` or `restored`, with no time comparison. An app restoring a backup older than a takedown therefore never brings erased content back, whether or not the ban has since been lifted. A group re-formed after a restore has a new `group_ref` (§23.10.2(4a)), so it is not affected.
+   **Post-restore hold (normative).** After restoring a backup, the app MUST NOT show any restored private group, and MUST NOT send or relay for it, until it has completed at least one full digest exchange (§22.7(11)) with at least one mesh neighbour or gateway and applied every team action received in it. Until then such groups are listed only as "Checking…".
+   **Tombstone lifetime.** Tombstones, `banned` or `restored`, MUST be kept for at least 2 years after the takedown, and for as long as the takedown is in force if that is longer. A RESTORE never deletes a tombstone.
+4a. **Restore.** Content is erased, so a valid `GROUP_RESTORE` with a higher epoch can never bring content back. It only lifts the ban: the tombstone is **kept** and its `state` set to `restored`, so old backups still cannot bring erased content back (§23.10.2(4)). The old `group_ref` is no longer flagged as removed in the UI, and apps MUST NOT block members from forming a replacement group. A re-formed group MUST be a new MLS group with a new, random 32-byte group ID (and therefore a new `group_ref`); the old group ID is never reused, and messages for it stay refused. It starts empty. Members are told "This group is no longer blocked; earlier messages were erased and cannot be restored".
 5. **Limits (stated plainly).** A takedown cannot erase screenshots, exported files (including evidence files), copies made by a modified app, or devices that never receive the action; a modified app can ignore it entirely. Evidence a reporter already submitted stays in the team's private store under its retention period (§23.10.4(4)). A takedown only reaches members whose apps are online on the mesh or gateway. It is a measure for compliant apps, not a guarantee of erasure.
 
 #### 23.10.3 Reports from outside parties and the evidence file (REQUIRED before v1.0)
@@ -811,7 +815,11 @@ ReportedMessage = {
   4: bstr,                    ; sender MLS signature
   5: bstr,                    ; sender LeafNode (TLS-encoded, credential + signature key)
   6: bstr,                    ; body: the application_data as the app encodes it (must equal the signed one)
-  ? 7: [* MediaItem]          ; optional attached media the body references
+  ? 7: [* MediaItem],         ; optional attached media the body references
+  8: uint .size 2             ; wire_format (uint16, MLS WireFormat); default and only allowed value for
+                              ; reported application messages: 2 = mls_private_message.
+                              ; 1 = mls_public_message is reserved (not used by OMCP for application
+                              ; messages; verifiers MUST mark it unverified); any other value: file invalid
 }
 MediaItem = { 0: tstr, 1: bstr, 2: bstr .size 32 } ; mime, bytes, BLAKE2b-256 of bytes as referenced in body
 ReporterContact = { ? 0: tstr, ? 1: tstr, ? 2: tstr } ; name or organisation, email, phone; all optional
@@ -825,7 +833,7 @@ MemberDisclosure = { 0: bstr .size 32, ? 1: tstr }    ; sender_id, optional labe
 #### 23.10.4 Takedown log (REQUIRED before v1.0)
 1. **Every decision is logged**: each TAKEDOWN, RESTORE, GROUP_TAKEDOWN, GROUP_RESTORE and community item action (§23.10.6), and each report that was rejected.
 2. **Public log entry** (extends §23.9(5)): `{decision_id, action kind, target (community_id, item id, or group_ref), reason_category, evidence_hash (32 B, or all-zero if the decision was not based on a report), verified (number of messages verified genuine / total), date, team keys that signed}`. It holds only the fingerprint of the evidence, never the evidence. For private groups the target is `group_ref`, never the group name or members.
-3. **Reason categories** (fixed list; same codes as `reason_code` in §23.9(7), extended): `1` hate speech or incitement, `2` illegal content (other), `3` terrorism or violent extremism, `4` coordinated harassment, `5` spam or scam, `6` child sexual abuse material, `7` threats of violence, `8` restore after review or appeal, `9` other (note required).
+3. **Reason categories** (fixed list; same codes as `reason_code` in §23.9(7), extended): `1` hate speech or incitement, `2` illegal content (other), `3` terrorism or violent extremism, `4` coordinated harassment, `5` spam or scam, `6` child sexual abuse material, `7` threats of violence, `8` restore after review or appeal (the only code allowed on restore actions, kinds 2, 4 and 8; restores MUST carry 8, never 0), `9` other (note required).
 4. **Private evidence store.** The evidence file itself is kept in the team's private, encrypted store, access-logged and limited to team members. Default retention: **90 days** from the decision, unless the law requires longer or an authority has asked to preserve it. Then it MUST be deleted; the public hash stays.
 5. **Never republished.** Evidence MUST never be republished, attached to the log, gossiped over the mesh, or shared beyond what the law requires, because it may itself be illegal material. Child sexual abuse material is handled only as the law of the team's jurisdiction requires (for example reporting to the competent body) and never stored longer than needed for that.
 6. **Checkable.** Anyone holding an evidence file (for example the reporter) can hash it and find the matching log entry.
@@ -844,11 +852,23 @@ Communities are open and not end-to-end encrypted (§20.1, decided 2026-10-29), 
 | 2 | `RESTORE` (community) | community_id, zero | §23.9(6) |
 | 5 | `POST_TAKEDOWN` | community_id, post_id | the post and its media and replies are deleted and replaced by "Removed by the Hopla team" with the reason; relays drop it |
 | 6 | `TOPIC_TAKEDOWN` | community_id, topic_id | the topic is hidden and its posts deleted; new posts to it are refused |
-| 7 | `LIVE_TAKEDOWN` | community_id, stream_id | the stream ends for all viewers, new viewers are refused, the host cannot restart Live in that community for 24 h |
+| 7 | `LIVE_TAKEDOWN` | community_id, stream_id | the stream ends for all viewers and new viewers are refused; **Live restart block (normative):** compliant clients MUST refuse to start, announce or join any new Live by the same host in that community for 24 h after the takedown is applied (MR29); an `ITEM_RESTORE` of the stream does not shorten the block |
 | 8 | `ITEM_RESTORE` | community_id, item_id of the earlier action | lifts the ban from kind 5, 6 or 7 on that item; erased content is not brought back |
-**Erasure (also applies to kind 1).** Every takedown of a community, topic, post or Live stream is a full erasure with the same rules as §23.10.2(3)–(4): content, media, cached copies, the community's or topic's keys and state, and its portion of chat backups are deleted; a tombstone keyed by `(community_id, item_id)` is recorded, kept in backups, and applied before any backup restore. `RESTORE` (kind 2) and `ITEM_RESTORE` (kind 8) only lift the ban, so the community, topic or stream can be used again; they never bring erased content back. (This replaces the "if content is still held" wording and clarifies §23.9(4) and (6).)
+**Erasure (also applies to kind 1).** Every takedown of a community, topic, post or Live stream is a full erasure with the same rules as §23.10.2(3)–(4): content, media, cached copies, the community's or topic's keys and state, and its portion of chat backups are deleted; a tombstone keyed by `(community_id, item_id)` is recorded, kept in backups, applied before any backup restore, and kept for at least 2 years. `RESTORE` (kind 2) and `ITEM_RESTORE` (kind 8) only lift the ban: the tombstone stays, marked `restored`, and its target ID is never reused: a lifted community, topic or Live is re-created under a new random ID, empty, and the old ID is no longer flagged in the UI. On backup restore, everything belonging to a tombstoned `(community_id, item_id)` is dropped whatever its state, with no time comparison. Any `erased_at_ms` in a community tombstone is informational only. (This replaces the "if content is still held" wording and clarifies §23.9(4) and (6).)
+
+**Compatibility note (pre-v1.0).** App 0.1.23 used kinds `3`/`4` for Live takedown/restore. In this spec Live moved to kinds `7`/`8`, and `3`/`4` are group actions, so team-action state saved by 0.1.23 will not load. This is acceptable before v1.0: on upgrade, apps MUST discard all stored team-action state (but keep tombstones and erased-state flags, so nothing erased reappears) and re-sync team actions from the mesh, which re-sends them while they are in force (§23.9(2)). After v1.0, kind values MUST NOT be reassigned. Likewise, 0.1.23 sent `reason_code` 0 on a v1 `RESTORE` (kind 2); from this version restores MUST carry 8, and clients MUST reject 0.
 
 `post_id`, `topic_id` and `stream_id` are the 32-byte IDs the community already uses (§20); if an ID is shorter it is left-padded with zeros. Community limits that clients enforce and that bound what a takedown must remove: **about 5,000 members per community** (joins beyond 5,000 are refused), **4 KB per post** (UTF-8 text plus inline metadata; media are separate chunks, §7), and history kept **30 days or up to 50 MB per community, whichever is reached first** (oldest posts evicted first).
+
+**Post envelopes (normative).** Every community post envelope carries `header_aad` TLV `0x5B` `community_post`, len 96:
+```
+CommunityPostTLV {
+  community_ref: [32]u8  // BLAKE2b-256("OMCP-community-ref-v1" || 0x00 || community_id)
+  topic_ref:     [32]u8  // BLAKE2b-256("OMCP-topic-ref-v1" || 0x00 || topic_id); all-zero for the announcement channel
+  post_id:       [32]u8  // the post's 32-byte ID
+}
+```
+Relays and clients use it to drop envelopes covered by a post, topic or community takedown without parsing the body. Communities are open, so the refs hide nothing from members; they only keep raw IDs out of the routing header.
 
 Community history (30 days or 50 MB per community) is budgeted separately and does not count toward the relay budget in §22.4.
 
@@ -861,7 +881,7 @@ TeamActionV2 {
   target_id:     [32]u8  // group_ref for 3/4, community_id for 5–8
   item_id:       [32]u8  // zero for 3/4; post_id/topic_id/stream_id for 5–8
   epoch:         u64     // big-endian; per (target_id, item_id) moderation epoch, highest wins
-  reason_code:   u8      // §23.10.4(3); 0 for restores
+  reason_code:   u8      // §23.10.4(3); MUST be 8 (restore after review) for kinds 4 and 8
   evidence_hash: [32]u8  // §23.10.3(3); all-zero if none
   note_len:      u16     // big-endian, ≤ 512
   note:          [..]    // UTF-8
@@ -879,14 +899,15 @@ The real moderator key only arrives in v1.0. Until then: **debug builds** ship a
 #### 23.10.9 Registry additions
 - Team action `kind`: `3` GROUP_TAKEDOWN, `4` GROUP_RESTORE, `5` POST_TAKEDOWN, `6` TOPIC_TAKEDOWN, `7` LIVE_TAKEDOWN, `8` ITEM_RESTORE; `9`–`255` unassigned (§16).
 - `header_aad` TLV `0x5A` `team_mod` (len 1) — added to §21.8.
+- `header_aad` TLV `0x5B` `community_post` (len 96) — added to §21.8.
 - Media type `application/vnd.omcp.evidence+cbor`, file extension `.omcp-evidence`.
-- Domain strings: `"OMCP-group-ref-v1"`, `"OMCP-team-mod-v2"`, `"OMCP-evidence-v1"`.
+- Domain strings: `"OMCP-group-ref-v1"`, `"OMCP-community-ref-v1"`, `"OMCP-topic-ref-v1"`, `"OMCP-team-mod-v2"`, `"OMCP-evidence-v1"`.
 
 #### 23.10.10 Acceptance tests
-- MR11: A reported message whose framed content, body, sender, group ID or epoch is changed by one bit fails verification; an unchanged one passes all four steps of §23.10.1(4).
+- MR11: A reported message whose framed content, body, sender, group ID or epoch is changed by one bit fails verification; an unchanged one passes all checks of §23.10.1(4). Separate negative cases MUST each fail: (a) a wrong message signature, (b) a LeafNode with a broken own signature, (c) a credential whose identity hash differs from `sender_id`, and a `wire_format` other than 2.
 - MR12: Verifying one reported message never requires, and the evidence file never contains, any other message, group secret, ratchet tree, or plaintext group name or metadata (only `group_ref`, the random group ID and context hashes).
 - MR13: *Withdrawn* (was a franking test; franking was dropped).
-- MR14: A GROUP_TAKEDOWN whose `group_ref` matches a 1:1 chat leaves that chat untouched. A valid GROUP_TAKEDOWN erases the group on all compliant members' apps within 10 min of gossip; a valid later GROUP_RESTORE lets members re-form or rejoin it, empty, and never brings content back.
+- MR14: A GROUP_TAKEDOWN whose `group_ref` matches a 1:1 chat leaves that chat untouched. A valid GROUP_TAKEDOWN erases the group on all compliant members' apps within 10 min of gossip; a valid later GROUP_RESTORE lets members re-form or rejoin it, empty, keeps the tombstone (state `restored`), and never brings content back, including from a backup made before the takedown. The re-formed group has a new random group ID and `group_ref`; envelopes, Welcomes and commits for the old group ID are still refused.
 - MR15: A GROUP_* action with fewer than `k` signatures, a non-whitelisted key, or an epoch not higher than the last applied is ignored.
 - MR16 (hard rule): A moderator key cannot open group keys: given every team key, a test harness cannot decrypt any private-group message or derive any epoch secret.
 - MR17 (hard rule): A moderator key cannot add itself as a member: Add proposals, KeyPackages and Welcomes carrying a whitelisted identity are rejected by every compliant client.
@@ -897,9 +918,14 @@ The real moderator key only arrives in v1.0. Until then: **debug builds** ship a
 - MR22: POST_, TOPIC_ and LIVE_TAKEDOWN erase only the named item on compliant clients within 10 min; ITEM_RESTORE lifts the ban but brings back no erased content.
 - MR23: Clients refuse a community's 5,001st member, posts over 4 KB, and evict history older than 30 days or beyond 50 MB.
 - MR24: Release builds before v1.0 ignore all team actions; debug builds enforce actions signed by the dev key.
-- MR25 (erasure): After a GROUP_TAKEDOWN or community/item takedown, a forensic scan of the app's storage (database including free pages, files, caches, search index, keystore) finds nothing from the target; a fresh backup contains nothing from it and contains its tombstone; restoring a backup made before the takedown, on a clean device, does not resurrect it (the group or item never appears, and its MLS state is not reloaded).
+- MR25 (erasure): After a GROUP_TAKEDOWN or community/item takedown, a forensic scan of the app's storage (database including free pages, files, caches, search index, keystore) finds nothing from the target; a fresh backup contains nothing from it and contains its tombstone; restoring a backup made before the takedown, on a clean device, does not resurrect it (the group or item never appears, and its MLS state is not reloaded). This holds for both tombstone states (`banned` and `restored`) and for any device clock setting: the test MUST also pass with the device clock set years ahead or behind.
 - MR26: The intake operator stores reports only encrypted at rest with a locally held key (operational, outside the protocol; no protocol team encryption key exists), and no plaintext copy is kept beyond review.
 - MR27: The community join screen and post composer show the "posts are public" note (§20.1), and private groups and 1:1 chats are marked end-to-end encrypted.
+- MR28: Every restore action (kinds 2, 4, 8) carries `reason_code` 8; a restore with any other code is rejected.
+- MR29: After a LIVE_TAKEDOWN, compliant clients refuse a new Live by the same host in that community for 24 h, and allow it after.
+- MR30: After restoring a backup, no private group is shown or relayed until one full digest exchange has completed and its team actions are applied; content of a tombstoned `group_ref` is dropped in both states, while a re-formed group under a new group ID is restored normally.
+- MR31: Every community post envelope carries a valid `0x5B` TLV; relays drop envelopes whose post, topic or community is under takedown.
+- MR32: Upgrading from 0.1.23 discards old team-action state, keeps tombstones, and re-syncs actions from the mesh; no erased content reappears.
 
 ### 23.8 Clarifications (v0.2.1)
 1. **Hash matching scope and governance.**

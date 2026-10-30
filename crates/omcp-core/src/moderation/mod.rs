@@ -68,6 +68,8 @@ pub mod evidence;
 mod tests;
 #[cfg(test)]
 mod tests_groups;
+#[cfg(test)]
+mod tests_v025;
 
 const DOMAIN_V1: &[u8] = b"OMCP-team-mod-v1\x00";
 const DOMAIN_V2: &[u8] = b"OMCP-team-mod-v2\x00";
@@ -278,7 +280,14 @@ impl TeamAction {
         )
     }
     pub fn restore(community_id: [u8; 32], epoch: u64) -> Self {
-        Self::new(ActionKind::Restore, community_id, ZERO, None, "", epoch)
+        Self::new(
+            ActionKind::Restore,
+            community_id,
+            ZERO,
+            Some(Reason::RestoreAfterReview),
+            "",
+            epoch,
+        )
     }
     pub fn group_takedown(
         group_ref: [u8; 32],
@@ -299,7 +308,14 @@ impl TeamAction {
         a
     }
     pub fn group_restore(group_ref: [u8; 32], epoch: u64) -> Self {
-        Self::new(ActionKind::GroupRestore, group_ref, ZERO, None, "", epoch)
+        Self::new(
+            ActionKind::GroupRestore,
+            group_ref,
+            ZERO,
+            Some(Reason::RestoreAfterReview),
+            "",
+            epoch,
+        )
     }
     pub fn post_takedown(
         community_id: [u8; 32],
@@ -356,7 +372,7 @@ impl TeamAction {
             ActionKind::ItemRestore,
             community_id,
             item_id,
-            None,
+            Some(Reason::RestoreAfterReview),
             "",
             epoch,
         )
@@ -419,7 +435,9 @@ impl TeamAction {
             (true, Some(Reason::Other)) if self.note.trim().is_empty() => {
                 err("reason 9 (other) needs a note")
             }
-            (false, Some(_)) => err("restore carries no reason"),
+            // MR28: restores carry reason 8, never 0.
+            (false, Some(Reason::RestoreAfterReview)) => Ok(()),
+            (false, _) => err("restore must carry reason 8"),
             _ => Ok(()),
         }
     }
@@ -461,9 +479,12 @@ impl TeamAction {
         let epoch = u64::from_be_bytes(r.take(8)?.try_into().expect("8"));
         let rc = r.u8()?;
         let reason = match (kind.is_takedown(), rc) {
-            (false, 0) => None,
-            (true, c) => Some(Reason::from_code(c).ok_or(OmcpError::Sync("unknown reason code"))?),
-            _ => return err("restore carries no reason"),
+            (false, 8) => Some(Reason::RestoreAfterReview),
+            (true, c) if c != 8 => {
+                Some(Reason::from_code(c).ok_or(OmcpError::Sync("unknown reason code"))?)
+            }
+            (true, _) => return err("reason 8 is for restores"),
+            _ => return err("restore must carry reason 8"),
         };
         let evidence_hash: [u8; 32] = if v2 {
             r.take(32)?.try_into().expect("32")
@@ -678,6 +699,10 @@ fn mod_key(a: &TeamAction) -> ModKey {
 /// before any restore.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Tombstone {
+    /// `false` = banned, `true` = restored (ban lifted; content stays erased
+    /// and the ID is never reused).
+    #[serde(default)]
+    pub restored: bool,
     pub kind: ActionKind,
     pub target_id: [u8; 32],
     pub item_id: [u8; 32],
@@ -688,6 +713,12 @@ pub struct Tombstone {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct ItemMod {
+    /// Set once any takedown was applied; never cleared (§23.10.2(4)).
+    #[serde(default)]
+    tombstoned: bool,
+    /// Kind of the takedown behind the tombstone.
+    #[serde(default = "default_kind")]
+    takedown_kind: ActionKind,
     kind: ActionKind,
     epoch: u64,
     removed: bool,
@@ -696,6 +727,13 @@ struct ItemMod {
     applied_ms: u64,
 }
 
+fn default_kind() -> ActionKind {
+    ActionKind::Takedown
+}
+
+/// Live restart block after a LIVE_TAKEDOWN (§23.10.6, MR29).
+pub const LIVE_RESTART_BLOCK_MS: u64 = 24 * 60 * 60 * 1000;
+
 /// Per-device moderation state (serde; the FFI keeps it in the encrypted store).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModerationState {
@@ -703,6 +741,9 @@ pub struct ModerationState {
     log: Vec<LogEntry>,
     /// Accepted actions as wire bytes, to re-gossip while in force.
     wire: BTreeMap<ModKey, Vec<u8>>,
+    /// (community_id, host key) → when a LIVE_TAKEDOWN blocked that host.
+    #[serde(default)]
+    live_blocks: BTreeMap<([u8; 32], [u8; 32]), u64>,
 }
 
 /// What a client shows for a removed item (§23.9(4)).
@@ -730,9 +771,20 @@ impl ModerationState {
             }
         }
         let reason_code = a.reason.map(Reason::code).unwrap_or(0);
+        let prev = self
+            .items
+            .get(&key)
+            .map(|c| (c.tombstoned, c.takedown_kind));
+        let (tombstoned, takedown_kind) = if a.kind.is_takedown() {
+            (true, a.kind)
+        } else {
+            prev.unwrap_or((false, a.kind))
+        };
         self.items.insert(
             key,
             ItemMod {
+                tombstoned,
+                takedown_kind,
                 kind: a.kind,
                 epoch: a.epoch,
                 removed: a.kind.is_takedown(),
@@ -841,9 +893,10 @@ impl ModerationState {
     pub fn tombstones(&self) -> Vec<Tombstone> {
         self.items
             .iter()
-            .filter(|(_, c)| c.removed)
+            .filter(|(_, c)| c.tombstoned || c.removed)
             .map(|((_, t, i), c)| Tombstone {
-                kind: c.kind,
+                restored: !c.removed,
+                kind: c.takedown_kind,
                 target_id: *t,
                 item_id: *i,
                 epoch: c.epoch,
@@ -853,39 +906,107 @@ impl ModerationState {
             .collect()
     }
 
-    /// Merge tombstones from a backup being restored (highest epoch wins;
-    /// a newer restore known on this device is kept).
+    /// Whether a tombstone (banned or restored) exists for this key: its
+    /// content is dropped and its ID never reused (§23.10.2(4a), §23.10.6).
+    fn tombstoned_at(&self, key: &ModKey) -> bool {
+        self.items
+            .get(key)
+            .map(|c| c.tombstoned || c.removed)
+            .unwrap_or(false)
+    }
+
+    pub fn is_community_tombstoned(&self, community_id: &[u8; 32]) -> bool {
+        self.tombstoned_at(&(SPACE_COMMUNITY, *community_id, ZERO))
+    }
+
+    pub fn is_item_tombstoned(&self, community_id: &[u8; 32], item_id: &[u8; 32]) -> bool {
+        self.tombstoned_at(&(SPACE_COMMUNITY, *community_id, *item_id))
+    }
+
+    /// Any state: refuse messages, Welcomes and commits for this group_ref.
+    pub fn is_group_tombstoned(&self, group_ref: &[u8; 32]) -> bool {
+        self.tombstoned_at(&(SPACE_GROUP, *group_ref, ZERO))
+    }
+
+    /// Merge tombstones (from a backup or a legacy upgrade). Tombstones are
+    /// never lost; a higher epoch also adopts its state. No clock comparison.
     pub fn merge_tombstones(&mut self, ts: &[Tombstone]) {
         for t in ts {
-            if !t.kind.is_takedown() {
-                continue;
-            }
             let space = if t.kind.is_group() {
                 SPACE_GROUP
             } else {
                 SPACE_COMMUNITY
             };
             let key = (space, t.target_id, t.item_id);
-            if self
-                .items
-                .get(&key)
-                .map(|c| c.epoch >= t.epoch)
-                .unwrap_or(false)
-            {
-                continue;
+            match self.items.get_mut(&key) {
+                Some(c) if c.epoch >= t.epoch => {
+                    c.tombstoned = true;
+                }
+                _ => {
+                    self.items.insert(
+                        key,
+                        ItemMod {
+                            tombstoned: true,
+                            takedown_kind: t.kind,
+                            kind: t.kind,
+                            epoch: t.epoch,
+                            removed: !t.restored,
+                            reason_code: t.reason_code,
+                            note: String::new(),
+                            applied_ms: t.applied_ms,
+                        },
+                    );
+                }
             }
-            self.items.insert(
-                key,
-                ItemMod {
-                    kind: t.kind,
-                    epoch: t.epoch,
-                    removed: true,
-                    reason_code: t.reason_code,
-                    note: String::new(),
-                    applied_ms: t.applied_ms,
-                },
-            );
         }
+    }
+
+    /// MR29: block a host from starting Live in a community for 24 h after a
+    /// LIVE_TAKEDOWN. An ITEM_RESTORE does not shorten it.
+    pub fn block_live_host(&mut self, community_id: [u8; 32], host: [u8; 32], now_ms: u64) {
+        self.live_blocks.insert((community_id, host), now_ms);
+    }
+
+    /// `now < blocked_at` (clock moved back) still counts as blocked.
+    pub fn live_host_blocked(&self, community_id: &[u8; 32], host: &[u8; 32], now_ms: u64) -> bool {
+        self.live_blocks
+            .get(&(*community_id, *host))
+            .map(|at| now_ms.saturating_sub(*at) < LIVE_RESTART_BLOCK_MS)
+            .unwrap_or(false)
+    }
+
+    /// MR32: upgrade from app 0.1.23 state. All old team-action state is
+    /// discarded (it re-syncs from the mesh); community tombstones are kept
+    /// so nothing erased reappears.
+    pub fn from_legacy_v1(bytes: &[u8]) -> Option<Self> {
+        #[derive(Deserialize)]
+        struct Old {
+            epoch: u64,
+            removed: bool,
+            reason_code: u8,
+        }
+        #[derive(Deserialize)]
+        struct Legacy {
+            communities: BTreeMap<[u8; 32], Old>,
+        }
+        let l: Legacy = ciborium::from_reader(bytes).ok()?;
+        let ts: Vec<Tombstone> = l
+            .communities
+            .into_iter()
+            .filter(|(_, o)| o.removed)
+            .map(|(id, o)| Tombstone {
+                restored: false,
+                kind: ActionKind::Takedown,
+                target_id: id,
+                item_id: ZERO,
+                epoch: o.epoch,
+                reason_code: o.reason_code,
+                applied_ms: 0,
+            })
+            .collect();
+        let mut st = Self::default();
+        st.merge_tombstones(&ts);
+        Some(st)
     }
 
     /// Transparency log, newest first.

@@ -31,6 +31,21 @@ pub const MESH_MAX_PAST_EPOCHS: usize = 4;
 /// Application-message padding (relays only see bucketed sizes, §22.3).
 pub const MESH_PADDING: usize = 64;
 
+/// `(plaintext, aad, sender leaf, signed bytes)`.
+pub type DecryptedApp = (Vec<u8>, Vec<u8>, u32, Option<SignedAppMessage>);
+
+/// The bytes a receiver keeps with each private-group application message so
+/// the sender's MLS signature can be re-checked later (PROTOCOL §23.10.1(2)).
+/// Deleted with the message and on takedown.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SignedAppMessage {
+    pub framed_content: Vec<u8>,
+    pub wire_format: u16,
+    pub group_context: Vec<u8>,
+    pub signature: Vec<u8>,
+    pub sender_leaf_node: Vec<u8>,
+}
+
 /// Serializable member state (everything needed to resume after a restart).
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct MlsMemberState {
@@ -231,6 +246,14 @@ impl OmcpMlsMember {
         &mut self,
         bytes: &[u8],
     ) -> Result<(Vec<u8>, Vec<u8>, u32)> {
+        let (p, a, l, _) = self.decrypt_app_message_full(bytes)?;
+        Ok((p, a, l))
+    }
+
+    /// Decrypt an application message: `(plaintext, aad, sender leaf, signed
+    /// bytes)`. The signed bytes come from the vendored openmls patch
+    /// (vendor/README.md); `None` only for messages of an older epoch.
+    pub fn decrypt_app_message_full(&mut self, bytes: &[u8]) -> Result<DecryptedApp> {
         let msg = MlsMessageIn::tls_deserialize_exact(bytes)
             .map_err(|_| OmcpError::Mls("app deserialize"))?;
         let protocol = msg
@@ -245,8 +268,17 @@ impl OmcpMlsMember {
             Sender::Member(l) => l.u32(),
             _ => return Err(OmcpError::Mls("sender not a member")),
         };
+        let signed = processed.signed_content().map(|s| SignedAppMessage {
+            framed_content: s.framed_content.clone(),
+            wire_format: s.wire_format,
+            group_context: s.group_context.clone(),
+            signature: s.signature.clone(),
+            sender_leaf_node: s.sender_leaf_node.clone(),
+        });
         match processed.into_content() {
-            ProcessedMessageContent::ApplicationMessage(app) => Ok((app.into_bytes(), aad, leaf)),
+            ProcessedMessageContent::ApplicationMessage(app) => {
+                Ok((app.into_bytes(), aad, leaf, signed))
+            }
             _ => Err(OmcpError::Mls("expected application message")),
         }
     }
@@ -439,6 +471,15 @@ impl OmcpMlsMember {
             .map_err(|_| OmcpError::Mls("create_message"))?;
         msg.to_bytes()
             .map_err(|_| OmcpError::Mls("serialize app message"))
+    }
+
+    /// Decrypt an application message and keep its signed bytes.
+    pub fn decrypt_app_message_signed(
+        &mut self,
+        bytes: &[u8],
+    ) -> Result<(Vec<u8>, Option<SignedAppMessage>)> {
+        let (p, _, _, s) = self.decrypt_app_message_full(bytes)?;
+        Ok((p, s))
     }
 
     /// Decrypt an application message; returns plaintext bytes.

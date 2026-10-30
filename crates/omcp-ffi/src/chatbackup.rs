@@ -522,9 +522,12 @@ impl OmcpNode {
     /// your side"): their keys didn't change.
     pub fn mark_restored(&self, now_ms: u64) -> Result<DeviceInfo, FfiError> {
         let d = OwnDevice::generate(&self.inner.seed, now_ms, Some(now_ms))?;
-        let st = self.inner.lock();
+        let mut st = self.inner.lock();
         st.db().put_meta(META_DEVICE, &d)?;
         st.db().put_meta(META_RESTORED_AT, &now_ms)?;
+        // MR30: hold groups/communities until one full digest exchange.
+        let base = st.mesh.engine.full_digests_received();
+        st.mesh.restore_hold = Some((base, false));
         *self.inner.device() = d;
         drop(st);
         self.device_info()
