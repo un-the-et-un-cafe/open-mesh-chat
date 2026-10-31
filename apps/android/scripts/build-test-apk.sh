@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Sideload test APK (~35 MB): package chat.omcp.app.debug, arm64 only.
+# Sideload test APK (~23 MB since v0.1.29: R8 + resource shrinking): package chat.omcp.app.debug, arm64 only.
 # Built as a *release* variant (merged, non-debuggable dex: 5 files) with the
 # `.debug` id suffix, not `assembleDebug`: debug builds keep per-library dex
 # (17 files, ~+4 MB) and the APK grows to ~39 MB. Then other ABIs are dropped,

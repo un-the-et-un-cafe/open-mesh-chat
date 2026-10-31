@@ -35,10 +35,12 @@ android {
         applicationId = "chat.omcp.app"
         minSdk = 31 // Android 12+
         targetSdk = 35
-        versionCode = 28
-        versionName = "0.1.28"
+        versionCode = 29
+        versionName = "0.1.29"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
+        // Shipped locales only (EN/FR/HE): drops library translations.
+        resourceConfigurations += listOf("en", "fr", "iw", "he")
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
         // Designy lock-in: sample chats off by default; enable only for design-review builds.
         buildConfigField("boolean", "SHOW_SAMPLE_CHATS_FOR_DESIGN_REVIEW", "false")
@@ -54,7 +56,11 @@ android {
     buildTypes {
         release {
             if (releaseAppIdSuffix.isNotEmpty()) applicationIdSuffix = releaseAppIdSuffix
-            isMinifyEnabled = false
+            // R8 + resource shrinking (v0.1.29): keep rules for JNA/UniFFI and
+            // libwebrtc JNI in proguard-rules.pro. No obfuscation (-dontobfuscate)
+            // so crash reports and JNI/JNA lookups stay readable and stable.
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
