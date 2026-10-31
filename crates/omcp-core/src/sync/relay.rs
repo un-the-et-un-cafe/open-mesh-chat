@@ -212,6 +212,8 @@ pub struct RelayEngine {
     community_store: RelayStore,
     /// Registered open-community tags (envelopes on them are Community class).
     community_tags: BTreeSet<MailboxTag>,
+    /// Private-invite keys tried on envelopes with unknown tags (§20.7(5)).
+    invite_keys: Vec<crate::invite::InviteKey>,
     /// Takedowns relays apply to `0x5B` post envelopes.
     community_blocks: crate::community::CommunityBlocks,
     /// Full digests received from neighbours (post-restore hold, MR30).
@@ -311,6 +313,7 @@ impl RelayEngine {
                 daily_forward_bytes: None,
             }),
             community_tags: BTreeSet::new(),
+            invite_keys: Vec::new(),
             community_blocks: Default::default(),
             full_digests: 0,
             store: RelayStore::new(cfg.budget),
@@ -401,6 +404,13 @@ impl RelayEngine {
     }
 
     /// Register the open-community tags this node relays (separate budget).
+    /// Invite keys (and one-time reply keys) to try on unknown tags; at most
+    /// 16 are used (§20.7(5)). Empty while invites from non-contacts are off.
+    pub fn set_invite_keys(&mut self, keys: Vec<crate::invite::InviteKey>) {
+        self.invite_keys = keys;
+        self.invite_keys.truncate(crate::invite::MAX_KEYS_TRIED);
+    }
+
     pub fn set_community_tags(&mut self, tags: impl IntoIterator<Item = MailboxTag>) {
         self.community_tags = tags.into_iter().collect();
     }
@@ -1040,6 +1050,20 @@ impl RelayEngine {
                 ack_of,
             });
             ev.extend(self.refresh_digest(now_ms));
+            return Ok(());
+        } else if ack_of.is_none()
+            && !self.invite_keys.is_empty()
+            && tags.len() == 1
+            && crate::invite::recognise(&env, &self.invite_keys).is_some()
+        {
+            // §20.7(5): a private invite for us. Deliver, not carried on.
+            self.mark_seen(id, expires_at);
+            ev.push(RelayEvent::Deliver {
+                link,
+                tag: tags[0],
+                envelope: env,
+                ack_of: None,
+            });
             return Ok(());
         }
         if env.ttl_hops == 0 || tags.is_empty() {

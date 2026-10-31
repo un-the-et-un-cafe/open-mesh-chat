@@ -57,6 +57,7 @@ uniffi::setup_scaffolding!();
 
 mod chatbackup;
 mod files;
+mod invites;
 mod live;
 mod mesh;
 mod moderation;

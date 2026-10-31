@@ -158,6 +158,7 @@ fun OpenCommunitiesTab(core: OmcpCore, onOpen: (String) -> Unit, onOpenGroup: (S
     }) { padding ->
         LazyColumn(Modifier.fillMaxSize().padding(padding), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             item { TextButton(onClick = onOpenLive, modifier = Modifier.padding(horizontal = 8.dp).heightIn(min = 48.dp)) { Text(stringResource(R.string.live_entry)) } }
+            item { InviteRequestsSection(core) }
             if (list.isEmpty()) item { EmptyState(stringResource(R.string.u_e_comm), stringResource(R.string.u_e_comm_d)) }
             else item { Text(stringResource(R.string.u_joined), style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(horizontal = 16.dp)) }
             items(list, key = { it.id }) { k ->
@@ -233,7 +234,8 @@ fun OpenCommunityScreen(core: OmcpCore, id: String, onTopic: (String) -> Unit, o
                     }) { Text(stringResource(R.string.u_create_go)) }
                 }
             }
-            item { Text(stringResource(R.string.u_comm_live_members) + " " + stringResource(R.string.u_comm_live_d), color = c.ink3, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(16.dp)) }
+            // §20.3: community Live is deferred (no start/join here).
+            item { HorizontalDivider(Modifier.padding(top = 8.dp)); InviteSettingRow(core, id) }
         }
     }
 }
@@ -448,7 +450,7 @@ fun ReportSheet(title: String, onDismiss: () -> Unit, make: (reason: Int, note: 
     }
 }
 
-private fun shareReport(ctx: Context, bytes: ByteArray) {
+internal fun shareReport(ctx: Context, bytes: ByteArray) {
     val dir = java.io.File(ctx.cacheDir, "reports").apply { mkdirs() }
     val f = java.io.File(dir, "report.omcp-evidence").apply { writeBytes(bytes) }
     val uri = FileProvider.getUriForFile(ctx, ctx.packageName + ".files", f)

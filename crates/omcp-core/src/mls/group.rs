@@ -226,6 +226,14 @@ impl OmcpMlsMember {
             .map_err(|_| OmcpError::Mls("key package validate"))
     }
 
+    /// Validate a peer's key package and return its credential identity.
+    pub fn key_package_identity(&self, bytes: &[u8]) -> Result<Vec<u8>> {
+        let kp = self.parse_key_package(bytes)?;
+        let c = BasicCredential::try_from(kp.leaf_node().credential().clone())
+            .map_err(|_| OmcpError::Mls("key package credential"))?;
+        Ok(c.identity().to_vec())
+    }
+
     /// Encrypt with `aad` authenticated (not encrypted) in the MLS framing.
     pub fn encrypt_app_message_with_aad(
         &mut self,

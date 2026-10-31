@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- DESIGN_SPEC §5.142 (v0.1.24). HE is a DRAFT pending native review. -->
 <resources>
-    <string name="u_start_grp_d">הזמינו אנשים מאנשי הקשר שלך. הזמנת חברי קהילה אחרים תגיע בקרוב.</string>
-    <string name="u_inv_contacts_note">בינתיים רק אנשי קשר. הזמנת חברי קהילה לפי זהות רשת תגיע בקרוב. עד 32 חברים.</string>
+    <string name="u_start_grp_d">הזמינו עד 32 חברים מהקהילה, גם כאלה שאינם אנשי קשר. הקבוצה מוצפנת מקצה לקצה ונמצאת בצ׳אטים.</string>
+    <string name="u_inv_contacts_note">ההזמנות נשלחות לזהות הרשת של כל אדם, כך שאין צורך שיהיה איש קשר. עד 32 חברים.</string>
     <string name="u_rep_r1">חומר של פגיעה מינית בילדים</string>
     <string name="u_rep_r2">אלימות או איומים</string>
     <string name="u_rep_r3">הטרדה או שנאה</string>
@@ -140,4 +140,21 @@
     <string name="d_from_comm">חברי %1$s</string>
     <string name="d_not_contact">לא באנשי הקשר</string>
     <string name="d_mesh_note">ההזמנות נשלחות לזהות הרשת של כל אדם, כך שאין צורך שיהיה איש קשר. עד 32 חברים.</string>
+    <string name="inv_setting_t">הזמנות מאנשים שאינם אנשי קשר</string>
+    <string name="inv_setting_d">מאפשר לחברי הקהילה להזמין אותך לקבוצה פרטית. אף אחד אחר לא יודע על כך. כבוי עד שתפעילו.</string>
+    <string name="inv_req_h">הזמנות לקבוצות פרטיות</string>
+    <string name="inv_req_line">%1$s מ%2$s מזמין/ה אותך לקבוצה פרטית</string>
+    <string name="inv_accept">אישור</string>
+    <string name="inv_decline">דחייה</string>
+    <string name="inv_block">חסימה</string>
+    <string name="inv_report">דיווח על ההזמנה</string>
+    <string name="inv_waiting">אושר. ממתין להצטרפות…</string>
+    <string name="inv_members_h">חברי %1$s</string>
+    <string name="inv_none">אף אחד כאן עדיין לא מקבל הזמנות.</string>
+    <string name="inv_mesh_only">הזמנות עוברות ברשת בלבד. ייתכן שלא תגיע למי שזמין רק דרך האינטרנט.</string>
+    <string name="inv_status_pending">עדיין לא נמסרה</string>
+    <string name="inv_status_accepted">אושרה</string>
+    <string name="inv_status_declined">נדחתה</string>
+    <string name="inv_status_expired">פגה</string>
+    <string name="inv_turn_on">הפעילו כדי לקבל הזמנות מחברי הקהילה</string>
 </resources>

@@ -33,7 +33,7 @@ fn err<T>(m: &'static str) -> Result<T> {
 }
 
 /// The group reference written into an evidence file. The one place that
-/// decides what names the group (Jakob: the random group ID may appear inside
+/// decides what names the group (maintainer decision: the random group ID may appear inside
 /// the signed MLS bytes; nothing readable ever does).
 pub fn evidence_group_ref(group_id: &[u8]) -> [u8; 32] {
     group_ref(group_id)

@@ -299,8 +299,7 @@ fun CommunityDetailScreen(
                 item {
                     Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text(stringResource(R.string.community_invite_h), style = MaterialTheme.typography.titleSmall)
-                        // §5.136 MVP interim: contacts only.
-                        Text(stringResource(R.string.d_interim), color = c.ink2, style = MaterialTheme.typography.labelSmall)
+                        // §5U group-invite (§20.7 shipped): contacts and community members.
                         Text(stringResource(R.string.u_start_grp_d), color = c.ink2, style = MaterialTheme.typography.bodySmall)
                         Text(stringResource(R.string.d_inv_contacts), style = MaterialTheme.typography.titleSmall)
                         Text(stringResource(R.string.u_inv_contacts_note), color = c.ink3, style = MaterialTheme.typography.bodySmall)
@@ -329,6 +328,7 @@ fun CommunityDetailScreen(
                         }
                     }
                 }
+                item { GroupInviteFromCommunities(core, communityId, full) }
             }
         }
     }

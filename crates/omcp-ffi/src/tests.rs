@@ -3283,7 +3283,7 @@ fn open_community_topics_posts_roles_and_public_flag() {
     let removed = posts.iter().find(|x| x.post_id_hex == p).unwrap();
     assert!(removed.body.is_empty());
     assert_eq!(removed.removed_reason.as_deref(), Some("off-topic"));
-    assert!(n.open_community_can_join_live(c.community_id_hex.clone()));
+    assert!(!n.open_community_can_join_live(c.community_id_hex.clone()));
     // Another node joins from the invite.
     let m = node("M");
     let j = m.open_community_join(c.invite_hex.clone()).unwrap();
@@ -3601,4 +3601,214 @@ fn founder_removes_member_rotates_key_and_logs_it() {
     for l in [&ab, &ac] {
         down(l);
     }
+}
+
+// ---------------------------------------------------------------- §20.7 private invites
+
+/// Founder `n` (group + open community), member `m` of that community.
+fn invite_setup() -> (Arc<OmcpNode>, Arc<OmcpNode>, String, String, String) {
+    let n = node("N");
+    let m = node("M");
+    let c = n.open_community_create("Climbers".into()).unwrap();
+    m.open_community_join(c.invite_hex.clone()).unwrap();
+    let cid = parse_id(&c.community_id_hex).unwrap();
+    let (_, mk) = m.key_and_me().unwrap();
+    // MR37: off on a fresh install and in a newly joined community.
+    assert!(!m.open_community_invites_enabled(c.community_id_hex.clone()));
+    assert!(m
+        .inner
+        .lock()
+        .mesh
+        .open
+        .get(&cid)
+        .unwrap()
+        .invite_pks
+        .is_empty());
+    m.open_community_set_invites_enabled(c.community_id_hex.clone(), true)
+        .unwrap();
+    let pk = m.inner.lock().mesh.open.get(&cid).unwrap().invite_pks[&mk].clone();
+    assert_eq!(pk.len(), omcp_core::invite::INVITE_PK_LEN);
+    {
+        // Gossip of m's join + profile to n.
+        let mut st = n.inner.lock();
+        let com = st.mesh.open.communities.get_mut(&cid).unwrap();
+        com.members.insert(mk);
+        com.invite_pks.insert(mk, pk);
+    }
+    let g = n.private_group_create("Secret".into()).unwrap();
+    (
+        n,
+        m,
+        c.community_id_hex,
+        g.community_id_hex,
+        hex::encode(mk),
+    )
+}
+
+fn deliver(from: &OmcpNode, to: &OmcpNode) -> usize {
+    let envs = std::mem::take(&mut from.inner.lock().mesh.invites.log);
+    let mut n = 0;
+    for e in envs {
+        if to.inner.lock().on_invite_envelope(&e).unwrap() {
+            n += 1;
+        }
+    }
+    n
+}
+
+#[test]
+fn mr33_mr35_mr39_invite_accept_joins_group_privately() {
+    let (n, m, cid, gid, mk) = invite_setup();
+    let history_before = n
+        .inner
+        .lock()
+        .mesh
+        .open
+        .get(&parse_id(&cid).unwrap())
+        .unwrap()
+        .posts
+        .len();
+    assert_eq!(n.private_invite_candidates(cid.clone()).len(), 1);
+    let r = n
+        .private_invite_send(gid.clone(), cid.clone(), mk.clone(), "join us".into())
+        .unwrap();
+    // MR39: mesh-only notice + "Not delivered yet".
+    assert!(r.notice.contains("internet"));
+    assert_eq!(n.private_invites_sent()[0].status, "Not delivered yet");
+    // MR35: a third node (team-like observer) cannot recognise it.
+    let o = node("O");
+    {
+        let envs = n.inner.lock().mesh.invites.log.clone();
+        for e in &envs {
+            assert!(!o.inner.lock().on_invite_envelope(e).unwrap());
+            // MR34: no community TLV / group id in the outer header.
+            assert!(!has(&e.header_aad, &parse_id(&gid).unwrap()));
+            assert!(!has(&e.header_aad, &parse_id(&cid).unwrap()));
+        }
+    }
+    assert_eq!(deliver(&n, &m), 1);
+    let req = m.private_invite_requests();
+    assert_eq!(req.len(), 1);
+    assert_eq!(req[0].group_name, "Secret");
+    assert_eq!(req[0].invitation_text, "join us");
+    m.private_invite_answer(req[0].offer_id_hex.clone(), true)
+        .unwrap();
+    assert_eq!(deliver(&m, &n), 1);
+    assert_eq!(n.private_invites_sent()[0].status, "Accepted");
+    assert_eq!(n.private_group_members(gid.clone()).len(), 2);
+    assert_eq!(deliver(&n, &m), 1);
+    assert!(m.private_groups().iter().any(|g| g.community_id_hex == gid));
+    assert!(m.private_invite_requests().is_empty());
+    // Community history unchanged (MR33).
+    let history_after = n
+        .inner
+        .lock()
+        .mesh
+        .open
+        .get(&parse_id(&cid).unwrap())
+        .unwrap()
+        .posts
+        .len();
+    assert_eq!(history_before, history_after);
+}
+
+#[test]
+fn mr36_decline_same_size_and_closes_offer() {
+    let (n, m, cid, gid, mk) = invite_setup();
+    n.private_invite_send(gid.clone(), cid.clone(), mk.clone(), String::new())
+        .unwrap();
+    deliver(&n, &m);
+    let id = m.private_invite_requests()[0].offer_id_hex.clone();
+    m.private_invite_answer(id, false).unwrap();
+    let dec = m.inner.lock().mesh.invites.log.clone();
+    assert_eq!(deliver(&m, &n), 1);
+    assert_eq!(n.private_invites_sent()[0].status, "Declined");
+    assert_eq!(n.private_group_members(gid.clone()).len(), 1);
+    // A second (accepting) invitee's reply has the same envelope size.
+    let (n2, m2, c2, g2, mk2) = invite_setup();
+    n2.private_invite_send(g2, c2, mk2, String::new()).unwrap();
+    deliver(&n2, &m2);
+    let id2 = m2.private_invite_requests()[0].offer_id_hex.clone();
+    m2.private_invite_answer(id2, true).unwrap();
+    let acc = m2.inner.lock().mesh.invites.log.clone();
+    assert_eq!(dec[0].ciphertext.len(), acc[0].ciphertext.len());
+    // 7-day block on repeat (MR37 sender side).
+    assert!(n.private_invite_send(gid, cid, mk, String::new()).is_err());
+}
+
+#[test]
+fn mr37_setting_off_drops_offers_and_mr38_report_is_offer_only() {
+    let (n, m, cid, gid, mk) = invite_setup();
+    n.private_invite_send(gid.clone(), cid.clone(), mk.clone(), "hi".into())
+        .unwrap();
+    let envs = n.inner.lock().mesh.invites.log.clone();
+    deliver(&n, &m);
+    let req = m.private_invite_requests();
+    let report = m
+        .private_invite_report(req[0].offer_id_hex.clone())
+        .unwrap();
+    let off = omcp_core::invite::InviteOffer::decode(&report).unwrap();
+    assert!(!has(&report, &parse_id(&gid).unwrap()));
+    assert_eq!(off.group_name, "Secret");
+    m.private_invite_block(req[0].offer_id_hex.clone()).unwrap();
+    assert!(m.private_invite_requests().is_empty());
+    // Setting off: profile field removed, offers dropped unread.
+    m.open_community_set_invites_enabled(cid.clone(), false)
+        .unwrap();
+    let cidb = parse_id(&cid).unwrap();
+    assert!(m
+        .inner
+        .lock()
+        .mesh
+        .open
+        .get(&cidb)
+        .unwrap()
+        .invite_pks
+        .is_empty());
+    m.inner.lock().mesh.invites.recv.clear();
+    for e in &envs {
+        let _ = m.inner.lock().on_invite_envelope(e).unwrap();
+    }
+    assert!(m.private_invite_requests().is_empty());
+}
+
+#[test]
+fn hard_rule_team_identity_never_joins_via_invite() {
+    // The team never sees members: invites leave nothing in the team's view.
+    let (n, _m, cid, gid, mk) = invite_setup();
+    let team = team_key();
+    with_team(&n, &team);
+    n.private_invite_send(gid.clone(), cid, mk, String::new())
+        .unwrap();
+    let st = n.inner.lock();
+    let log = &st.mesh.invites.log;
+    assert_eq!(log.len(), 1);
+    assert!(!has(&log[0].header_aad, &parse_id(&gid).unwrap()));
+}
+
+#[test]
+fn community_live_announcements_are_ignored_and_cannot_start() {
+    // PROTOCOL §20.3 (2026-10-31): community Live deferred.
+    let n = node("N");
+    let c = n.open_community_create("Open".into()).unwrap();
+    assert!(!n.open_community_can_join_live(c.community_id_hex.clone()));
+    assert!(n
+        .live_start_community(c.community_id_hex.clone(), "t".into(), false)
+        .is_err());
+    assert!(n
+        .live_community_streams(c.community_id_hex.clone())
+        .is_empty());
+    // A private group still goes live (unchanged).
+    let g = n.private_group_create("G".into()).unwrap();
+    assert!(n
+        .live_start_community(g.community_id_hex.clone(), "t".into(), false)
+        .is_ok());
+    n.live_stop().unwrap();
+    // Core: an announcement naming an open community is never accepted.
+    let cid = parse_id(&c.community_id_hex).unwrap();
+    assert!(!omcp_core::community::accept_community_live_announcement(
+        &cid
+    ));
+    // Kind 7 LIVE_TAKEDOWN stays registered.
+    assert_eq!(omcp_core::moderation::ActionKind::LiveTakedown as u8, 7);
 }

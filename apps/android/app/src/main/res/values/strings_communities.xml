@@ -82,7 +82,24 @@
     <string name="u_live_blocked">Your live here was taken down. You can go live here again 24 hours after that.</string>
     <string name="u_comm_live_d">Live in communities needs an end-to-end key; for now go live from a private group.</string>
     <string name="u_comm_live_members">Members of this community only. Not end-to-end encrypted.</string>
-    <string name="u_start_grp_d">Invite people from your contacts. Inviting other community members is coming soon.</string>
-    <string name="u_inv_contacts_note">Only contacts for now. Inviting community members by mesh identity is coming soon. Up to 32 members.</string>
+    <string name="u_start_grp_d">Invite up to 32 members of this community, even people who aren’t your contacts. The group is end-to-end encrypted and lives in Chats.</string>
+    <string name="u_inv_contacts_note">Invites go to each person’s mesh identity, so they don’t need to be your contact. Up to 32 members.</string>
     <string name="u_rep_r7">Something else</string>
+    <string name="inv_setting_t">Invites from people who aren’t contacts</string>
+    <string name="inv_setting_d">Lets members of this community invite you to a private group. Nobody else learns about it. Off until you turn it on.</string>
+    <string name="inv_req_h">Private group invites</string>
+    <string name="inv_req_line">%1$s from %2$s invites you to a private group</string>
+    <string name="inv_accept">Accept</string>
+    <string name="inv_decline">Decline</string>
+    <string name="inv_block">Block</string>
+    <string name="inv_report">Report invite</string>
+    <string name="inv_waiting">Accepted. Waiting to join…</string>
+    <string name="inv_members_h">Members of %1$s</string>
+    <string name="inv_none">Nobody here accepts invites yet.</string>
+    <string name="inv_mesh_only">Invites travel over the mesh only. It may not reach someone who is only reachable over the internet.</string>
+    <string name="inv_status_pending">Not delivered yet</string>
+    <string name="inv_status_accepted">Accepted</string>
+    <string name="inv_status_declined">Declined</string>
+    <string name="inv_status_expired">Expired</string>
+    <string name="inv_turn_on">Turn on to get invites from community members</string>
 </resources>

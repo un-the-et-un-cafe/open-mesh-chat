@@ -67,6 +67,27 @@ enum CMsg {
     },
 }
 
+/// §20.7 private-invite glue: a founder-side `Join` built from an
+/// `InviteReply`'s KeyPackage.
+pub(crate) fn cmsg_join(id: [u8; 32], kp: Vec<u8>) -> Vec<u8> {
+    CMsg::Join { id, kp }.encode()
+}
+
+/// `(group id, founder)` of an encoded `Welcome`, for the invite path.
+pub(crate) fn cmsg_welcome_ids(b: &[u8]) -> Option<([u8; 32], [u8; 32], String)> {
+    match CMsg::decode(b)? {
+        CMsg::Welcome {
+            id, founder, name, ..
+        } => Some((id, founder, name)),
+        _ => None,
+    }
+}
+
+/// Is this an encoded `Welcome` for group `id`?
+pub(crate) fn cmsg_is_welcome(b: &[u8]) -> bool {
+    matches!(CMsg::decode(b), Some(CMsg::Welcome { .. }))
+}
+
 impl CMsg {
     fn encode(&self) -> Vec<u8> {
         let mut b = Vec::new();
@@ -198,9 +219,9 @@ pub(crate) struct CommunityState {
     /// Invites received: community → (from contact, name).
     pub invites: HashMap<[u8; 32], ([u8; 32], String)>,
     /// Accepted, waiting for the Welcome: community → (name, fresh member).
-    joining: HashMap<[u8; 32], (String, OmcpMlsMember)>,
+    pub(crate) joining: HashMap<[u8; 32], (String, OmcpMlsMember)>,
     /// Founder: (community, contact) invites we sent.
-    invited: HashSet<([u8; 32], [u8; 32])>,
+    pub(crate) invited: HashSet<([u8; 32], [u8; 32])>,
     /// Pairwise messages to send once the node lock is released.
     pub outbox: Vec<([u8; 32], Vec<u8>)>,
     /// Gossip dedup (BLAKE2b of forwarded group / rekey messages).
@@ -345,7 +366,7 @@ impl NodeState {
 
     /// Whether this group has a team tombstone (taken down, or restored:
     /// a re-formed group needs a new random ID, MR25).
-    fn removed(&self, id: &[u8; 32]) -> bool {
+    pub(crate) fn removed(&self, id: &[u8; 32]) -> bool {
         self.mesh
             .community
             .list
@@ -649,6 +670,12 @@ impl NodeState {
             return Ok(());
         };
         if a.community_id != id || !a.host_matches(&sender) {
+            return Ok(());
+        }
+        // §20.3: a Live announcement naming an open community is ignored.
+        if self.mesh.open.get(&a.community_id).is_some()
+            && !omcp_core::community::accept_community_live_announcement(&a.community_id)
+        {
             return Ok(());
         }
         if !self.mesh.moderation.live_allowed(&a.stream_id, Some(&id))
@@ -964,6 +991,10 @@ impl OmcpNode {
             let mut st = self.inner.lock();
             if st.removed(&id) {
                 return Err(invalid("community removed"));
+            }
+            // §20.3: no Live in open communities (deferred).
+            if st.mesh.open.get(&id).is_some() || !st.mesh.community.list.contains_key(&id) {
+                return Err(invalid("Live is only in 1:1 chats and private groups"));
             }
             // MR29: 24 h after a Live takedown the host can't restart here.
             if st.mesh.moderation.live_host_blocked(&id, &me, now_ms()) {

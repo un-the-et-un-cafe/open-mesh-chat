@@ -130,10 +130,13 @@ fn only_founder_appoints_and_removal_needs_reason_and_hides_for_everyone() {
 }
 
 #[test]
-fn live_is_members_only() {
+fn community_live_is_deferred() {
+    // §20.3: no Live in open communities, announcements ignored.
     let (s, _m, _f, bob, id) = setup();
     let c = s.get(&id).unwrap();
-    assert!(c.can_join_live(&pk(&bob)));
+    assert!(!c.can_join_live(&pk(&bob)));
+    assert!(!super::accept_community_live_announcement(&id));
+    const { assert!(!super::COMMUNITY_LIVE_ENABLED) };
     assert!(!c.can_join_live(&pk(&key())));
 }
 
