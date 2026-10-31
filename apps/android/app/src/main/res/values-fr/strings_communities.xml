@@ -62,13 +62,13 @@
     <string name="u_rep_c">Signaler ce message</string>
     <string name="u_rep_m">Signaler ce message</string>
     <string name="u_anon">Les signalements sont anonymes. La modération ne verra pas qui a signalé.</string>
-    <string name="u_note_opt">Ajouter une note (facultatif)</string>
-    <string name="u_rep_r1">Abus sexuel sur mineur</string>
+    <string name="u_note_opt">Précisez (facultatif)</string>
+    <string name="u_rep_r1">Contenu pédocriminel</string>
     <string name="u_rep_r2">Violence ou menaces</string>
     <string name="u_rep_r3">Harcèlement ou haine</string>
-    <string name="u_rep_r4">Biens illégaux</string>
-    <string name="u_rep_r5">Spam ou arnaque</string>
-    <string name="u_rep_r6">Autre</string>
+    <string name="u_rep_r4">Automutilation ou suicide</string>
+    <string name="u_rep_r5">Biens ou services illégaux</string>
+    <string name="u_rep_r6">Spam ou arnaque</string>
     <string name="u_rep_save">Enregistrer le fichier</string>
     <string name="u_rep_share">Partager le fichier</string>
     <string name="u_rep_intake">Envoyez le fichier à l’équipe Hopla : %1$s</string>
@@ -78,8 +78,11 @@
     <string name="u_grp_msg_hint">Message</string>
     <string name="u_send">Envoyer</string>
     <string name="u_checking">Vérification…</string>
-    <string name="u_checking_d">Après une restauration, ce groupe reste masqué jusqu’à la synchronisation avec un téléphone proche et l’application des actions de l’équipe.</string>
+    <string name="u_checking_d">Après une restauration, ce groupe reste masqué jusqu’à ce que votre téléphone se soit synchronisé avec un téléphone proche et ait appliqué les actions de l’équipe.</string>
     <string name="u_live_blocked">Votre direct ici a été retiré. Vous pourrez relancer un direct ici 24 heures après.</string>
     <string name="u_comm_live_d">Le direct dans les communautés demande une clé de bout en bout ; pour l’instant, lancez-le depuis un groupe privé.</string>
-    <string name="u_comm_live_members">Membres de cette communauté uniquement. Pas chiffré de bout en bout.</string>
+    <string name="u_comm_live_members">Réservé aux membres de cette communauté. Pas chiffré de bout en bout.</string>
+    <string name="u_start_grp_d">Invitez des personnes de vos contacts. Inviter d’autres membres de la communauté arrive bientôt.</string>
+    <string name="u_inv_contacts_note">Seulement vos contacts pour l’instant. Inviter des membres par identité maillage arrive bientôt. 32 membres au plus.</string>
+    <string name="u_rep_r7">Autre chose</string>
 </resources>

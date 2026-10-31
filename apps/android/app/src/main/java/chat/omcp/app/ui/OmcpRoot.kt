@@ -68,6 +68,8 @@ private object Routes {
     const val Communities = "communities"
     const val Live = "live"
     const val Community = "community/{id}"
+    const val GroupSecurity = "community/{id}/security"
+    fun groupSecurity(id: String) = "community/$id/security"
     const val Open = "open/{id}"
     fun open(id: String) = "open/$id"
     const val OpenTopic = "open/{id}/t/{topic}"
@@ -233,7 +235,11 @@ fun OmcpRoot(
                             ?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true
                     },
                     onBack = { nav.popBackStack() },
+                    onSecurity = { nav.navigate(Routes.groupSecurity(entry.arguments?.getString("id").orEmpty())) },
                 )
+            }
+            composable(Routes.GroupSecurity) { e ->
+                chat.omcp.app.ui.screens.GroupSecurityScreen(repo.core, e.arguments?.getString("id").orEmpty(), onBack = { nav.popBackStack() })
             }
             composable(Routes.News) { entry ->
                 NewsHomeScreen(vm = newsVm, onOpen = { nav.navigate(Routes.newsStory(it)) }, onSettings = { nav.navigate(Routes.NewsSettings) })

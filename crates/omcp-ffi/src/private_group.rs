@@ -91,6 +91,52 @@ pub(crate) struct Community {
     pub signed: std::collections::VecDeque<KeptSigned>,
     /// Text messages, oldest first (≤ [`MAX_KEPT_SIGNED`]).
     pub msgs: std::collections::VecDeque<GroupText>,
+    /// Key rotations (member left or removed), oldest first (group-security).
+    pub key_events: Vec<KeyEvent>,
+}
+
+/// One group key rotation.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub(crate) struct KeyEvent {
+    /// 1 = left, 2 = removed by the founder.
+    pub kind: u8,
+    pub name: String,
+    pub at_ms: u64,
+    /// Members holding the new key.
+    pub members: u32,
+}
+const KEYEV_KEY: &[u8] = b"group-keyev-v1";
+const MAX_KEY_EVENTS: usize = 100;
+
+/// Group security screen data.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct GroupSecurity {
+    /// 60 hex chars of the group key fingerprint (shown as 3×5 groups of 4).
+    pub fingerprint_hex: String,
+    pub events: Vec<GroupKeyEvent>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct GroupKeyEvent {
+    /// "left" or "removed".
+    pub kind: String,
+    pub name: String,
+    pub at_ms: u64,
+    pub members: u32,
+}
+
+impl Community {
+    fn log_rotation(&mut self, kind: u8, name: String) {
+        self.key_events.push(KeyEvent {
+            kind,
+            name,
+            at_ms: now_ms(),
+            members: self.roster.len() as u32,
+        });
+        if self.key_events.len() > MAX_KEY_EVENTS {
+            self.key_events.remove(0);
+        }
+    }
 }
 
 /// One private-group text message.
@@ -222,6 +268,7 @@ impl NodeState {
                         member,
                         signed: Default::default(),
                         msgs: Default::default(),
+                        key_events: Default::default(),
                     },
                 );
             }
@@ -286,6 +333,13 @@ impl NodeState {
             .map(|(id, k)| (*id, k.msgs.iter().cloned().collect()))
             .collect();
         self.db.put_meta(MSGS_KEY, &msgs)?;
+        let ev: Vec<([u8; 32], Vec<KeyEvent>)> = c
+            .list
+            .iter()
+            .filter(|(_, k)| !k.key_events.is_empty())
+            .map(|(id, k)| (*id, k.key_events.clone()))
+            .collect();
+        self.db.put_meta(KEYEV_KEY, &ev)?;
         Ok(())
     }
 
@@ -502,6 +556,7 @@ impl NodeState {
                         member,
                         signed: Default::default(),
                         msgs: Default::default(),
+                        key_events: Default::default(),
                     },
                 );
                 self.save_communities()?;
@@ -514,7 +569,17 @@ impl NodeState {
                     return Ok(());
                 }
                 c.member.process_protocol_message(&commit).map_err(mls)?;
-                c.roster = roster.into_iter().collect();
+                let new: BTreeMap<[u8; 32], String> = roster.into_iter().collect();
+                let gone: Vec<String> = c
+                    .roster
+                    .iter()
+                    .filter(|(k, _)| !new.contains_key(*k))
+                    .map(|(_, n)| n.clone())
+                    .collect();
+                c.roster = new;
+                for n in gone {
+                    c.log_rotation(2, n);
+                }
                 self.save_communities()?;
             }
             CMsg::Group { id, ct } => self.on_group(peer, id, ct)?,
@@ -754,6 +819,7 @@ impl OmcpNode {
                 member,
                 signed: Default::default(),
                 msgs: Default::default(),
+                key_events: Default::default(),
             },
         );
         st.save_communities()?;
@@ -1143,5 +1209,96 @@ impl OmcpNode {
             .mesh
             .moderation
             .live_host_blocked(&id, &me, now_ms())
+    }
+
+    /// Founder removes a member: MLS remove commit (new group key for
+    /// everyone else), logged as a key change (group-remove).
+    pub fn private_group_remove_member(
+        &self,
+        group_id_hex: String,
+        peer_id_hex: String,
+    ) -> Result<(), FfiError> {
+        let id = parse_cid(&group_id_hex)?;
+        let who = parse_cid(&peer_id_hex)?;
+        let me = self.me();
+        {
+            let mut st = self.inner.lock();
+            let (commit, roster) = {
+                let c = st
+                    .mesh
+                    .community
+                    .list
+                    .get_mut(&id)
+                    .ok_or_else(|| invalid("unknown group"))?;
+                if c.founder != me || who == me {
+                    return Err(invalid("only the founder removes members"));
+                }
+                let leaf = c
+                    .member
+                    .member_identities()
+                    .map_err(mls)?
+                    .into_iter()
+                    .find(|(_, cred)| cred.as_slice() == who)
+                    .map(|(l, _)| l)
+                    .ok_or_else(|| invalid("not a member"))?;
+                let commit = c.member.remove_members(&[leaf]).map_err(mls)?;
+                let name = c.roster.remove(&who).unwrap_or_default();
+                c.log_rotation(2, name);
+                let roster: Vec<_> = c.roster.iter().map(|(a, b)| (*a, b.clone())).collect();
+                (commit, roster)
+            };
+            st.save_communities()?;
+            for p in st.roster_contacts(&id, &[me]) {
+                st.post(
+                    p,
+                    &CMsg::Commit {
+                        id,
+                        commit: commit.clone(),
+                        roster: roster.clone(),
+                    },
+                );
+            }
+        }
+        self.drain_community_outbox();
+        Ok(())
+    }
+
+    /// Key fingerprint and key-change log (group-security).
+    pub fn private_group_security(&self, group_id_hex: String) -> Result<GroupSecurity, FfiError> {
+        let id = parse_cid(&group_id_hex)?;
+        let st = self.inner.lock();
+        let c = st
+            .mesh
+            .community
+            .list
+            .get(&id)
+            .ok_or_else(|| invalid("unknown group"))?;
+        let fp = c.member.key_fingerprint().map_err(mls)?;
+        Ok(GroupSecurity {
+            fingerprint_hex: hex::encode(fp)[..60].to_string(),
+            events: c
+                .key_events
+                .iter()
+                .map(|e| GroupKeyEvent {
+                    kind: if e.kind == 1 { "left" } else { "removed" }.into(),
+                    name: e.name.clone(),
+                    at_ms: e.at_ms,
+                    members: e.members,
+                })
+                .collect(),
+        })
+    }
+
+    /// MR29: when we may go live here again (ms), if blocked now.
+    pub fn live_blocked_until_ms(&self, community_id_hex: String) -> Option<u64> {
+        let id = parse_cid(&community_id_hex).ok()?;
+        let me = self.me();
+        let now = now_ms();
+        let st = self.inner.lock();
+        st.mesh
+            .moderation
+            .live_blocked_at(&id, &me)
+            .map(|at| at + omcp_core::moderation::LIVE_RESTART_BLOCK_MS)
+            .filter(|until| *until > now || st.mesh.moderation.live_host_blocked(&id, &me, now))
     }
 }

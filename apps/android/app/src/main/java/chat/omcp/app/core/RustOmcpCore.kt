@@ -236,16 +236,24 @@ class RustOmcpCore : OmcpCore {
         runCatching { node?.openCommunityNewTopic(communityId, title) }.getOrNull()
     override fun openPosts(communityId: String, topicId: String): List<OpenPostUi> =
         node?.openCommunityPosts(communityId, topicId)?.map {
-            OpenPostUi(it.postIdHex, it.parentIdHex, it.authorHex, it.createdMs.toLong(), it.body, it.removedReason)
+            OpenPostUi(it.postIdHex, it.parentIdHex, it.authorHex, it.createdMs.toLong(), it.body, it.removedReason, it.authorContactName)
         } ?: emptyList()
     override fun openPost(communityId: String, topicId: String, parentId: String?, body: String): String? =
         runCatching { node?.openCommunityPost(communityId, topicId, parentId, body) }.getOrNull()
     override fun openMembers(communityId: String): List<OpenMemberUi> =
-        node?.openCommunityMembers(communityId)?.map { OpenMemberUi(it.keyHex, it.role, it.isMe) } ?: emptyList()
+        node?.openCommunityMembers(communityId)?.map { OpenMemberUi(it.keyHex, it.role, it.isMe, it.contactName) } ?: emptyList()
     override fun openMakeModerator(communityId: String, memberKey: String): Boolean =
         runCatching { node?.openCommunityAppointModerator(communityId, memberKey) != null }.getOrDefault(false)
     override fun openRemovePost(communityId: String, postId: String, reason: String): Boolean =
         runCatching { node?.openCommunityRemovePost(communityId, postId, reason) != null }.getOrDefault(false)
+    override fun groupRemoveMember(groupId: String, peerId: String): Boolean =
+        runCatching { node?.privateGroupRemoveMember(groupId, peerId) != null }.getOrDefault(false)
+    override fun groupSecurity(groupId: String): GroupSecurityUi? = runCatching {
+        node?.privateGroupSecurity(groupId)?.let { s ->
+            GroupSecurityUi(s.fingerprintHex, s.events.map { GroupKeyEventUi(it.kind, it.name, it.atMs.toLong(), it.members.toInt()) })
+        }
+    }.getOrNull()
+    override fun liveBlockedUntilMs(communityId: String): Long? = node?.liveBlockedUntilMs(communityId)?.toLong()
     override fun openReportPost(communityId: String, postId: String, reason: Int, note: String?): ByteArray? =
         runCatching { node?.openCommunityReportPost(communityId, postId, reason.toUByte(), note) }.getOrNull()
     override fun communities(): List<CommunityUi> = node?.communities()?.map(::community) ?: emptyList()

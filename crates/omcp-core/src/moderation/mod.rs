@@ -142,6 +142,8 @@ pub enum Reason {
     /// Restore after review or appeal (log category; not on a takedown).
     RestoreAfterReview = 8,
     Other = 9,
+    /// Self-harm or suicide (design §5.137; report reason, v0.1.27).
+    SelfHarm = 10,
 }
 
 impl Reason {
@@ -156,6 +158,7 @@ impl Reason {
             7 => Self::Threats,
             8 => Self::RestoreAfterReview,
             9 => Self::Other,
+            10 => Self::SelfHarm,
             _ => return None,
         })
     }
@@ -965,6 +968,11 @@ impl ModerationState {
     /// LIVE_TAKEDOWN. An ITEM_RESTORE does not shorten it.
     pub fn block_live_host(&mut self, community_id: [u8; 32], host: [u8; 32], now_ms: u64) {
         self.live_blocks.insert((community_id, host), now_ms);
+    }
+
+    /// When the MR29 block for this host started, if any.
+    pub fn live_blocked_at(&self, community_id: &[u8; 32], host: &[u8; 32]) -> Option<u64> {
+        self.live_blocks.get(&(*community_id, *host)).copied()
     }
 
     /// `now < blocked_at` (clock moved back) still counts as blocked.

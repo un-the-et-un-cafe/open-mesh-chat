@@ -409,7 +409,8 @@ fn evidence_limits_500_messages_and_reason_categories() {
         EvidenceFile::export(&GID, vec![one.clone(); 500], 1, None, None, vec![], &rep, 1).is_ok()
     );
     assert!(EvidenceFile::export(&GID, vec![one.clone()], 0, None, None, vec![], &rep, 1).is_err());
-    assert!(EvidenceFile::export(&GID, vec![one], 10, None, None, vec![], &rep, 1).is_err());
+    assert!(EvidenceFile::export(&GID, vec![one.clone()], 10, None, None, vec![], &rep, 1).is_ok()); // self-harm (§5.137)
+    assert!(EvidenceFile::export(&GID, vec![one], 11, None, None, vec![], &rep, 1).is_err());
     assert_eq!(EVIDENCE_RETENTION_MS, 90 * 24 * 3600 * 1000);
     assert_eq!(EVIDENCE_EXTENSION, "omcp-evidence");
 }

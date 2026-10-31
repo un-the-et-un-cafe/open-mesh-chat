@@ -62,13 +62,13 @@
     <string name="u_rep_c">Report this post</string>
     <string name="u_rep_m">Report this message</string>
     <string name="u_anon">Reports are anonymous. Moderators won’t see who reported.</string>
-    <string name="u_note_opt">Add a note (optional)</string>
-    <string name="u_rep_r1">Child sexual abuse</string>
+    <string name="u_note_opt">Tell us more (optional)</string>
+    <string name="u_rep_r1">Child sexual abuse material</string>
     <string name="u_rep_r2">Violence or threats</string>
     <string name="u_rep_r3">Harassment or hate</string>
-    <string name="u_rep_r4">Illegal goods</string>
-    <string name="u_rep_r5">Spam or scam</string>
-    <string name="u_rep_r6">Other</string>
+    <string name="u_rep_r4">Self-harm or suicide</string>
+    <string name="u_rep_r5">Illegal goods or services</string>
+    <string name="u_rep_r6">Spam or scam</string>
     <string name="u_rep_save">Save report file</string>
     <string name="u_rep_share">Share report file</string>
     <string name="u_rep_intake">Send the file to the Hopla team: %1$s</string>
@@ -82,4 +82,7 @@
     <string name="u_live_blocked">Your live here was taken down. You can go live here again 24 hours after that.</string>
     <string name="u_comm_live_d">Live in communities needs an end-to-end key; for now go live from a private group.</string>
     <string name="u_comm_live_members">Members of this community only. Not end-to-end encrypted.</string>
+    <string name="u_start_grp_d">Invite people from your contacts. Inviting other community members is coming soon.</string>
+    <string name="u_inv_contacts_note">Only contacts for now. Inviting community members by mesh identity is coming soon. Up to 32 members.</string>
+    <string name="u_rep_r7">Something else</string>
 </resources>
