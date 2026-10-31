@@ -63,9 +63,9 @@ Hopla News (REQUIREMENTS § Hopla News, v0.4 draft, incl. maintainer decisions),
 
 ## v0.1.18 — 2026-10-24
 
-Light mode to WCAG AA as the matched twin of dark, and a first RTL locale: Hebrew (requested by Jakob). `DESIGN_SPEC.md` §5.104–5.106.
+Light mode to WCAG AA as the matched twin of dark, and a first RTL locale: Hebrew (requested by the maintainer). `DESIGN_SPEC.md` §5.104–5.106.
 
-### Changed — light theme (WCAG AA; light token change approved by Jakob)
+### Changed — light theme (WCAG AA; light token change approved by the maintainer)
 - `tokens.css` `:root` only: `--ink-2` #4a5b70 → #3b495a, `--ink-3` #6b7c90 → #515e6d, `--line` #d8dee8 → #73849a, `--line-strong` #b8c2d0 → #617289. Each step now has the same contrast on light `--surface` as the v0.1.17 dark step on dark `--surface` (9.18 / 6.62 / 3.82 / 4.91 vs 9.18 / 6.60 / 3.82 / 4.87). Dark values, soft tints, brand hues unchanged.
 - Disabled controls without `opacity`: `nearby-skeleton` loading row (`.is-loading`, `aria-disabled`), `restore-password` lockout, `settings-storage` edit-off. Disabled now ≥ 3.5:1 light, ≥ 4.0:1 dark (was 1.07 / 1.34).
 - Inverse toasts use the other theme’s teal for their action/icon (was 2.84:1). `mod-stream` host line no longer fades the reputation chip. “Ask to resend” pill border = full `--brand`. Photo scrims ≥ .62.
@@ -86,7 +86,7 @@ Light mode to WCAG AA as the matched twin of dark, and a first RTL locale: Hebre
 
 ## v0.1.17 — 2026-10-24
 
-Dark mode readable everywhere, and backup copy that says chats are backed up (requested by Jakob). `DESIGN_SPEC.md` §5.102, §5.103.
+Dark mode readable everywhere, and backup copy that says chats are backed up (requested by the maintainer). `DESIGN_SPEC.md` §5.102, §5.103.
 
 ### Changed — dark theme (WCAG AA)
 - `tokens.css`, dark values only (`@media (prefers-color-scheme: dark)` and `.phone.dark`): `--ink-2` #a3b1c2 → #b4c0ce, `--ink-3` #7a8a9c → #95a3b4, `--line` #2a3646 → #687990, `--line-strong` #3d4d60 → #7a8ba1. Light values and brand hues unchanged.
@@ -107,7 +107,7 @@ Dark mode readable everywhere, and backup copy that says chats are backed up (re
 
 ## v0.1.16 — 2026-10-24
 
-One-tap Ask to resend, and Keep media you sent (decisions approved by Jakob). `DESIGN_SPEC.md` §5.100, §5.101.
+One-tap Ask to resend, and Keep media you sent (decisions approved by the maintainer). `DESIGN_SPEC.md` §5.100, §5.101.
 
 ### Changed
 - `media-missing`: **Ask to resend** is now one tap with an optional **Add a note**; sent state shows status in the bubble and a toast with Undo. Re-rendered `--gone`, `--sent`, `--gone-fr`, `--sent-fr`; added `--ios-gone`. §5.94 confirm sheet marked superseded.
@@ -217,7 +217,7 @@ Restore from backup for Google Drive and iCloud, reinstall-first. Extends §5.17
 
 ## v0.1.9 — 2026-10-24
 
-Jakob resolved Q12/Q13; Q11 fixed in REQUIREMENTS (commit 6a0ee67). `DESIGN_SPEC.md` §5K (§5.81–5.82).
+The maintainer resolved Q12/Q13; Q11 fixed in REQUIREMENTS (commit 6a0ee67). `DESIGN_SPEC.md` §5K (§5.81–5.82).
 
 ### Added
 - `nearby-area-indicator`: persistent indicator in area mode (hex-cell glyph, violet, “Area mode” label) for iOS Live Activity, Dynamic Island and Android ongoing notification — normal, Private, paused, dark, FR.
@@ -251,7 +251,7 @@ Nearby stays on until the user turns it off (REQUIREMENTS Decision 4 + D6). `DES
 
 ## v0.1.7 — 2026-10-24
 
-Jakob approved the pending proposals; REQUIREMENTS Decision 5 / SS1 updated. `DESIGN_SPEC.md` §5I (§5.71–5.74).
+The maintainer approved the pending proposals; REQUIREMENTS Decision 5 / SS1 updated. `DESIGN_SPEC.md` §5I (§5.71–5.74).
 
 ### Changed
 - `settings-privacy`: copy aligned to REQUIREMENTS (“On by default”; “Burn-after-read and view-once content is always protected”; second-camera line in On and Off). All 12 frames re-rendered.

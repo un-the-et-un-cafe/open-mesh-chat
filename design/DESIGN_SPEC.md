@@ -991,7 +991,7 @@ Banners `role=status` (announced once on entry, not on every scroll). Reputation
 | confirm.title | Allow screenshots? | Autoriser les captures d’écran ? | לאפשר צילומי מסך? |
 | confirm.cta | Allow screenshots / Keep blocking | Autoriser les captures / Garder le blocage | לאפשר צילומי מסך / להמשיך לחסום |
 
-## 5I. v0.1.7 — Approved decisions (Jakob, 2026-10-24)
+## 5I. v0.1.7 — Approved decisions (maintainer, 2026-10-24)
 
 Generator `/workspace/omcp-v017/gen.py`.
 
@@ -1228,7 +1228,7 @@ Follows REQUIREMENTS “Groups and communities” (Q25). Generator `/workspace/o
 - **Member list:** a footnote explains the tag: “‘Restored, not verified’: this member restored Hopla on a new device. Tap the tag to verify in person.”
 - **A11y:** the tag is `role=button` labelled “Restored, not verified. Tap to verify”. The sender line reads “Alex Rivera, restored, not verified”. The touch target is extended to 44 pt via padding on the name row.
 
-## 5O. v0.1.16 — One-tap Ask to resend; keep media you sent (approved by Jakob, 2026-10-24)
+## 5O. v0.1.16 — One-tap Ask to resend; keep media you sent (approved by the maintainer, 2026-10-24)
 
 Generator `/workspace/omcp-v0116/gen.py` (renders with `render.py`, system python3 Playwright + `/usr/bin/google-chrome`). New mockups `media-resend-note`, `settings-storage`; `media-missing` re-rendered.
 
@@ -1265,7 +1265,7 @@ Replaces the v0.1.12 confirm sheet (§5.94).
 | Presets | 30 days, 90 days, 1 year, Forever · 500 MB, 2 GB, 5 GB, No limit | 30 j, 90 j, 1 an, Toujours · 500 Mo, 2 Go, 5 Go, Sans limite | 30 יום, 90 יום, שנה, לתמיד · 500 מ״ב, 2 ג״ב, 5 ג״ב, ללא הגבלה |
 
 
-## 5P. v0.1.17 — Dark-mode WCAG AA overhaul; backup copy covers chats (requested by Jakob, 2026-10-24)
+## 5P. v0.1.17 — Dark-mode WCAG AA overhaul; backup copy covers chats (requested by the maintainer, 2026-10-24)
 
 Generator `/workspace/omcp-v0117/` (`gen.py` patches the v0.1.16 pack, `render.py`, `contrast.py`, `table.py`, `compose.py`). All 70 mockups re-rendered (445 frames).
 
@@ -1282,11 +1282,11 @@ Generator `/workspace/omcp-v0117/` (`gen.py` patches the v0.1.16 pack, `render.p
 - Applied to `onboarding-secure` (sub, honest note, password sheet), `onboarding-secure-phrase`, `onboarding-secure-reminder`, `onboarding-restore`, `settings-backup` (method lines, honest note, delete sheet), `restore-source` (“My 24 words” row), `restore-error--corrupted`, `restore-password` (forgot hint, lockout), `restore-reinstall` (forgot hint). Copy tables §5.21, §5.26–5.30, §5.31, §5.89 updated in place (EN/FR).
 - No Arabic copy exists in the pack yet (EN/FR only), so there is nothing to change in AR; RTL stays a §5 checklist item. *(v0.1.18: Hebrew added as the first RTL locale, §5.105–5.106.)*
 
-## 5Q. v0.1.18 — Light-mode WCAG AA matched to dark; Hebrew (RTL) locale draft (requested by Jakob, 2026-10-24)
+## 5Q. v0.1.18 — Light-mode WCAG AA matched to dark; Hebrew (RTL) locale draft (requested by the maintainer, 2026-10-24)
 
 Generator `/workspace/omcp-v0118/` (`gen.py` light tokens + disabled/scrim fixes, `he.py` + `he_strings.py` Hebrew frames, `he_spec.py` Hebrew copy column, `contrast.py`, `table18.py`, `compose18.py`, `docs18.py`, `render.py`). All mockups re-rendered.
 
-### 5.104 Light theme contrast (light token values changed with Jakob’s approval)
+### 5.104 Light theme contrast (light token values changed with the maintainer’s approval)
 - **Rule:** every light frame meets WCAG 2.1 AA like dark (§5.102): text 4.5:1, icons, control boundaries, toggle tracks/thumbs, focus rings 3:1. Disabled controls target 3:1 in both themes (no `opacity` dimming).
 - **Light token values:** `--ink-2` #4a5b70 → #3b495a, `--ink-3` #6b7c90 → #515e6d, `--line` #d8dee8 → #73849a, `--line-strong` #b8c2d0 → #617289. Dark values, soft tints and brand hues unchanged.
 - **Matched pair:** each light step has the same contrast on light `--surface` as the dark step on dark `--surface`: ink-2 9.18 / 9.18, ink-3 6.62 / 6.60, line 3.82 / 3.82, line-strong 4.91 / 4.87. Table and side-by-side in `a11y/light-vs-dark.png`.
@@ -1310,7 +1310,7 @@ Generator `/workspace/omcp-v0118/` (`gen.py` light tokens + disabled/scrim fixes
 - **Bidi:** wrap Latin/number runs inside Hebrew text in isolates (`<bdi>`, `\u2066…\u2069`, Android `BidiFormatter`, iOS `NSLocale`-aware formatting) so “Merci, à demain !”, “< 1 km”, “22:00 – 07:00” and IDs keep their order; prefer Hebrew-first phrasing for mixed chips (“4 בסביבה · Mesh”). Units in Hebrew: ג״ב, מ״ב, ק״מ, דק׳, שע׳.
 - **Dates:** “12 באוק׳ 2026, 21:40” (24 h clock). Week days as letters with geresh (א׳ … ש׳).
 
-## 5R. Hopla News (REQUIREMENTS § Hopla News v0.4, draft, revised 2026-10-24 — **all v0.4**) — v0.1.19, revised v0.1.20 (Jakob’s decisions, 2026-10-24)
+## 5R. Hopla News (REQUIREMENTS § Hopla News v0.4, draft, revised 2026-10-24 — **all v0.4**) — v0.1.19, revised v0.1.20 (the maintainer’s decisions, 2026-10-24)
 
 Generator `/workspace/omcp-v0120/` (`gen.py`, `strings.py`, `news.css`, `render.py`, `a11y/dark-contrast.py`, `docs20.py`); v0.1.19 generator kept at `/workspace/omcp-v0119/`. 18 mockups × 6 frames (EN, FR, HE draft; light + dark) = **108 PNGs**. No tokens added or changed (`news.css` composes existing tokens); `tokens.css` and `brand/` untouched. All people, contacts, places and stories are fictional; images are generated abstract art.
 
@@ -1341,7 +1341,7 @@ Generator `/workspace/omcp-v0120/` (`gen.py`, `strings.py`, `news.css`, `render.
 - Detail: body, shelter row, **Read on Google News**, toggle **Notify me about emergency alerts — on by default** (“You can turn this off”), mirrored in Settings › Notifications. *(Q27, Q30 resolved.)*
 
 ### 5.112 Sources — Google News RSS only (replaces Sources and curators)
-- There is no source management: for now the only source is **Google News RSS** (X dropped from v0.1.20 by Jakob’s correction; an X news RSS feed comes later from a separate project — see §5.109). Phones with internet fetch them and relay stories over the mesh in normal envelopes; duplicates (same source + link) appear once (NW2).
+- There is no source management: for now the only source is **Google News RSS** (X dropped from v0.1.20 by the maintainer’s correction; an X news RSS feed comes later from a separate project — see §5.109). Phones with internet fetch them and relay stories over the mesh in normal envelopes; duplicates (same source + link) appear once (NW2).
 - **Relay settings — placeholder:** the Relay settings screen will follow once the open relay questions are answered. Not designed yet.
 
 ### 5.113 Share to chat or community — `news-share`, `news-share-bubble`
@@ -1450,7 +1450,7 @@ Generator `/workspace/omcp-v0120/` (`gen.py`, `strings.py`, `news.css`, `render.
 | `news.le_d` | Try another city or check back when you meet someone nearby. | Essayez une autre ville ou revenez quand vous croisez quelqu’un. | אפשר לנסות עיר אחרת או לחזור כשתפגשו מישהו בסביבה. |
 | `news.le_btn` | Change city | Changer de ville | שינוי עיר |
 
-## 5S. v0.1.21 — WCAG 2.2 additions (2.5.8, 2.4.11, 2.5.7) and glass-bar contrast (requested by Jakob, 2026-10-26)
+## 5S. v0.1.21 — WCAG 2.2 additions (2.5.8, 2.4.11, 2.5.7) and glass-bar contrast (requested by the maintainer, 2026-10-26)
 
 Applies to every screen. Normative for Proggy.
 
@@ -1471,7 +1471,7 @@ Applies to every screen. Normative for Proggy.
 
 **Glass bars (iOS translucent tab bar / nav bar).** Mockups use opaque `--surface` bars, so measured contrast is the opaque one. **Rule:** if the iOS build uses system material/“Liquid Glass” bars, add a scrim under the blur of at least **85 % `--surface` (light) / 85 % `--surface` (dark)** or use `.systemThickMaterial`/opaque appearance, so that over the worst content behind (white photo in dark mode, black photo in light mode) labels and selected/unselected tab icons keep **≥ 4.5:1 (text) / ≥ 3:1 (icons)**. Verify with screenshots over a pure white and a pure black image in both themes; if it fails, fall back to an opaque bar. With Reduce Transparency on, bars are opaque.
 
-## 5T. v0.1.22 — Communities with Live (PR #19; PROTOCOL §23.9 kinds 3/4) — requested by Jakob, 2026-10-29
+## 5T. v0.1.22 — Communities with Live (PR #19; PROTOCOL §23.9 kinds 3/4) — requested by the maintainer, 2026-10-29
 
 All screens: 6 frames (EN/FR/HE-draft × light/dark). Names of people and communities are fictional. Files: `mockups/comm-*.html`, `mockups/live-*.html` (generator `omcp-v0122/live.py`).
 
@@ -1700,7 +1700,7 @@ Resolved in v0.1.2: v0.1.1 Q1 (skip phrase confirm) — superseded by REQUIREMEN
 3. **Wrong-password limits:** O4 asks for rate-limited retries; mockups assume 3 tries then 5-minute cooldown (escalating). Confirm numbers with the Rust core.
 Resolved in v0.1.5 by the maintainer (REQUIREMENTS § Decisions): Q4 calls → “Hopla · Incoming call”; Q5 per-chat opt-out allowed; Q6 Android lock → “Hopla · New message”; Q7 Nearby must be a pleasure on iOS → sessions + Live Activity + area mode (§5.58); Q8 no screenshots anywhere (§5.57).
 
-Resolved 2026-10-24 (Jakob approved; REQUIREMENTS Decision 5 / SS1 updated by Writey):
+Resolved 2026-10-24 (maintainer approved; REQUIREMENTS Decision 5 / SS1 updated by Writey):
 - ~~Q4 Live Activity on Private notifications~~ → counts hidden (§5.73).
 - ~~Q5 Android recents~~ → black when Block screenshots is on, normal preview when off (§5.72).
 - ~~Q6 Session length~~ → superseded 2026-10-24: no time limit; auto-pause + 4 h check-in (§5.75).
@@ -1723,14 +1723,14 @@ Open (v0.1.10):
 17. ~~**Partner no longer has the file:**~~ → **Resolved 2026-10-24** (§5.94) REQUIREMENTS only covers re-fetch from a partner who still holds it. `media-missing--gone` assumes the protocol gets a “not found” reply for the hash. Is there such a reply, or does the placeholder wait forever (and for how long)?
 18. ~~**Requester privacy:**~~ → **Resolved 2026-10-24** (§5.94; superseded by the restore indicator §5.95: the restore is announced, and re-requests carry no extra metadata) does an auto re-request reveal to the partner that I restored (and when)? Copy assumes it's fine.
 19. ~~**Chunk resume / Wi-Fi:**~~ → **Resolved 2026-10-24** (§5.94) should media re-fetch over a gateway respect the backup's Wi-Fi-only default, or always use mesh/gateway freely?
-20. ~~**Safety number after a restore**~~ → **Resolved 2026-10-24 (Jakob: yes)**: the safety number covers the identity key + current device key, a restore resets every contact's verified badge, and re-verification is in person by QR (§5.98, RS2).
+20. ~~**Safety number after a restore**~~ → **Resolved 2026-10-24 (maintainer: yes)**: the safety number covers the identity key + current device key, a restore resets every contact's verified badge, and re-verification is in person by QR (§5.98, RS2).
 21. ~~**Default types when media backup is turned on:**~~ → **Resolved 2026-10-24:** every type is pre-selected except Videos, as mocked.  the mockup pre-selects everything except Videos (size). Confirm, or select all?
 22. ~~**Media backup cadence:**~~ → **Resolved 2026-10-24:** media is backed up in a separate daily pass, Wi-Fi only by default. Copy: “Backed up daily on Wi-Fi” (§5.96).  the chat backup runs at most hourly, padded to 64 KiB buckets. Should media follow the same cadence and padding (padding large videos gets costly), or use a separate daily pass?
 23. ~~**Partial restore:**~~ → **Resolved 2026-10-24:** a partial media restore falls back to placeholders that refill from nearby contacts (`restore-media--partial`, §5.97).  if media download fails mid-restore (quota or offline), do the remaining items fall back to placeholders and contact re-fetch automatically? Assumed yes.
 24. ~~**REQUIREMENTS O3 wording:**~~ → **Resolved 2026-10-24:** REQUIREMENTS O3 is reworded (“your verifications of contacts are restored; contacts' verification of you resets, RS2”).
 25. ~~**Group / community chats:**~~ → **Resolved 2026-10-24:** compact tag in groups and communities, with the system notice in 1:1 only (§5.99).
 
-Hopla News questions (v0.1.19) — closed in v0.1.20 by Jakob’s decisions and the revised REQUIREMENTS (2026-10-24):
+Hopla News questions (v0.1.19) — closed in v0.1.20 by the maintainer’s decisions and the revised REQUIREMENTS (2026-10-24):
 - ~~Q26 tab bar~~ → News tab; Live at the top of Communities (§5.107).
 - ~~Q27 alert notification default~~ → on by default (§5.111).
 - ~~Q28 unsigned/invalid states~~, ~~Q29 verified vs signed~~ → obsolete: no per-story signature checks or trust levels (§5.109).
@@ -1742,7 +1742,7 @@ Hopla News questions (v0.1.19) — closed in v0.1.20 by Jakob’s decisions and 
 - ~~Q35 Read more online~~ → link opens the browser with an inline “leaves Hopla” note, no confirm.
 - Q36 Relay settings → still a placeholder until the relay questions are answered.
 Open (v0.1.20):
-37. **REQUIREMENTS still lists the X API** as a second source (and its account/tier as an open decision); the design follows Jakob’s correction (Google News RSS only). REQUIREMENTS should be updated to match.
+37. **REQUIREMENTS still lists the X API** as a second source (and its account/tier as an open decision); the design follows the maintainer’s correction (Google News RSS only). REQUIREMENTS should be updated to match.
 38. **Mute a topic:** mocked as long-press on a chip + a Muted topics row; confirm, or add an explicit Mute in the topic’s overflow menu.
 39. **City from location:** reverse-geocoding to a city name needs a geocoder; on-device dataset vs OS geocoder (Apple/Google, which sends coordinates) — the copy says the location is never sent, so this must be on-device or the copy changes.
 
