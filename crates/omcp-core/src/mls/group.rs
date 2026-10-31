@@ -527,13 +527,15 @@ impl OmcpMlsMember {
     /// members must be at the same MLS epoch to agree; receivers should also
     /// try the previous MLS epoch's exporter during a commit race. The
     /// OMCP-MLS-PQ hybrid mix is not applied here (spec says plain exporter).
-    pub fn tag_exporter(&self, tag_epoch: u64) -> Result<[u8; 32]> {
+    pub fn tag_exporter(&self, _tag_epoch: u64) -> Result<[u8; 32]> {
         let group = self.group_ref()?;
         let out = group
             .export_secret(
                 self.provider.crypto(),
                 crate::sync::tag::TAG_EXPORTER_LABEL,
-                &tag_epoch.to_be_bytes(),
+                // §22.7(13): empty context; the 6-hour slot goes into the tag
+                // input (`mailbox_tag(secret, slot)`), not the exporter.
+                b"",
                 32,
             )
             .map_err(|_| OmcpError::Mls("export_secret"))?;
