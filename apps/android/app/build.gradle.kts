@@ -35,8 +35,8 @@ android {
         applicationId = "chat.omcp.app"
         minSdk = 31 // Android 12+
         targetSdk = 35
-        versionCode = 27
-        versionName = "0.1.27"
+        versionCode = 28
+        versionName = "0.1.28"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }

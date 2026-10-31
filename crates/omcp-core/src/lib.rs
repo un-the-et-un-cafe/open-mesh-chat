@@ -38,6 +38,7 @@ pub mod files;
 pub mod framing;
 pub mod gateway;
 pub mod handshake;
+pub mod invite;
 pub mod live;
 pub mod mls;
 pub mod moderation;

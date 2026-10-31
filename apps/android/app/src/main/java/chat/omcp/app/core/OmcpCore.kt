@@ -398,6 +398,21 @@ interface OmcpCore {
     fun liveBlockedUntilMs(communityId: String): Long? = null
     fun openReportPost(communityId: String, postId: String, reason: Int, note: String?): ByteArray? = null
 
+    // §20.7 private invites from a community into a private group (TM13–TM17).
+    /** "Invites from people who aren't contacts" in this community; off by default. */
+    fun inviteSettingEnabled(communityId: String): Boolean = false
+    fun setInviteSetting(communityId: String, on: Boolean): Boolean = false
+    /** Members of this community who accept invites (not us). */
+    fun inviteCandidates(communityId: String): List<InviteCandidateUi> = emptyList()
+    /** Founder: send a sealed invite; null if refused (limits, full, not founder). */
+    fun inviteSend(groupId: String, communityId: String, memberKey: String, text: String): InviteSentUi? = null
+    fun invitesSent(): List<InviteSentUi> = emptyList()
+    fun inviteRequests(): List<InviteRequestUi> = emptyList()
+    fun inviteAnswer(offerId: String, accept: Boolean): Boolean = false
+    fun inviteBlock(offerId: String): Boolean = false
+    /** Report evidence: only the signed invite (MR38). */
+    fun inviteReport(offerId: String): ByteArray? = null
+
     // Team moderation (PROTOCOL §23.9, TM1–TM4).
     /** Whether this build ships a moderation team (config/team_moderation.conf). */
     fun moderationHasTeam(): Boolean = false
@@ -568,4 +583,18 @@ data class LiveStatsUi(
     val listeners: Int = 0,
     /** Packets of taken-down streams this phone refused to relay. */
     val droppedModeration: Long = 0,
+)
+
+data class InviteCandidateUi(val key: String, val contactName: String?)
+/** [status] is "Not delivered yet", "Accepted", "Declined" or "Expired"; [notice] is the mesh-only notice (MR39). */
+data class InviteSentUi(val offerId: String, val groupId: String, val status: String, val notice: String = "")
+data class InviteRequestUi(
+    val offerId: String,
+    val communityId: String,
+    val communityName: String,
+    val inviterKey: String,
+    val inviterName: String?,
+    val text: String,
+    val groupName: String,
+    val accepted: Boolean,
 )

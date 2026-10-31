@@ -197,6 +197,8 @@ pub(crate) struct MeshState {
     pub restore_hold: Option<(u64, bool)>,
     /// Genesis frames (invite links) of open communities.
     pub open_genesis: std::collections::BTreeMap<[u8; 32], Vec<u8>>,
+    /// §20.7 private invites (keys, limits, offers).
+    pub invites: crate::invites::InviteState,
 }
 
 impl MeshState {
@@ -217,6 +219,7 @@ impl MeshState {
             community: Default::default(),
             open: Default::default(),
             open_genesis: Default::default(),
+            invites: Default::default(),
             restore_hold: None,
         }
     }
@@ -239,7 +242,7 @@ impl MeshState {
     }
 }
 
-fn rand16() -> [u8; 16] {
+pub(crate) fn rand16() -> [u8; 16] {
     let mut b = [0u8; 16];
     let _ = getrandom::getrandom(&mut b);
     b
@@ -380,6 +383,7 @@ impl NodeState {
         self.load_moderation()?;
         self.load_communities()?;
         self.load_open_communities()?;
+        self.load_invites()?;
         self.enforce_live_moderation();
         self.load_news(now)
     }
@@ -869,6 +873,9 @@ impl MeshLink {
             }
             if node.on_open_community_envelope(&env)? {
                 continue; // public community post / control frame, never a chat
+            }
+            if node.on_invite_envelope(&env)? {
+                continue; // §20.7 private invite (never a chat, never history)
             }
             if omcp_core::news::is_news_envelope(&env) {
                 // Public news (already checked by the engine): no ack, no chat.

@@ -21,7 +21,7 @@ WCAG 2.2 audit (2.5.8, 2.4.11, 2.5.7) + glass-bar contrast. `DESIGN_SPEC.md` §5
 
 ## v0.1.20 — 2026-10-24
 
-Hopla News revised to the 2026-10-24 REQUIREMENTS and Jakob’s decisions. `DESIGN_SPEC.md` §5R rewritten (5.107–5.119); Q26–Q35 closed, Q37–Q39 open.
+Hopla News revised to the 2026-10-24 REQUIREMENTS and maintainer decisions. `DESIGN_SPEC.md` §5R rewritten (5.107–5.119); Q26–Q35 closed, Q37–Q39 open.
 
 ### Changed
 - The only source is **Google News RSS**, shown as a neutral “Google News” text label (no logo) plus “via ‹contact›” when relayed; “Relayed by N phones”. Reader = summary + “Read on Google News”. The label component takes a second source later (X news RSS, separate project) without layout changes.
@@ -45,7 +45,7 @@ Hopla News revised to the 2026-10-24 REQUIREMENTS and Jakob’s decisions. `DESI
 
 ## v0.1.19 — 2026-10-24
 
-Hopla News (REQUIREMENTS § Hopla News, v0.4 draft, incl. maintainer decisions), requested by Jakob. `DESIGN_SPEC.md` §5R (5.107–5.119).
+Hopla News (REQUIREMENTS § Hopla News, v0.4 draft, incl. maintainer decisions), requested by the maintainer. `DESIGN_SPEC.md` §5R (5.107–5.119).
 
 ### Added
 - 19 mockups (`news-top`, `news-local`, `news-local-empty`, `news-world`, `news-top-city`, `news-empty`, `news-loading`, `news-reader`, `news-reader-summary`, `news-trust`, `news-alert`, `news-sources`, `news-interests`, `news-onboarding-interests`, `news-share`, `news-share-bubble`, `news-chat-thread`, `news-community-thread`, `news-catchup`), each EN/FR/HE (draft) × light/dark = 114 PNGs.

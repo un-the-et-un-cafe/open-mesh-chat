@@ -22,6 +22,10 @@ ml-kem = { version = "=0.3.3", features = ["getrandom"] }
 
 # Hybrid ck mix per PROTOCOL §21.5: HKDF-SHA-384(salt=ck, ikm=mlkem_ss, info=OMCP-Noise-Hybrid-v1)
 hkdf = "=0.12.4"
+# §20.7 private invites: Elligator2 representatives for ephemeral X25519 keys
+# (dirty keys via the Edwards 8-torsion; field math with num-bigint).
+curve25519-dalek = "=4.1.3"
+num-bigint = "=0.4.8"
 # Live video: SFrame (RFC 9605) AES_128_GCM_SHA256_128 media frames.
 aes-gcm = "=0.10.3"
 sha2 = "=0.10.8"

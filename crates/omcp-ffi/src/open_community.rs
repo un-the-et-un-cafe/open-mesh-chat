@@ -112,7 +112,7 @@ impl NodeState {
         Ok(false)
     }
 
-    fn publish_open(&mut self, w: &Wire, id: &[u8; 32]) -> Result<(), FfiError> {
+    pub(crate) fn publish_open(&mut self, w: &Wire, id: &[u8; 32]) -> Result<(), FfiError> {
         let now = now_ms();
         let ttl = self.mesh.engine.new_ttl();
         let env = oc::seal(w, id, now, ttl);
@@ -143,13 +143,13 @@ fn cbor<T: serde::Serialize>(v: &T) -> Vec<u8> {
 }
 
 impl OmcpNode {
-    fn key_and_me(&self) -> Result<(SigningKey, [u8; 32]), FfiError> {
+    pub(crate) fn key_and_me(&self) -> Result<(SigningKey, [u8; 32]), FfiError> {
         let k = self.signing_key()?;
         let me = k.verifying_key().to_bytes();
         Ok((k, me))
     }
 
-    fn control(&self, id: [u8; 32], kind: ControlKind) -> Result<(), FfiError> {
+    pub(crate) fn control(&self, id: [u8; 32], kind: ControlKind) -> Result<(), FfiError> {
         let (k, _) = self.key_and_me()?;
         let c = Control::new(&k, id, kind, now_ms());
         let mut st = self.inner.lock();
@@ -344,7 +344,7 @@ impl OmcpNode {
         self.control(id, ControlKind::RemovePost { post_id, reason })
     }
 
-    /// Community Live is members-only.
+    /// Community Live is deferred (§20.3): always false.
     pub fn open_community_can_join_live(&self, community_id_hex: String) -> bool {
         let (Ok(id), Ok((_, me))) = (parse_id(&community_id_hex), self.key_and_me()) else {
             return false;

@@ -256,6 +256,26 @@ class RustOmcpCore : OmcpCore {
     override fun liveBlockedUntilMs(communityId: String): Long? = node?.liveBlockedUntilMs(communityId)?.toLong()
     override fun openReportPost(communityId: String, postId: String, reason: Int, note: String?): ByteArray? =
         runCatching { node?.openCommunityReportPost(communityId, postId, reason.toUByte(), note) }.getOrNull()
+    override fun inviteSettingEnabled(communityId: String): Boolean =
+        runCatching { node?.openCommunityInvitesEnabled(communityId) ?: false }.getOrDefault(false)
+    override fun setInviteSetting(communityId: String, on: Boolean): Boolean =
+        runCatching { node?.openCommunitySetInvitesEnabled(communityId, on) != null }.getOrDefault(false)
+    override fun inviteCandidates(communityId: String): List<InviteCandidateUi> =
+        node?.privateInviteCandidates(communityId)?.map { InviteCandidateUi(it.memberKeyHex, it.contactName) } ?: emptyList()
+    override fun inviteSend(groupId: String, communityId: String, memberKey: String, text: String): InviteSentUi? = runCatching {
+        node?.privateInviteSend(groupId, communityId, memberKey, text)?.let { InviteSentUi(it.offerIdHex, groupId, it.status, it.notice) }
+    }.getOrNull()
+    override fun invitesSent(): List<InviteSentUi> =
+        node?.privateInvitesSent()?.map { InviteSentUi(it.offerIdHex, it.groupIdHex, it.status) } ?: emptyList()
+    override fun inviteRequests(): List<InviteRequestUi> = node?.privateInviteRequests()?.map {
+        InviteRequestUi(it.offerIdHex, it.communityIdHex, it.communityName, it.inviterKeyHex, it.inviterName, it.invitationText, it.groupName, it.accepted)
+    } ?: emptyList()
+    override fun inviteAnswer(offerId: String, accept: Boolean): Boolean =
+        runCatching { node?.privateInviteAnswer(offerId, accept) != null }.getOrDefault(false)
+    override fun inviteBlock(offerId: String): Boolean =
+        runCatching { node?.privateInviteBlock(offerId) != null }.getOrDefault(false)
+    override fun inviteReport(offerId: String): ByteArray? =
+        runCatching { node?.privateInviteReport(offerId) }.getOrNull()
     override fun communities(): List<CommunityUi> = node?.communities()?.map(::community) ?: emptyList()
     override fun communityCreate(name: String): CommunityUi? =
         runCatching { node?.communityCreate(name)?.let(::community) }.getOrNull()

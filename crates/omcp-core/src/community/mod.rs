@@ -12,7 +12,7 @@
 //!
 //! Roles: only the founder appoints moderators. A moderator removal needs a
 //! reason; the post body is erased and the post is hidden from everyone,
-//! moderators included. Community Live is members-only ([`Community::can_join_live`]).
+//! moderators included. Community Live is deferred (§20.3): [`Community::can_join_live`] is always false.
 //!
 //! Team takedowns (§23.10.6) fully erase the community, topic or post and
 //! leave a tombstone that is applied before any backup restore
@@ -289,6 +289,12 @@ pub enum ControlKind {
         post_id: [u8; 32],
         reason: String,
     },
+    /// Member profile update (§20.7(1)): `invite_pk` is profile field `0x10`
+    /// (1,228 B, [`crate::invite::InvitePk`]), present only while the member
+    /// accepts invites from non-contacts in this community; `None` removes it.
+    Profile {
+        invite_pk: Option<Vec<u8>>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -332,6 +338,16 @@ impl Control {
 }
 
 /// What travels in a community envelope.
+/// Community Live is future work (§20.3); kept off until communities get a
+/// shared key. Team kind 7 `LIVE_TAKEDOWN` stays registered regardless.
+pub const COMMUNITY_LIVE_ENABLED: bool = false;
+
+/// Should an incoming Live announcement for open community `id` be acted on?
+/// Always `false` while community Live is deferred (§20.3).
+pub fn accept_community_live_announcement(_community_id: &[u8; 32]) -> bool {
+    COMMUNITY_LIVE_ENABLED
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Wire {
     Post(Post),
@@ -365,6 +381,9 @@ pub struct Community {
     pub members: BTreeSet<[u8; 32]>,
     pub topics: BTreeMap<[u8; 32], Topic>,
     pub posts: BTreeMap<[u8; 32], StoredPost>,
+    /// Published `invite_pk` per member (profile field `0x10`, §20.7(1)).
+    #[serde(default)]
+    pub invite_pks: BTreeMap<[u8; 32], Vec<u8>>,
 }
 
 impl Community {
@@ -374,9 +393,11 @@ impl Community {
     pub fn is_member(&self, who: &[u8; 32]) -> bool {
         self.members.contains(who)
     }
-    /// Community Live is members-only.
-    pub fn can_join_live(&self, who: &[u8; 32]) -> bool {
-        self.is_member(who)
+    /// Community Live is deferred until communities get a shared key
+    /// (PROTOCOL §20.3, 2026-10-31): nobody may start or join a Live in an
+    /// open community, and community Live announcements are ignored.
+    pub fn can_join_live(&self, _who: &[u8; 32]) -> bool {
+        COMMUNITY_LIVE_ENABLED
     }
     /// History bytes counted against [`HISTORY_MAX_BYTES`].
     pub fn history_bytes(&self) -> u64 {
@@ -503,6 +524,7 @@ impl CommunityStore {
                         members,
                         topics: BTreeMap::new(),
                         posts: BTreeMap::new(),
+                        invite_pks: BTreeMap::new(),
                     },
                 );
             }
@@ -525,6 +547,7 @@ impl CommunityStore {
                 }
                 com.members.remove(&c.actor);
                 com.moderators.remove(&c.actor);
+                com.invite_pks.remove(&c.actor);
             }
             ControlKind::AppointModerator { member } => {
                 if c.actor != com.founder {
@@ -553,6 +576,22 @@ impl CommunityStore {
                     author: c.actor,
                     created_ms: c.created_ms,
                 });
+            }
+            ControlKind::Profile { invite_pk } => {
+                if !com.is_member(&c.actor) {
+                    return err("profile of a non-member");
+                }
+                match invite_pk {
+                    Some(pk) => {
+                        if pk.len() != crate::invite::INVITE_PK_LEN {
+                            return err("invite_pk length");
+                        }
+                        com.invite_pks.insert(c.actor, pk.clone());
+                    }
+                    None => {
+                        com.invite_pks.remove(&c.actor);
+                    }
+                }
             }
             ControlKind::RemovePost { post_id, reason } => {
                 if !com.is_moderator(&c.actor) {

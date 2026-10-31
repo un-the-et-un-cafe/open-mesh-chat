@@ -53,6 +53,9 @@ pub enum OmcpError {
     #[error("MLS operation failed: {0}")]
     Mls(&'static str),
 
+    #[error("private invite: {0}")]
+    Invite(&'static str),
+
     #[error("MLS-PQ extension malformed: {0}")]
     MlsPqMalformed(&'static str),
 
