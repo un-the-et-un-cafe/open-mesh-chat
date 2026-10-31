@@ -37,6 +37,7 @@ pub mod error;
 pub mod files;
 pub mod framing;
 pub mod gateway;
+pub mod group_tags;
 pub mod handshake;
 pub mod invite;
 pub mod live;

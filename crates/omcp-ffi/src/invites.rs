@@ -382,6 +382,48 @@ impl NodeState {
     }
 }
 
+impl OmcpNode {
+    /// Rotate invite keys (30 days) and republish the profile of every
+    /// community whose published `invite_pk` changed (§20.7(1)).
+    pub(crate) fn invite_maintain(&self, now_s: u64) -> Result<Vec<[u8; 32]>, FfiError> {
+        let changed: Vec<([u8; 32], Vec<u8>)> = {
+            let mut st = self.inner.lock();
+            let comms: Vec<[u8; 32]> = st.mesh.open.communities.keys().copied().collect();
+            let ring = &mut st.mesh.invites.keyring;
+            let before: Vec<([u8; 32], Option<[u8; 8]>)> = comms
+                .into_iter()
+                .map(|c| (c, ring.published(&c).map(|p| p.key_id)))
+                .collect();
+            ring.rotate(now_s);
+            let mut out = Vec::new();
+            for (c, kid) in before {
+                if let Some(p) = ring.published(&c) {
+                    if Some(p.key_id) != kid {
+                        out.push((c, p.encode()));
+                    }
+                }
+            }
+            st.invite_tick(now_s);
+            if !out.is_empty() {
+                st.save_invites()?;
+                st.refresh_invite_keys();
+            }
+            out
+        };
+        let mut ids = Vec::new();
+        for (c, pk) in changed {
+            self.control(
+                c,
+                ControlKind::Profile {
+                    invite_pk: Some(pk),
+                },
+            )?;
+            ids.push(c);
+        }
+        Ok(ids)
+    }
+}
+
 #[uniffi::export]
 impl OmcpNode {
     /// "Invites from people who aren't contacts" for this community (TM15).

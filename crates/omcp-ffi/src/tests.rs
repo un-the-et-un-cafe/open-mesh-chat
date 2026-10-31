@@ -3812,3 +3812,77 @@ fn community_live_announcements_are_ignored_and_cannot_start() {
     // Kind 7 LIVE_TAKEDOWN stays registered.
     assert_eq!(omcp_core::moderation::ActionKind::LiveTakedown as u8, 7);
 }
+
+/// Deliver `from`'s group-tag envelopes to `to` through its wanted tags.
+fn deliver_group(from: &OmcpNode, to: &OmcpNode) -> usize {
+    let envs = std::mem::take(&mut from.inner.lock().mesh.community.test_log);
+    let mut n = 0;
+    for e in envs {
+        let mut st = to.inner.lock();
+        st.mesh.tags_for = None;
+        crate::mesh::refresh_wants(&mut st, now_ms()).unwrap();
+        let tag = omcp_core::sync::tag::tag_from_aad(&e.header_aad)
+            .unwrap()
+            .unwrap();
+        if let Some((gid, ep)) = st.mesh.group_tags.get(&tag).copied() {
+            st.on_group_envelope(gid, ep, &e).unwrap();
+            n += 1;
+        }
+    }
+    n
+}
+
+#[test]
+fn non_contact_invitee_sends_and_receives_group_messages_on_group_tags() {
+    let (n, m, cid, gid, mk) = invite_setup();
+    assert!(!n.inner.lock().contacts.contains_key(&m.inner.peer_id));
+    n.private_invite_send(gid.clone(), cid, mk, String::new())
+        .unwrap();
+    deliver(&n, &m);
+    let id = m.private_invite_requests()[0].offer_id_hex.clone();
+    m.private_invite_answer(id, true).unwrap();
+    deliver(&m, &n);
+    deliver(&n, &m);
+    n.inner.lock().mesh.community.test_log.clear();
+    // Invitee → founder.
+    m.private_group_send(gid.clone(), "hi from M".into())
+        .unwrap();
+    let envs = m.inner.lock().mesh.community.test_log.clone();
+    assert_eq!(envs.len(), 1);
+    // Hard rule: an outsider (the team) can't map or open it; nothing names
+    // the group or its members outside the seal.
+    let o = node("Team");
+    assert!(o.inner.lock().mesh.group_tags.is_empty());
+    let gidb = parse_id(&gid).unwrap();
+    for e in &envs {
+        assert!(!has(&e.header_aad, &gidb) && !has(&e.ciphertext, &gidb));
+        assert!(!has(&e.ciphertext, &m.inner.peer_id) && !has(&e.ciphertext, b"hi from M"));
+    }
+    assert_eq!(deliver_group(&m, &n), 1);
+    assert!(n
+        .private_group_messages(gid.clone())
+        .iter()
+        .any(|x| x.body == "hi from M"));
+    // Founder → invitee.
+    n.private_group_send(gid.clone(), "hi from N".into())
+        .unwrap();
+    assert_eq!(deliver_group(&n, &m), 1);
+    assert!(m
+        .private_group_messages(gid.clone())
+        .iter()
+        .any(|x| x.body == "hi from N"));
+}
+
+#[test]
+fn invite_key_rotation_republishes_profile() {
+    let (_n, m, cid, _gid, mk) = invite_setup();
+    let cidb = parse_id(&cid).unwrap();
+    let mkb = parse_id(&mk).unwrap();
+    let before = m.inner.lock().mesh.open.get(&cidb).unwrap().invite_pks[&mkb].clone();
+    let later = now_ms() / 1000 + omcp_core::invite::ROTATE_S + 60;
+    assert_eq!(m.invite_maintain(later).unwrap(), vec![cidb]);
+    let after = m.inner.lock().mesh.open.get(&cidb).unwrap().invite_pks[&mkb].clone();
+    assert_ne!(before[..8], after[..8]);
+    // Nothing changes on a second call.
+    assert!(m.invite_maintain(later).unwrap().is_empty());
+}
