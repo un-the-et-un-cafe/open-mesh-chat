@@ -429,8 +429,23 @@ impl OmcpMlsMember {
                 .process_message(&self.provider, protocol)
                 .map_err(|_| OmcpError::Mls("process message"))?
         };
+        let sender_leaf = match processed.sender() {
+            Sender::Member(l) => Some(l.u32()),
+            _ => None,
+        };
         match processed.into_content() {
             ProcessedMessageContent::StagedCommitMessage(staged) => {
+                // §22.7 / §23.10.12 commit authorization: any member may commit
+                // only self-leave (Remove-self) and Update proposals; Add or
+                // Remove of others requires the admin (founder, leaf 0, in v1.0).
+                let is_admin = sender_leaf == Some(0);
+                let adds = staged.add_proposals().count() > 0;
+                let removes_other = staged
+                    .remove_proposals()
+                    .any(|r| Some(r.remove_proposal().removed().u32()) != sender_leaf);
+                if sender_leaf.is_none() || (!is_admin && (adds || removes_other)) {
+                    return Err(OmcpError::Mls("unauthorized commit"));
+                }
                 self.group
                     .as_mut()
                     .unwrap()
