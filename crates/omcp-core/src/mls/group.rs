@@ -429,8 +429,24 @@ impl OmcpMlsMember {
                 .process_message(&self.provider, protocol)
                 .map_err(|_| OmcpError::Mls("process message"))?
         };
+        let sender_leaf = match processed.sender() {
+            Sender::Member(l) => Some(l.u32()),
+            _ => None,
+        };
         match processed.into_content() {
             ProcessedMessageContent::StagedCommitMessage(staged) => {
+                // §22.7 / §23.10.12 commit authorization (no founder signature;
+                // the MLS FramedContent signature suffices). The admin (founder,
+                // leaf 0, in v1.0) may commit anything; any other member may only
+                // commit SelfRemove, Remove-of-the-proposer (leave) and Update.
+                if sender_leaf.is_none() {
+                    return Err(OmcpError::Mls("unauthorized commit"));
+                }
+                if sender_leaf != Some(0)
+                    && !staged.queued_proposals().all(commit_allowed_for_member)
+                {
+                    return Err(OmcpError::Mls("unauthorized commit"));
+                }
                 self.group
                     .as_mut()
                     .unwrap()
@@ -440,12 +456,54 @@ impl OmcpMlsMember {
             ProcessedMessageContent::ApplicationMessage(_) => {
                 return Err(OmcpError::Mls("expected commit, got app"));
             }
-            ProcessedMessageContent::ProposalMessage(_)
-            | ProcessedMessageContent::ExternalJoinProposalMessage(_)
+            ProcessedMessageContent::ProposalMessage(p) => {
+                self.group
+                    .as_mut()
+                    .unwrap()
+                    .store_pending_proposal(self.provider.storage(), *p)
+                    .map_err(|_| OmcpError::Mls("store proposal"))?;
+            }
+            ProcessedMessageContent::ExternalJoinProposalMessage(_)
             | ProcessedMessageContent::OwnPendingCommit
             | ProcessedMessageContent::OwnPrivateMessage => {}
         }
         Ok(())
+    }
+
+    /// Commit an Update of the own leaf (any member may do this).
+    pub fn self_update(&mut self) -> Result<Vec<u8>> {
+        let group = self.group.as_mut().ok_or(OmcpError::Mls("no group"))?;
+        let bundle = group
+            .commit_builder()
+            .consume_proposal_store(true)
+            .load_psks(self.provider.storage())
+            .map_err(|_| OmcpError::Mls("self update"))?
+            .build(
+                self.provider.rand(),
+                self.provider.crypto(),
+                &self.signer,
+                |_| true,
+            )
+            .map_err(|_| OmcpError::Mls("self update"))?
+            .stage_commit(&self.provider)
+            .map_err(|_| OmcpError::Mls("self update"))?;
+        group
+            .merge_pending_commit(&self.provider)
+            .map_err(|_| OmcpError::Mls("merge self update"))?;
+        bundle
+            .commit()
+            .to_bytes()
+            .map_err(|_| OmcpError::Mls("serialize commit"))
+    }
+
+    /// Propose leaving the group (Remove-self proposal); returns the proposal.
+    pub fn propose_leave(&mut self) -> Result<Vec<u8>> {
+        let group = self.group.as_mut().ok_or(OmcpError::Mls("no group"))?;
+        let msg = group
+            .leave_group(&self.provider, &self.signer)
+            .map_err(|_| OmcpError::Mls("leave"))?;
+        msg.to_bytes()
+            .map_err(|_| OmcpError::Mls("serialize leave"))
     }
 
     /// Remove members by leaf index; returns serialized commit (no welcome).
@@ -527,13 +585,15 @@ impl OmcpMlsMember {
     /// members must be at the same MLS epoch to agree; receivers should also
     /// try the previous MLS epoch's exporter during a commit race. The
     /// OMCP-MLS-PQ hybrid mix is not applied here (spec says plain exporter).
-    pub fn tag_exporter(&self, tag_epoch: u64) -> Result<[u8; 32]> {
+    pub fn tag_exporter(&self, _tag_epoch: u64) -> Result<[u8; 32]> {
         let group = self.group_ref()?;
         let out = group
             .export_secret(
                 self.provider.crypto(),
                 crate::sync::tag::TAG_EXPORTER_LABEL,
-                &tag_epoch.to_be_bytes(),
+                // §22.7(13): empty context; the 6-hour slot goes into the tag
+                // input (`mailbox_tag(secret, slot)`), not the exporter.
+                b"",
                 32,
             )
             .map_err(|_| OmcpError::Mls("export_secret"))?;
@@ -643,6 +703,15 @@ impl OmcpMlsMember {
 impl crate::sync::tag::TagSecretSource for OmcpMlsMember {
     fn tag_secret(&self, tag_epoch: u64) -> Result<[u8; 32]> {
         self.tag_exporter(tag_epoch)
+    }
+}
+
+/// §22.7 / §23.10.12: proposals a non-admin member may commit.
+fn commit_allowed_for_member(q: &QueuedProposal) -> bool {
+    match q.proposal() {
+        Proposal::Update(_) | Proposal::SelfRemove => true,
+        Proposal::Remove(r) => matches!(q.sender(), Sender::Member(l) if *l == r.removed()),
+        _ => false,
     }
 }
 
@@ -759,5 +828,98 @@ mod tests {
         let back = bob.encrypt_app_message_with_aad(b"ok", b"").unwrap();
         assert_eq!(alice.decrypt_app_message_with_aad(&back).unwrap().0, b"ok");
         assert_eq!(alice.tag_exporter(5).unwrap(), bob.tag_exporter(5).unwrap());
+    }
+
+    fn group3() -> (OmcpMlsMember, OmcpMlsMember, OmcpMlsMember) {
+        let mut a = OmcpMlsMember::generate(b"alice".to_vec()).unwrap();
+        let mut b = OmcpMlsMember::generate(b"bob".to_vec()).unwrap();
+        let mut c = OmcpMlsMember::generate(b"carol".to_vec()).unwrap();
+        a.create_group().unwrap();
+        let (_c1, w) = a.add_members(&[b.take_key_package().unwrap()]).unwrap();
+        b.join_from_welcome(&w).unwrap();
+        let (c2, w2) = a.add_members(&[c.take_key_package().unwrap()]).unwrap();
+        b.process_protocol_message(&c2).unwrap();
+        c.join_from_welcome(&w2).unwrap();
+        (a, b, c)
+    }
+
+    #[test]
+    fn auth_non_admin_update_accepted() {
+        let (mut a, mut b, mut c) = group3();
+        let commit = b.self_update().unwrap();
+        a.process_protocol_message(&commit).unwrap();
+        c.process_protocol_message(&commit).unwrap();
+        assert_eq!(a.epoch().unwrap(), b.epoch().unwrap());
+    }
+
+    #[test]
+    fn auth_non_admin_leave_accepted() {
+        let (mut a, mut b, mut c) = group3();
+        let prop = c.propose_leave().unwrap();
+        a.process_protocol_message(&prop).unwrap();
+        b.process_protocol_message(&prop).unwrap();
+        let commit = b.self_update().unwrap(); // non-admin commits the leave
+        a.process_protocol_message(&commit).unwrap();
+        assert_eq!(a.member_count().unwrap(), 2);
+        assert_eq!(b.member_count().unwrap(), 2);
+    }
+
+    #[test]
+    fn auth_non_admin_add_rejected() {
+        let (mut a, mut b, mut c) = group3();
+        let mut d = OmcpMlsMember::generate(b"dave".to_vec()).unwrap();
+        let (commit, _w) = b.add_members(&[d.take_key_package().unwrap()]).unwrap();
+        assert!(a.process_protocol_message(&commit).is_err());
+        assert!(c.process_protocol_message(&commit).is_err());
+    }
+
+    #[test]
+    fn auth_non_admin_remove_other_rejected() {
+        let (mut a, mut b, mut c) = group3();
+        let commit = b.remove_members(&[c.own_leaf_index().unwrap()]).unwrap();
+        assert!(a.process_protocol_message(&commit).is_err());
+        assert!(c.process_protocol_message(&commit).is_err());
+        assert_eq!(a.member_count().unwrap(), 3);
+    }
+
+    #[test]
+    fn auth_non_member_commit_rejected() {
+        let (mut a, mut b, mut c) = group3();
+        let rm = a.remove_members(&[c.own_leaf_index().unwrap()]).unwrap();
+        b.process_protocol_message(&rm).unwrap();
+        // the removed member is no longer in the group; its commits are rejected
+        let stale = c.self_update().unwrap();
+        assert!(a.process_protocol_message(&stale).is_err());
+        assert!(b.process_protocol_message(&stale).is_err());
+    }
+
+    #[test]
+    fn auth_founder_add_and_remove_accepted() {
+        let (mut a, mut b, mut c) = group3();
+        let mut d = OmcpMlsMember::generate(b"dave".to_vec()).unwrap();
+        let (add, w) = a.add_members(&[d.take_key_package().unwrap()]).unwrap();
+        b.process_protocol_message(&add).unwrap();
+        c.process_protocol_message(&add).unwrap();
+        d.join_from_welcome(&w).unwrap();
+        let rm = a.remove_members(&[d.own_leaf_index().unwrap()]).unwrap();
+        b.process_protocol_message(&rm).unwrap();
+        c.process_protocol_message(&rm).unwrap();
+        assert_eq!(b.member_count().unwrap(), 3);
+    }
+
+    #[test]
+    fn third_member_join_followed_by_non_contact_over_group_tag() {
+        use crate::sync::tag::chat_tag;
+        let (mut a, mut b, _c) = group3();
+        let mut d = OmcpMlsMember::generate(b"dave".to_vec()).unwrap();
+        let (add, w) = a.add_members(&[d.take_key_package().unwrap()]).unwrap();
+        d.join_from_welcome(&w).unwrap();
+        // bob is not a contact of dave: he only sees the commit under the group tag
+        let tag_before = chat_tag(&b, 9).unwrap();
+        b.process_protocol_message(&add).unwrap();
+        assert_ne!(tag_before, chat_tag(&b, 9).unwrap());
+        assert_eq!(chat_tag(&b, 9).unwrap(), chat_tag(&d, 9).unwrap());
+        let ct = d.encrypt_app_message(b"hi").unwrap();
+        assert_eq!(b.decrypt_app_message(&ct).unwrap(), b"hi");
     }
 }

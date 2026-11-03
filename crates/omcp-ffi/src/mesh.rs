@@ -173,6 +173,8 @@ pub(crate) struct MeshState {
     pub tags: HashMap<MailboxTag, [u8; 32]>,
     /// (epoch, MLS fingerprint) the tags were computed for.
     pub tags_for: Option<(u64, [u8; 32])>,
+    /// Private-group tags: tag → (group id, tag epoch) (§22.7).
+    pub group_tags: HashMap<MailboxTag, ([u8; 32], u64)>,
     /// Frames waiting to be sealed onto each link.
     pub out: HashMap<u64, VecDeque<OutFrame>>,
     /// 1:1 MLS groups by contact.
@@ -208,6 +210,7 @@ impl MeshState {
             engine: RelayEngine::new(RelayConfig::default(), now, seed),
             tags: HashMap::new(),
             tags_for: None,
+            group_tags: Default::default(),
             out: HashMap::new(),
             mls: HashMap::new(),
             status: Vec::new(),
@@ -550,6 +553,8 @@ fn mls_fp(st: &NodeState) -> [u8; 32] {
         .map(|(id, m)| (*id, m.member.epoch().unwrap_or(0)))
         .collect();
     v.sort();
+    v.push(([0xff; 32], 0));
+    v.extend(st.group_epochs());
     let mut h = blake3::Hasher::new();
     for (id, e) in v {
         h.update(&id);
@@ -585,6 +590,11 @@ pub(crate) fn refresh_wants(st: &mut NodeState, now: u64) -> Result<(), FfiError
         }
     }
     let mut wants: BTreeSet<MailboxTag> = tags.keys().copied().collect();
+    // Private groups (§22.7): the group's own MLS chat tag, so members who
+    // aren't our contacts (joined by invite) still reach us.
+    let gw = st.group_wants(now);
+    wants.extend(gw.iter().map(|(t, _, _)| *t));
+    st.mesh.group_tags = gw.into_iter().map(|(t, id, e)| (t, (id, e))).collect();
     // Hopla News: the phone subscribes only to its channels' public tags.
     wants.extend(st.mesh.news.tags());
     // Team moderation actions (§23.9) are wanted by every compliant client.
@@ -885,6 +895,10 @@ impl MeshLink {
                 }
                 continue;
             }
+            if let Some((gid, e)) = node.mesh.group_tags.get(&tag).copied() {
+                node.on_group_envelope(gid, e, &env)?;
+                continue; // private-group frame on the group's tag (§22.7)
+            }
             let Some(peer) = node.mesh.tags.get(&tag).copied() else {
                 continue;
             };
@@ -1001,6 +1015,7 @@ impl OmcpNode {
     /// after `queue_*`). Returns link handles with frames waiting; call
     /// `flush()` on each.
     pub fn mesh_tick(&self, now_ms: u64) -> Result<Vec<u64>, FfiError> {
+        let _ = self.invite_maintain(now_ms / 1000);
         let mut st = self.inner.lock();
         tick(&mut st, now_ms)
     }

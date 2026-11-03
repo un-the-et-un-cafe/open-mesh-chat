@@ -29,6 +29,7 @@ use omcp_core::mls::group::{MlsMemberState, OmcpMlsMember};
 use serde::{Deserialize, Serialize};
 
 use crate::{invalid, now_ms, parse_id, FfiError, NodeState, OmcpNode};
+use omcp_core::group_tags as gt;
 
 pub const COMMUNITY_MIME: &str = "application/omcp-community";
 const STATE_KEY: &[u8] = b"communities-v1";
@@ -226,6 +227,11 @@ pub(crate) struct CommunityState {
     pub outbox: Vec<([u8; 32], Vec<u8>)>,
     /// Gossip dedup (BLAKE2b of forwarded group / rekey messages).
     seen: HashSet<[u8; 32]>,
+    /// §22.7(13): tag secrets of retired MLS epochs, accepted for 7 days.
+    pub(crate) old_tags: HashMap<[u8; 32], omcp_core::sync::tag::EpochTagHistory>,
+    /// Test hook: group-tag envelopes this node published.
+    #[cfg(test)]
+    pub test_log: Vec<omcp_core::EnvelopeV1>,
 }
 
 fn h32(parts: &[&[u8]]) -> [u8; 32] {
@@ -394,6 +400,8 @@ impl NodeState {
             if let Some(mut c) = self.mesh.community.list.remove(id) {
                 c.member.erase_group();
             }
+            // Takedown deletes the group's tags (§22.7(13)).
+            self.mesh.community.old_tags.remove(id);
             self.mesh.community.invites.remove(id);
             self.mesh.community.joining.remove(id);
             self.mesh.community.invited.retain(|(g, _)| g != id);
@@ -421,6 +429,149 @@ impl NodeState {
         self.mesh.community.outbox.push((to, m.encode()));
     }
 
+    /// Tag secret of group `id` for the current tag epoch.
+    fn group_secret(&self, id: &[u8; 32]) -> Option<[u8; 32]> {
+        let e = omcp_core::sync::tag::tag_epoch(now_ms());
+        self.mesh
+            .community
+            .list
+            .get(id)?
+            .member
+            .tag_exporter(e)
+            .ok()
+    }
+
+    /// Keep the tag secret of the epoch being left (§22.7(13)).
+    fn retire_secret(&mut self, id: &[u8; 32], sec: Option<[u8; 32]>) {
+        if let Some(s) = sec {
+            self.mesh
+                .community
+                .old_tags
+                .entry(*id)
+                .or_default()
+                .retire(s.to_vec(), now_ms());
+        }
+    }
+
+    /// Current + retired (≤ 7 days) tag secrets of group `id`.
+    fn group_secrets(&self, id: &[u8; 32], e: u64) -> Vec<[u8; 32]> {
+        let mut v: Vec<[u8; 32]> = self
+            .mesh
+            .community
+            .list
+            .get(id)
+            .and_then(|c| c.member.tag_exporter(e).ok())
+            .into_iter()
+            .collect();
+        if let Some(h) = self.mesh.community.old_tags.get(id) {
+            v.extend(
+                h.secrets(now_ms())
+                    .into_iter()
+                    .filter_map(|s| <[u8; 32]>::try_from(s).ok()),
+            );
+        }
+        v
+    }
+
+    /// Publish a group frame on the group's MLS tag (§22.7), sealed with
+    /// `secret` (taken before a commit for commits). Reaches members who
+    /// are not our contacts; relays see an opaque envelope only.
+    fn publish_group_with(&mut self, secret: [u8; 32], m: &CMsg) -> Result<(), FfiError> {
+        let now = now_ms();
+        let e = omcp_core::sync::tag::tag_epoch(now);
+        let tag = gt::group_tag(&secret, e).map_err(mls)?;
+        let ttl = self.mesh.engine.new_ttl();
+        let env = gt::seal(
+            &secret,
+            &tag,
+            &m.encode(),
+            crate::mesh::rand16(),
+            now,
+            now + omcp_core::sync::budget::DEFAULT_EXPIRY_MS,
+            ttl,
+        )
+        .map_err(mls)?;
+        #[cfg(test)]
+        self.mesh.community.test_log.push(env.clone());
+        let ev = self.mesh.engine.submit_own(env, now)?;
+        self.route(ev)?;
+        Ok(())
+    }
+
+    fn publish_group(&mut self, id: &[u8; 32], m: &CMsg) -> Result<(), FfiError> {
+        match self.group_secret(id) {
+            Some(s) => self.publish_group_with(s, m),
+            None => Ok(()),
+        }
+    }
+
+    /// A group-tag envelope for group `id` (tag epoch `e`).
+    pub(crate) fn on_group_envelope(
+        &mut self,
+        id: [u8; 32],
+        e: u64,
+        env: &omcp_core::EnvelopeV1,
+    ) -> Result<(), FfiError> {
+        if !self.mesh.community.list.contains_key(&id) {
+            return Ok(());
+        }
+        let Some(frame) = self
+            .group_secrets(&id, e)
+            .iter()
+            .find_map(|s| gt::open(s, env).ok())
+        else {
+            return Ok(());
+        };
+        match CMsg::decode(&frame) {
+            Some(CMsg::Group { id: gid, ct }) if gid == id => self.on_group([0; 32], id, ct),
+            Some(CMsg::Rekey { rekey }) => self.on_rekey([0; 32], rekey),
+            // Commits are MLS-authenticated (only members can produce one);
+            // the founder is the only committer. The roster is checked against
+            // the MLS member list in the Commit handler.
+            Some(CMsg::Commit { id: gid, .. }) if gid == id => {
+                let founder = self.mesh.community.list[&id].founder;
+                self.on_community_msg(founder, &frame)
+            }
+            _ => Ok(()),
+        }
+    }
+
+    /// (tag → (group, tag epoch)) for every private group, epochs e-1 and e.
+    pub(crate) fn group_wants(
+        &self,
+        now: u64,
+    ) -> Vec<(omcp_core::sync::tag::MailboxTag, [u8; 32], u64)> {
+        let e = omcp_core::sync::tag::tag_epoch(now);
+        let mut out = Vec::new();
+        for (id, c) in &self.mesh.community.list {
+            if self.removed(id) {
+                continue;
+            }
+            let _ = c;
+            for t in [e.saturating_sub(1), e] {
+                for ts in self.group_secrets(id, t) {
+                    if let Ok(tag) = gt::group_tag(&ts, t) {
+                        out.push((tag, *id, t));
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// Fingerprint input: (group, MLS epoch) of every private group.
+    pub(crate) fn group_epochs(&self) -> Vec<([u8; 32], u64)> {
+        let mut v: Vec<_> = self
+            .mesh
+            .community
+            .list
+            .iter()
+            .map(|(id, c)| (*id, c.member.epoch().unwrap_or(0)))
+            .collect();
+        v.sort();
+        v
+    }
+
     /// Seal a live start/end into the community group and send it to every
     /// member we know directly.
     pub(crate) fn announce_live(
@@ -444,7 +595,7 @@ impl NodeState {
         for p in self.roster_contacts(id, &[]) {
             self.post(p, &msg);
         }
-        Ok(())
+        self.publish_group(id, &msg)
     }
 
     /// Host: rotate after removing `removed`; signed rekey to everyone else.
@@ -470,7 +621,7 @@ impl NodeState {
         for p in self.roster_contacts(id, &excluded) {
             self.post(p, &msg);
         }
-        Ok(())
+        self.publish_group(id, &msg)
     }
 
     /// A community message from contact `peer` (pairwise E2EE).
@@ -502,6 +653,7 @@ impl NodeState {
                     .map(|c| c.name.clone())
                     .unwrap_or_default();
                 let team = self.mesh.team.clone();
+                let old_secret = self.group_secret(&id);
                 let (commit, welcome, roster, others, cname, founder) = {
                     let Some(c) = self.mesh.community.list.get_mut(&id) else {
                         return Ok(());
@@ -520,6 +672,7 @@ impl NodeState {
                     (commit, welcome, roster, others, c.name.clone(), c.founder)
                 };
                 self.mesh.community.invited.remove(&(id, peer));
+                self.retire_secret(&id, old_secret);
                 self.save_communities()?;
                 for o in others {
                     if self.contacts.contains_key(&o) {
@@ -532,6 +685,16 @@ impl NodeState {
                             },
                         );
                     }
+                }
+                if let Some(sec) = old_secret {
+                    self.publish_group_with(
+                        sec,
+                        &CMsg::Commit {
+                            id,
+                            commit: commit.clone(),
+                            roster: roster.clone(),
+                        },
+                    )?;
                 }
                 self.post(
                     peer,
@@ -583,14 +746,37 @@ impl NodeState {
                 self.save_communities()?;
             }
             CMsg::Commit { id, commit, roster } => {
+                let before = self.group_secret(&id);
+                let epoch_before = self
+                    .mesh
+                    .community
+                    .list
+                    .get(&id)
+                    .and_then(|c| c.member.epoch().ok());
                 let Some(c) = self.mesh.community.list.get_mut(&id) else {
                     return Ok(());
                 };
                 if c.founder != peer {
                     return Ok(());
                 }
-                c.member.process_protocol_message(&commit).map_err(mls)?;
-                let new: BTreeMap<[u8; 32], String> = roster.into_iter().collect();
+                if c.member.process_protocol_message(&commit).is_err() {
+                    return Ok(()); // stale, replayed or not for this epoch
+                }
+                if c.member.epoch().ok() != epoch_before && c.member.has_group() {
+                    self.retire_secret(&id, before);
+                }
+                let c = self.mesh.community.list.get_mut(&id).unwrap();
+                let ids: HashSet<Vec<u8>> = c
+                    .member
+                    .member_identities()
+                    .map_err(mls)?
+                    .into_iter()
+                    .map(|(_, cred)| cred)
+                    .collect();
+                let new: BTreeMap<[u8; 32], String> = roster
+                    .into_iter()
+                    .filter(|(k, _)| ids.contains(k.as_slice()))
+                    .collect();
                 let gone: Vec<String> = c
                     .roster
                     .iter()
@@ -1144,6 +1330,7 @@ impl OmcpNode {
             for p in st.roster_contacts(&id, &[]) {
                 st.post(p, &msg);
             }
+            st.publish_group(&id, &msg)?;
             mid
         };
         self.drain_community_outbox();
@@ -1254,6 +1441,7 @@ impl OmcpNode {
         let me = self.me();
         {
             let mut st = self.inner.lock();
+            let old_secret = st.group_secret(&id);
             let (commit, roster) = {
                 let c = st
                     .mesh
@@ -1278,6 +1466,7 @@ impl OmcpNode {
                 let roster: Vec<_> = c.roster.iter().map(|(a, b)| (*a, b.clone())).collect();
                 (commit, roster)
             };
+            st.retire_secret(&id, old_secret);
             st.save_communities()?;
             for p in st.roster_contacts(&id, &[me]) {
                 st.post(
@@ -1288,6 +1477,9 @@ impl OmcpNode {
                         roster: roster.clone(),
                     },
                 );
+            }
+            if let Some(sec) = old_secret {
+                st.publish_group_with(sec, &CMsg::Commit { id, commit, roster })?;
             }
         }
         self.drain_community_outbox();

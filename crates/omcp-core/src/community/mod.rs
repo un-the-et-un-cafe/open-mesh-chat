@@ -42,6 +42,8 @@ pub const MAX_REASON: usize = 500;
 /// Community posts are public (TM12, MR27). The app shows the notice when true.
 pub const POSTS_ARE_PUBLIC: bool = true;
 pub const POSTS_ARE_PUBLIC_NOTICE: &str = "Posts in communities are public. Anyone in the community can read them, and they are not end-to-end encrypted.";
+/// TM12: shown before posting; posts carry the Hopla identity, linkable across communities.
+pub const POSTS_IDENTITY_NOTICE: &str = "Your posts show your Hopla identity, and people can see the same identity in other communities you join.";
 const POST_DOMAIN: &[u8] = b"OMCP-community-post-v1\x00";
 const CTRL_DOMAIN: &[u8] = b"OMCP-community-ctrl-v1\x00";
 const TAG_DOMAIN: &[u8] = b"OMCP-community-tag-v1\x00";

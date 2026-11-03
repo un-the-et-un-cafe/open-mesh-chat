@@ -132,8 +132,8 @@ impl NodeState {
         st.receiver = s.receiver;
         st.sent = s.sent;
         st.recv = s.recv;
+        // §20.7 1a: no key rotation on app start.
         let now = now_ms() / 1000;
-        st.keyring.rotate(now);
         self.invite_tick(now);
         self.refresh_invite_keys();
         Ok(())
@@ -270,14 +270,8 @@ impl NodeState {
             .mesh
             .open
             .get(&community)
-            .is_some_and(|c| c.is_member(&o.inviter_pseudonym_pk));
-        if !member
-            || !self
-                .mesh
-                .invites
-                .receiver
-                .admit(&o.inviter_pseudonym_pk, now)
-        {
+            .is_some_and(|c| c.is_member(&o.inviter_pk));
+        if !member || !self.mesh.invites.receiver.admit(&o.inviter_pk, now) {
             return Ok(()); // dropped silently, no reply
         }
         self.mesh.invites.recv.insert(
@@ -379,6 +373,45 @@ impl NodeState {
         self.on_community_msg(founder, &w.welcome)?;
         self.mesh.invites.recv.remove(&w.offer_id);
         self.save_invites()
+    }
+}
+
+impl OmcpNode {
+    /// Rotate invite keys (30 days) and republish the profile of every
+    /// community whose published `invite_pk` changed (§20.7(1)).
+    pub(crate) fn invite_maintain(&self, now_s: u64) -> Result<Vec<[u8; 32]>, FfiError> {
+        let changed: Vec<([u8; 32], Vec<u8>)> = {
+            let mut st = self.inner.lock();
+            let comms: Vec<[u8; 32]> = st.mesh.open.communities.keys().copied().collect();
+            let ring = &mut st.mesh.invites.keyring;
+            ring.rotate(now_s);
+            let mut out = Vec::new();
+            for c in ring.take_republish(now_s) {
+                if !comms.contains(&c) {
+                    continue;
+                }
+                if let Some(p) = ring.published(&c) {
+                    out.push((c, p.encode()));
+                }
+            }
+            st.invite_tick(now_s);
+            if !out.is_empty() {
+                st.save_invites()?;
+                st.refresh_invite_keys();
+            }
+            out
+        };
+        let mut ids = Vec::new();
+        for (c, pk) in changed {
+            self.control(
+                c,
+                ControlKind::Profile {
+                    invite_pk: Some(pk),
+                },
+            )?;
+            ids.push(c);
+        }
+        Ok(ids)
     }
 }
 
@@ -574,12 +607,10 @@ impl OmcpNode {
                         .get(&r.community)
                         .map(|c| c.name.clone())
                         .unwrap_or_default(),
-                    inviter_key_hex: hex::encode(o.inviter_pseudonym_pk),
+                    inviter_key_hex: hex::encode(o.inviter_pk),
                     inviter_name: st
                         .contacts
-                        .get(&omcp_core::device::peer_id_from_identity(
-                            &o.inviter_pseudonym_pk,
-                        ))
+                        .get(&omcp_core::device::peer_id_from_identity(&o.inviter_pk))
                         .map(|c| c.name.clone()),
                     invitation_text: o.invitation_text,
                     group_name: o.group_name,
@@ -660,7 +691,7 @@ impl OmcpNode {
             .remove(&id)
             .ok_or_else(|| invalid("no invite"))?;
         let o = InviteOffer::decode(&r.offer).map_err(ce)?;
-        st.mesh.invites.receiver.block(o.inviter_pseudonym_pk);
+        st.mesh.invites.receiver.block(o.inviter_pk);
         st.save_invites()
     }
 

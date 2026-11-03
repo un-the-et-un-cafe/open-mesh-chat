@@ -50,6 +50,10 @@ pub const DAY_S: u64 = 86_400;
 pub const ROTATE_S: u64 = 30 * DAY_S;
 /// Previous private keys are kept this long, then erased.
 pub const OVERLAP_S: u64 = 7 * DAY_S;
+/// At most two keys per community (current + previous) (§20.7 1a).
+pub const MAX_KEYS_PER_COMMUNITY: usize = 2;
+/// Profile republish after a rotation: at most once per community per hour.
+pub const REPUBLISH_MIN_S: u64 = 3600;
 /// Receivers try at most this many invite keys per unknown envelope.
 pub const MAX_KEYS_TRIED: usize = 16;
 /// Default offer lifetime (matches the 72 h store expiry).
@@ -185,6 +189,10 @@ pub struct InviteKeyring {
     keys: BTreeMap<[u8; 32], Vec<InviteKey>>,
     /// When a community's setting was turned off (erase after the overlap).
     disabled_at: BTreeMap<[u8; 32], u64>,
+    /// Communities whose profile must be republished (in memory).
+    pending_republish: BTreeSet<[u8; 32]>,
+    /// Last profile republish per community (in memory).
+    last_republish: BTreeMap<[u8; 32], u64>,
 }
 
 impl InviteKeyring {
@@ -194,20 +202,73 @@ impl InviteKeyring {
 
     pub fn set_enabled(&mut self, community: [u8; 32], on: bool, now_s: u64) {
         if on {
-            self.enabled.insert(community);
-            self.disabled_at.remove(&community);
-            self.rotate(now_s);
+            // §20.7 1a: turning the setting on rotates (fresh key).
+            if self.enabled.insert(community) {
+                self.disabled_at.remove(&community);
+                self.push_key(community, now_s);
+            }
         } else if self.enabled.remove(&community) {
+            // Republished at once by the caller; key erased after 7 days.
             self.disabled_at.insert(community, now_s);
+        }
+        self.last_republish.insert(community, now_s);
+        self.pending_republish.remove(&community);
+    }
+
+    fn push_key(&mut self, c: [u8; 32], now_s: u64) {
+        let v = self.keys.entry(c).or_default();
+        v.push(InviteKey::generate(now_s, ROTATE_S + OVERLAP_S));
+        let n = v.len();
+        if n > MAX_KEYS_PER_COMMUNITY {
+            v.drain(..n - MAX_KEYS_PER_COMMUNITY);
+        }
+        self.pending_republish.insert(c);
+    }
+
+    /// Suspected compromise or restore from backup: rotate now (§20.7 1a).
+    pub fn force_rotate(&mut self, community: &[u8; 32], now_s: u64) {
+        if self.is_enabled(community) {
+            self.push_key(*community, now_s);
         }
     }
 
-    /// Create / rotate keys and erase expired ones. Idempotent.
+    /// Force-rotate every enabled community (restore / suspected compromise).
+    pub fn force_rotate_all(&mut self, now_s: u64) {
+        for c in self.enabled.clone() {
+            self.push_key(c, now_s);
+        }
+    }
+
+    /// Communities whose profile is due for republish (max once per hour each).
+    pub fn take_republish(&mut self, now_s: u64) -> Vec<[u8; 32]> {
+        let due: Vec<[u8; 32]> = self
+            .pending_republish
+            .iter()
+            .filter(|c| {
+                self.last_republish
+                    .get(*c)
+                    .is_none_or(|t| now_s >= t + REPUBLISH_MIN_S)
+            })
+            .copied()
+            .collect();
+        for c in &due {
+            self.pending_republish.remove(c);
+            self.last_republish.insert(*c, now_s);
+        }
+        due
+    }
+
+    /// Periodic maintenance: rotate keys older than 30 days and erase expired
+    /// ones. Never rotates a key younger than 30 days (not on app start).
     pub fn rotate(&mut self, now_s: u64) {
         for c in self.enabled.clone() {
-            let v = self.keys.entry(c).or_default();
-            if v.last().is_none_or(|k| now_s >= k.created + ROTATE_S) {
-                v.push(InviteKey::generate(now_s, ROTATE_S + OVERLAP_S));
+            let due = self
+                .keys
+                .get(&c)
+                .and_then(|v| v.last())
+                .is_none_or(|k| now_s >= k.created + ROTATE_S);
+            if due {
+                self.push_key(c, now_s);
             }
         }
         let disabled = self.disabled_at.clone();
@@ -682,7 +743,7 @@ pub const TYPE_WELCOME: u8 = 0x03;
 pub struct InviteOffer {
     pub offer_id: [u8; 16],
     pub reply_pk: InvitePk,
-    pub inviter_pseudonym_pk: [u8; 32],
+    pub inviter_pk: [u8; 32],
     pub invitation_text: String,
     pub group_name: String,
     pub group_avatar_hash: Option<[u8; 32]>,
@@ -695,7 +756,7 @@ impl InviteOffer {
         let mut o = Vec::new();
         o.extend_from_slice(&self.offer_id);
         o.extend_from_slice(&self.reply_pk.encode());
-        o.extend_from_slice(&self.inviter_pseudonym_pk);
+        o.extend_from_slice(&self.inviter_pk);
         o.extend_from_slice(&(self.invitation_text.len() as u16).to_be_bytes());
         o.extend_from_slice(self.invitation_text.as_bytes());
         o.extend_from_slice(&(self.group_name.len() as u16).to_be_bytes());
@@ -726,7 +787,7 @@ impl InviteOffer {
         let mut o = Self {
             offer_id: rand_bytes(),
             reply_pk,
-            inviter_pseudonym_pk: key.verifying_key().to_bytes(),
+            inviter_pk: key.verifying_key().to_bytes(),
             invitation_text: text.into(),
             group_name: group_name.into(),
             group_avatar_hash,
@@ -740,8 +801,7 @@ impl InviteOffer {
     }
 
     pub fn verify(&self) -> Result<()> {
-        let vk = VerifyingKey::from_bytes(&self.inviter_pseudonym_pk)
-            .map_err(|_| err("pseudonym key"))?;
+        let vk = VerifyingKey::from_bytes(&self.inviter_pk).map_err(|_| err("pseudonym key"))?;
         let mut m = OFFER_SIG_CTX.to_vec();
         m.extend_from_slice(&self.signed_part());
         vk.verify(&m, &Signature::from_bytes(&self.sig))
@@ -762,7 +822,7 @@ impl InviteOffer {
         }
         let offer_id = r.arr()?;
         let reply_pk = InvitePk::decode(r.take(INVITE_PK_LEN)?)?;
-        let inviter_pseudonym_pk = r.arr()?;
+        let inviter_pk = r.arr()?;
         let text = r.bytes16()?;
         let name = r.bytes16()?;
         if text.len() > MAX_INVITATION_TEXT || name.len() > MAX_GROUP_NAME {
@@ -783,7 +843,7 @@ impl InviteOffer {
         let o = Self {
             offer_id,
             reply_pk,
-            inviter_pseudonym_pk,
+            inviter_pk,
             invitation_text,
             group_name,
             group_avatar_hash,
@@ -988,3 +1048,53 @@ pub fn offer_report(offer: &InviteOffer) -> Vec<u8> {
 #[cfg(test)]
 #[path = "tests_invite.rs"]
 mod tests_invite;
+
+#[cfg(test)]
+mod rotation_tests {
+    use super::*;
+    const C: [u8; 32] = [7; 32];
+
+    // MR64: no rotation before 30 days (app start / ticks), rotation after.
+    #[test]
+    fn mr64_rotate_only_after_30_days() {
+        let mut r = InviteKeyring::default();
+        r.set_enabled(C, true, 1_000);
+        let k0 = r.published(&C).unwrap().key_id;
+        r.rotate(1_000 + DAY_S);
+        let restored = InviteKeyring::from_bytes(&r.to_bytes()).unwrap();
+        assert_eq!(restored.published(&C).unwrap().key_id, k0);
+        assert_eq!(r.published(&C).unwrap().key_id, k0);
+        assert!(r.take_republish(1_000 + DAY_S).is_empty());
+        r.rotate(1_000 + ROTATE_S);
+        assert_ne!(r.published(&C).unwrap().key_id, k0);
+        assert_eq!(r.take_republish(1_000 + ROTATE_S), vec![C]);
+    }
+
+    // MR65: previous key kept 7 days, at most 2 keys; republish max once/hour.
+    #[test]
+    fn mr65_overlap_two_keys_and_republish_rate() {
+        let mut r = InviteKeyring::default();
+        r.set_enabled(C, true, 0);
+        r.force_rotate(&C, 10);
+        r.force_rotate(&C, 20);
+        assert_eq!(r.key_count(), MAX_KEYS_PER_COMMUNITY);
+        assert!(r.take_republish(30).is_empty()); // within the hour of set_enabled
+        assert_eq!(r.take_republish(REPUBLISH_MIN_S), vec![C]);
+        r.force_rotate(&C, REPUBLISH_MIN_S + 1);
+        assert!(r.take_republish(REPUBLISH_MIN_S + 2).is_empty());
+        r.rotate(REPUBLISH_MIN_S + 1 + OVERLAP_S);
+        assert_eq!(r.key_count(), 1);
+    }
+
+    // MR66: off removes the published key at once, erases it after 7 days.
+    #[test]
+    fn mr66_disable_unpublishes_then_erases() {
+        let mut r = InviteKeyring::default();
+        r.set_enabled(C, true, 0);
+        r.set_enabled(C, false, 100);
+        assert!(r.published(&C).is_none());
+        assert_eq!(r.key_count(), 1);
+        r.rotate(100 + OVERLAP_S);
+        assert_eq!(r.key_count(), 0);
+    }
+}
