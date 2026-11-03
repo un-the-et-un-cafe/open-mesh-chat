@@ -346,3 +346,113 @@ mod tests {
         assert_ne!(carry_tag(&t, 1), t);
     }
 }
+
+/// §22.7(13): old-epoch tags stay accepted for 7 days after an MLS epoch change.
+pub const OLD_EPOCH_ACCEPT_MS: u64 = 7 * 24 * 60 * 60 * 1000;
+
+/// Tag secrets of retired MLS epochs of one group (§22.7(13), TM33).
+/// The RemovalNotice is sent under the old-epoch tag ([`Self::removal_notice_tag`]),
+/// because the removed member cannot derive the new epoch's tags.
+#[derive(Default, Clone)]
+pub struct EpochTagHistory {
+    /// (retired_at_ms, exporter secret of the retired epoch), newest last.
+    old: Vec<(u64, Vec<u8>)>,
+}
+
+impl EpochTagHistory {
+    /// Record the exporter secret of the epoch being left at `now_ms`.
+    pub fn retire(&mut self, old_secret: Vec<u8>, now_ms: u64) {
+        self.old.push((now_ms, old_secret));
+        self.expire(now_ms);
+    }
+
+    /// Drop secrets retired more than 7 days ago.
+    pub fn expire(&mut self, now_ms: u64) {
+        self.old.retain(|(t, _)| now_ms < t + OLD_EPOCH_ACCEPT_MS);
+    }
+
+    /// Tags accepted at `now_ms`: current epoch plus retired epochs within 7 days.
+    pub fn accepted(&self, current_secret: &[u8], now_ms: u64) -> Result<Vec<MailboxTag>> {
+        let mut out = accepted_tags(current_secret, now_ms)?.to_vec();
+        for (t, s) in &self.old {
+            if now_ms < t + OLD_EPOCH_ACCEPT_MS {
+                out.extend(accepted_tags(s, now_ms)?);
+            }
+        }
+        Ok(out)
+    }
+
+    /// Tag for a RemovalNotice: the most recently retired epoch's tag.
+    pub fn removal_notice_tag(&self, now_ms: u64) -> Result<Option<MailboxTag>> {
+        match self.old.last() {
+            Some((_, s)) => Ok(Some(mailbox_tag(s, tag_epoch(now_ms))?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Takedown: delete all tag material.
+    pub fn takedown(&mut self) {
+        self.old.clear();
+    }
+
+    pub fn len(&self) -> usize {
+        self.old.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.old.is_empty()
+    }
+}
+
+#[cfg(test)]
+mod epoch_tag_tests {
+    use super::*;
+    const H: u64 = 60 * 60 * 1000;
+
+    // MR67: tags change per 6 h slot and per epoch.
+    #[test]
+    fn mr67_tags_change_per_slot_and_epoch() {
+        let (e1, e2) = ([1u8; 32], [2u8; 32]);
+        let t = 100 * TAG_EPOCH_MS;
+        assert_ne!(
+            mailbox_tag(&e1, tag_epoch(t)).unwrap(),
+            mailbox_tag(&e1, tag_epoch(t + 6 * H)).unwrap()
+        );
+        assert_ne!(
+            mailbox_tag(&e1, tag_epoch(t)).unwrap(),
+            mailbox_tag(&e2, tag_epoch(t)).unwrap()
+        );
+    }
+
+    // MR68: old-epoch tags accepted 7 days; RemovalNotice under old-epoch tag.
+    #[test]
+    fn mr68_old_epoch_accepted_7_days_and_removal_notice() {
+        let (old, cur) = ([1u8; 32], [2u8; 32]);
+        let t0 = 100 * TAG_EPOCH_MS;
+        let mut h = EpochTagHistory::default();
+        h.retire(old.to_vec(), t0);
+        let old_tag = mailbox_tag(&old, tag_epoch(t0 + H)).unwrap();
+        assert!(h.accepted(&cur, t0 + H).unwrap().contains(&old_tag));
+        assert_eq!(h.removal_notice_tag(t0 + H).unwrap(), Some(old_tag));
+        let late = t0 + OLD_EPOCH_ACCEPT_MS;
+        let late_old = mailbox_tag(&old, tag_epoch(late)).unwrap();
+        assert!(!h.accepted(&cur, late).unwrap().contains(&late_old));
+        h.expire(late);
+        assert!(h.is_empty());
+    }
+
+    // MR69: takedown deletes tags; open communities use the public tag.
+    #[test]
+    fn mr69_takedown_deletes_and_public_community_tag() {
+        let mut h = EpochTagHistory::default();
+        h.retire(vec![1u8; 32], 0);
+        h.takedown();
+        assert!(h.is_empty());
+        assert_eq!(h.removal_notice_tag(0).unwrap(), None);
+        let c = [9u8; 32];
+        assert_eq!(
+            crate::community::community_tag(&c),
+            crate::community::community_tag(&c)
+        );
+    }
+}
