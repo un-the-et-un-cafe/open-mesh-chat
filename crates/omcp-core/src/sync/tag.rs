@@ -390,6 +390,16 @@ impl EpochTagHistory {
         }
     }
 
+    /// Retired secrets still accepted at `now_ms`, newest first.
+    pub fn secrets(&self, now_ms: u64) -> Vec<&[u8]> {
+        self.old
+            .iter()
+            .rev()
+            .filter(|(t, _)| now_ms < t + OLD_EPOCH_ACCEPT_MS)
+            .map(|(_, s)| s.as_slice())
+            .collect()
+    }
+
     /// Takedown: delete all tag material.
     pub fn takedown(&mut self) {
         self.old.clear();

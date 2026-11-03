@@ -2998,8 +2998,16 @@ fn group_takedown_erases_private_group_and_stops_its_lives() {
         TeamAction::group_takedown(gref, Reason::Hate, [0; 32], "", 1),
         &team,
     );
+    // §22.7(13): the founder keeps the pre-Add epoch's tag (accepted 7 days).
+    let gid = parse_id(&cid).unwrap();
+    assert!(!a.inner.lock().mesh.community.old_tags[&gid].is_empty());
+    let wants = a.inner.lock().group_wants(now_ms());
+    assert!(wants.iter().filter(|w| w.1 == gid).count() >= 4);
     assert_eq!(b.moderation_publish(td).unwrap(), TeamActionResult::Applied);
     settle(&links);
+    // Takedown deletes the group's tags.
+    assert!(!a.inner.lock().mesh.community.old_tags.contains_key(&gid));
+    assert!(!b.inner.lock().mesh.community.old_tags.contains_key(&gid));
     // Host refuses to keep broadcasting, the viewer stops, nothing can restart.
     assert!(a.live_push_audio(vec![vec![1; 30]; 5]).is_err());
     let ended = a.live_take_ended();

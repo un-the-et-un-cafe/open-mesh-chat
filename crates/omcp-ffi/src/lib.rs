@@ -1392,7 +1392,21 @@ impl OmcpNode {
         let history = Zeroizing::new(history);
         let mut st = self.inner.lock();
         st.db().import_history(&history)?;
-        st.load(now_ms())
+        st.load(now_ms())?;
+        // §20.7 1a: rotate invite keys after a backup restore.
+        st.mesh.invites.keyring.force_rotate_all(now_ms() / 1000);
+        Ok(())
+    }
+
+    /// Suspected compromise (§20.7 1a): rotate all invite keys now; the
+    /// profile republish follows on the next maintenance tick (max 1/h).
+    pub fn invites_suspected_compromise(&self) {
+        self.inner
+            .lock()
+            .mesh
+            .invites
+            .keyring
+            .force_rotate_all(now_ms() / 1000);
     }
 
     /// New link as Noise initiator (we are the GATT central dialling a contact).

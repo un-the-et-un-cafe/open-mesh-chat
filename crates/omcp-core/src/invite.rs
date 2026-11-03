@@ -232,6 +232,13 @@ impl InviteKeyring {
         }
     }
 
+    /// Force-rotate every enabled community (restore / suspected compromise).
+    pub fn force_rotate_all(&mut self, now_s: u64) {
+        for c in self.enabled.clone() {
+            self.push_key(c, now_s);
+        }
+    }
+
     /// Communities whose profile is due for republish (max once per hour each).
     pub fn take_republish(&mut self, now_s: u64) -> Vec<[u8; 32]> {
         let due: Vec<[u8; 32]> = self
