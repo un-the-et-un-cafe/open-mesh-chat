@@ -271,13 +271,7 @@ impl NodeState {
             .open
             .get(&community)
             .is_some_and(|c| c.is_member(&o.inviter_pk));
-        if !member
-            || !self
-                .mesh
-                .invites
-                .receiver
-                .admit(&o.inviter_pk, now)
-        {
+        if !member || !self.mesh.invites.receiver.admit(&o.inviter_pk, now) {
             return Ok(()); // dropped silently, no reply
         }
         self.mesh.invites.recv.insert(
@@ -616,9 +610,7 @@ impl OmcpNode {
                     inviter_key_hex: hex::encode(o.inviter_pk),
                     inviter_name: st
                         .contacts
-                        .get(&omcp_core::device::peer_id_from_identity(
-                            &o.inviter_pk,
-                        ))
+                        .get(&omcp_core::device::peer_id_from_identity(&o.inviter_pk))
                         .map(|c| c.name.clone()),
                     invitation_text: o.invitation_text,
                     group_name: o.group_name,

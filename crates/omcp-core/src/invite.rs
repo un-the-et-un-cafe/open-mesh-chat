@@ -794,8 +794,7 @@ impl InviteOffer {
     }
 
     pub fn verify(&self) -> Result<()> {
-        let vk = VerifyingKey::from_bytes(&self.inviter_pk)
-            .map_err(|_| err("pseudonym key"))?;
+        let vk = VerifyingKey::from_bytes(&self.inviter_pk).map_err(|_| err("pseudonym key"))?;
         let mut m = OFFER_SIG_CTX.to_vec();
         m.extend_from_slice(&self.signed_part());
         vk.verify(&m, &Signature::from_bytes(&self.sig))

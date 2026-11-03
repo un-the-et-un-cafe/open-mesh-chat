@@ -442,7 +442,9 @@ impl OmcpMlsMember {
                 if sender_leaf.is_none() {
                     return Err(OmcpError::Mls("unauthorized commit"));
                 }
-                if sender_leaf != Some(0) && !staged.queued_proposals().all(commit_allowed_for_member) {
+                if sender_leaf != Some(0)
+                    && !staged.queued_proposals().all(commit_allowed_for_member)
+                {
                     return Err(OmcpError::Mls("unauthorized commit"));
                 }
                 self.group
@@ -476,7 +478,12 @@ impl OmcpMlsMember {
             .consume_proposal_store(true)
             .load_psks(self.provider.storage())
             .map_err(|_| OmcpError::Mls("self update"))?
-            .build(self.provider.rand(), self.provider.crypto(), &self.signer, |_| true)
+            .build(
+                self.provider.rand(),
+                self.provider.crypto(),
+                &self.signer,
+                |_| true,
+            )
             .map_err(|_| OmcpError::Mls("self update"))?
             .stage_commit(&self.provider)
             .map_err(|_| OmcpError::Mls("self update"))?;
@@ -495,7 +502,8 @@ impl OmcpMlsMember {
         let msg = group
             .leave_group(&self.provider, &self.signer)
             .map_err(|_| OmcpError::Mls("leave"))?;
-        msg.to_bytes().map_err(|_| OmcpError::Mls("serialize leave"))
+        msg.to_bytes()
+            .map_err(|_| OmcpError::Mls("serialize leave"))
     }
 
     /// Remove members by leaf index; returns serialized commit (no welcome).
