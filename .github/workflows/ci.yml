@@ -99,6 +99,15 @@ jobs:
 
       # Release-style test APK (R8 + resource shrinking, arm64 only) since v0.1.29.
       # Uses the debug keystore that assembleDebug above created in ~/.android.
+      - name: Ensure debug keystore exists
+        run: |
+          ks="$HOME/.android/debug.keystore"
+          if [ ! -f "$ks" ]; then
+            mkdir -p "$(dirname "$ks")"
+            keytool -genkeypair -v -keystore "$ks" -storepass android -keypass android \
+              -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
       - name: Build shrunk arm64 test APK
         working-directory: apps/android
         env:
