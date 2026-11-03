@@ -207,7 +207,7 @@ fn mr34_outer_header_carries_nothing_identifying() {
         i += 2 + e.header_aad[i + 1] as usize;
     }
     for needle in [
-        &offer.inviter_pseudonym_pk[..],
+        &offer.inviter_pk[..],
         &COMM[..],
         b"Secret Club",
         &offer.offer_id[..],
@@ -385,7 +385,7 @@ fn mr38_report_is_only_the_signed_offer() {
     let rep = offer_report(&offer);
     assert_eq!(rep, offer.encode());
     let back = InviteOffer::decode(&rep).unwrap();
-    assert_eq!(back.inviter_pseudonym_pk, sk(3).verifying_key().to_bytes());
+    assert_eq!(back.inviter_pk, sk(3).verifying_key().to_bytes());
     let mut forged = rep.clone();
     let n = forged.len();
     forged[n - 70] ^= 1;

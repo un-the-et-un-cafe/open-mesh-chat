@@ -682,7 +682,7 @@ pub const TYPE_WELCOME: u8 = 0x03;
 pub struct InviteOffer {
     pub offer_id: [u8; 16],
     pub reply_pk: InvitePk,
-    pub inviter_pseudonym_pk: [u8; 32],
+    pub inviter_pk: [u8; 32],
     pub invitation_text: String,
     pub group_name: String,
     pub group_avatar_hash: Option<[u8; 32]>,
@@ -695,7 +695,7 @@ impl InviteOffer {
         let mut o = Vec::new();
         o.extend_from_slice(&self.offer_id);
         o.extend_from_slice(&self.reply_pk.encode());
-        o.extend_from_slice(&self.inviter_pseudonym_pk);
+        o.extend_from_slice(&self.inviter_pk);
         o.extend_from_slice(&(self.invitation_text.len() as u16).to_be_bytes());
         o.extend_from_slice(self.invitation_text.as_bytes());
         o.extend_from_slice(&(self.group_name.len() as u16).to_be_bytes());
@@ -726,7 +726,7 @@ impl InviteOffer {
         let mut o = Self {
             offer_id: rand_bytes(),
             reply_pk,
-            inviter_pseudonym_pk: key.verifying_key().to_bytes(),
+            inviter_pk: key.verifying_key().to_bytes(),
             invitation_text: text.into(),
             group_name: group_name.into(),
             group_avatar_hash,
@@ -740,7 +740,7 @@ impl InviteOffer {
     }
 
     pub fn verify(&self) -> Result<()> {
-        let vk = VerifyingKey::from_bytes(&self.inviter_pseudonym_pk)
+        let vk = VerifyingKey::from_bytes(&self.inviter_pk)
             .map_err(|_| err("pseudonym key"))?;
         let mut m = OFFER_SIG_CTX.to_vec();
         m.extend_from_slice(&self.signed_part());
@@ -762,7 +762,7 @@ impl InviteOffer {
         }
         let offer_id = r.arr()?;
         let reply_pk = InvitePk::decode(r.take(INVITE_PK_LEN)?)?;
-        let inviter_pseudonym_pk = r.arr()?;
+        let inviter_pk = r.arr()?;
         let text = r.bytes16()?;
         let name = r.bytes16()?;
         if text.len() > MAX_INVITATION_TEXT || name.len() > MAX_GROUP_NAME {
@@ -783,7 +783,7 @@ impl InviteOffer {
         let o = Self {
             offer_id,
             reply_pk,
-            inviter_pseudonym_pk,
+            inviter_pk,
             invitation_text,
             group_name,
             group_avatar_hash,
