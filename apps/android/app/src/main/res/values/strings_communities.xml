@@ -102,4 +102,5 @@
     <string name="inv_status_declined">Declined</string>
     <string name="inv_status_expired">Expired</string>
     <string name="inv_turn_on">Turn on to get invites from community members</string>
+    <string name="u_identity_notice">Your posts show your Hopla identity, and people can see the same identity in other communities you join.</string>
 </resources>

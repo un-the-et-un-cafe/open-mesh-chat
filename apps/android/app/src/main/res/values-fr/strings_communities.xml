@@ -102,4 +102,5 @@
     <string name="inv_status_declined">Refusée</string>
     <string name="inv_status_expired">Expirée</string>
     <string name="inv_turn_on">Activez pour recevoir les invitations des membres</string>
+    <string name="u_identity_notice">Vos messages montrent votre identité Hopla, et les autres peuvent voir la même identité dans les autres communautés que vous rejoignez.</string>
 </resources>

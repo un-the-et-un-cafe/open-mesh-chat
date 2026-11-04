@@ -209,3 +209,12 @@ only appears in builds that ship a team. If a key is compromised, remove it in t
 
 Not in this version: the 1:1 fallback for the notice is used only when the
 old-epoch tag secret is missing; appeals; discovery screens (§5.143–5.144).
+
+## v0.1.32 — report keys (PROTOCOL §23.2/23.3), MR52, TM12
+
+- **Report key (TM34, MR70):** Ed25519 seed = HKDF-SHA256(identity seed, salt = community_ref or group_ref, info `OMCP-report-key-v1`). Derived on demand, never stored or backed up. Signs only reports and evidence files; one key per community/group, so reports can't be linked across scopes or to the identity.
+- **Community reports (MR6):** signed `CommunityReport` (domain `OMCP-community-report-v2`).
+- **Evidence (MR71):** key 8 = report key; key 1 `group_ref` and new key 10 `community_ref` are optional, exactly one present. A file whose key 8 equals a sender identity is rejected.
+- **MR52:** 1:1 chats refuse Leave, member removal and RemovalNotice in core (local calls and incoming commits/proposals).
+- **TM12:** POSTS_IDENTITY_NOTICE shown on the community join card and first-post dialog (EN/FR).
+- Deferred: attestations (not yet implemented) will use the same key.

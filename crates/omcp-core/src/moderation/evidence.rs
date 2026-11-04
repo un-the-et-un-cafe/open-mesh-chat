@@ -13,6 +13,7 @@
 
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 
+use super::report_key::ReportScope;
 use super::{group_ref, h256};
 use crate::error::{OmcpError, Result};
 
@@ -82,7 +83,10 @@ pub struct MemberDisclosure {
 /// `EvidenceFileV1` (§23.10.3(3)).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EvidenceFile {
-    pub group_ref: [u8; 32],
+    /// Key 1: private-group file. Exactly one of key 1 / key 10 (MR71).
+    pub group_ref: Option<[u8; 32]>,
+    /// Key 10: community file (§23.10.11(2) `community_ref`).
+    pub community_ref: Option<[u8; 32]>,
     pub export_ms: u64,
     pub messages: Vec<ReportedMessage>,
     pub reason_code: u8,
@@ -90,6 +94,8 @@ pub struct EvidenceFile {
     pub contact: Option<ReporterContact>,
     /// Only members the reporter explicitly chose to name.
     pub disclosures: Vec<MemberDisclosure>,
+    /// Key 8: the report key for this group/community (§23.2), never the
+    /// identity key.
     pub reporter_key: [u8; 32],
     pub reporter_sig: [u8; 64],
 }
@@ -338,12 +344,17 @@ impl EvidenceFile {
     fn to_v(&self, with_sig: bool) -> V {
         let mut m = vec![
             (0, V::U(1)),
-            (1, V::B(self.group_ref.to_vec())),
             (2, V::U(self.export_ms)),
             (3, V::A(self.messages.iter().map(|x| x.to_v()).collect())),
             (4, V::U(self.reason_code as u64)),
             (8, V::B(self.reporter_key.to_vec())),
         ];
+        if let Some(g) = &self.group_ref {
+            m.push((1, V::B(g.to_vec())));
+        }
+        if let Some(c) = &self.community_ref {
+            m.push((10, V::B(c.to_vec())));
+        }
         if let Some(n) = &self.note {
             m.push((5, V::T(n.clone())));
         }
@@ -392,6 +403,16 @@ impl EvidenceFile {
     }
 
     fn check_limits(&self) -> Result<()> {
+        if self.group_ref.is_some() == self.community_ref.is_some() {
+            return err("evidence: exactly one of group_ref / community_ref");
+        }
+        // Key separation: the file must not be signed by a sender's identity.
+        if !super::report_key::reporter_key_allowed(
+            &self.reporter_key,
+            self.messages.iter().map(|m| &m.sender_id),
+        ) {
+            return err("evidence: signed with an identity key");
+        }
         if self.messages.is_empty() || self.messages.len() > MAX_MESSAGES {
             return err("evidence: 1..500 messages");
         }
@@ -418,7 +439,9 @@ impl EvidenceFile {
 
     /// Build, sign and encode an evidence file from the messages the reporter
     /// picked (nothing else is added). `group_id` is the private group's
-    /// random 32-byte ID. Deterministic: same input → same bytes (MR20).
+    /// random 32-byte ID. Signed with the report key derived from
+    /// `identity` with salt = `group_ref` (MR71). Deterministic: same input
+    /// → same bytes (MR20).
     #[allow(clippy::too_many_arguments)]
     pub fn export(
         group_id: &[u8],
@@ -427,11 +450,41 @@ impl EvidenceFile {
         note: Option<String>,
         contact: Option<ReporterContact>,
         disclosures: Vec<MemberDisclosure>,
-        reporter: &SigningKey,
+        identity: &SigningKey,
         export_ms: u64,
     ) -> Result<Vec<u8>> {
+        Self::export_scoped(
+            ReportScope::Group(evidence_group_ref(group_id)),
+            messages,
+            reason_code,
+            note,
+            contact,
+            disclosures,
+            identity,
+            export_ms,
+        )
+    }
+
+    /// Same, for a community (key 10 `community_ref`, community report key).
+    #[allow(clippy::too_many_arguments)]
+    pub fn export_scoped(
+        scope: ReportScope,
+        messages: Vec<ReportedMessage>,
+        reason_code: u8,
+        note: Option<String>,
+        contact: Option<ReporterContact>,
+        disclosures: Vec<MemberDisclosure>,
+        identity: &SigningKey,
+        export_ms: u64,
+    ) -> Result<Vec<u8>> {
+        let reporter = super::report_key::report_key(identity, &scope);
+        let (group_ref, community_ref) = match scope {
+            ReportScope::Group(g) => (Some(g), None),
+            ReportScope::Community(c) => (None, Some(c)),
+        };
         let mut f = Self {
-            group_ref: evidence_group_ref(group_id),
+            group_ref,
+            community_ref,
             export_ms,
             messages,
             reason_code,
@@ -492,7 +545,8 @@ impl EvidenceFile {
                 .collect::<Result<_>>()?,
         };
         let f = Self {
-            group_ref: b32(need(&mut m, 1)?)?,
+            group_ref: get(&mut m, 1).map(b32).transpose()?,
+            community_ref: get(&mut m, 10).map(b32).transpose()?,
             export_ms: u(need(&mut m, 2)?)?,
             messages: a(need(&mut m, 3)?)?
                 .into_iter()
@@ -514,6 +568,12 @@ impl EvidenceFile {
         }
         f.check_limits()?;
         Ok(f)
+    }
+
+    /// Test helper: encode without the field checks (malformed files).
+    #[cfg(test)]
+    pub(crate) fn encode_unchecked(&self) -> Vec<u8> {
+        self.cbor(true)
     }
 
     /// `evidence_hash = BLAKE2b-256(whole file bytes)` (§23.10.3(3)).
@@ -558,7 +618,8 @@ pub fn verify(bytes: &[u8]) -> Result<Verification> {
         messages: f
             .messages
             .iter()
-            .map(|m| verify_message(&f.group_ref, m))
+            // Only group files carry MLS messages that can be checked.
+            .map(|m| f.group_ref.is_some_and(|g| verify_message(&g, m)))
             .collect(),
     })
 }
