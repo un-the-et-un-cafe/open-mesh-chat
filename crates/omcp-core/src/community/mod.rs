@@ -30,9 +30,12 @@ use crate::suite::{ENVELOPE_VERSION_V1, SUITE_OMCP_2026_A};
 use crate::sync::relay::put_expires_in_aad;
 use crate::sync::tag::{parse_routing_aad, put_tag_in_aad, MailboxTag};
 
+pub mod discovery;
 pub mod member_mod;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_discovery;
 #[cfg(test)]
 mod tests_member_mod;
 

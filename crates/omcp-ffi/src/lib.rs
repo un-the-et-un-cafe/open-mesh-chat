@@ -56,6 +56,7 @@ use zeroize::Zeroizing;
 uniffi::setup_scaffolding!();
 
 mod chatbackup;
+mod discovery;
 mod files;
 mod invites;
 mod live;

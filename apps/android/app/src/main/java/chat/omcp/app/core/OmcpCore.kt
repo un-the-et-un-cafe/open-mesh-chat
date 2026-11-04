@@ -413,6 +413,16 @@ interface OmcpCore {
     fun groupSecurity(groupId: String): GroupSecurityUi? = null
     /** MR29: when we can go live here again, if blocked now. */
     fun liveBlockedUntilMs(communityId: String): Long? = null
+    // §20.8 discovery: local search only; Listed is off by default (TM27).
+    fun discoverySearch(query: String, category: Int?, nearOnly: Boolean): List<DiscoveryUi> = emptyList()
+    fun discoveryHide(ref: String): Boolean = false
+    /** Signed announcement bytes only (MR62). */
+    fun discoveryReport(ref: String, reason: Int): ByteArray? = null
+    /** True when joined now; false while the community's genesis is on its way. */
+    fun discoveryJoin(ref: String): Boolean? = null
+    fun listedNotice(): String = ""
+    fun communityListing(communityId: String): ListingSettingsUi = ListingSettingsUi()
+    fun setListed(communityId: String, s: ListingSettingsUi): Boolean = false
     fun openReportPost(communityId: String, postId: String, reason: Int, note: String?): ByteArray? = null
 
     // §20.7 private invites from a community into a private group (TM13–TM17).
@@ -544,6 +554,28 @@ data class GroupMessageUi(
     val atMs: Long,
     val mine: Boolean,
     val reportable: Boolean,
+)
+
+data class DiscoveryUi(
+    val id: String,
+    val ref: String,
+    val name: String,
+    val description: String,
+    /** 1–8 (unknown codes arrive as 8, Other). */
+    val category: Int,
+    val tags: List<String>,
+    val sizeMin: Int,
+    val sizeMax: Int,
+    /** Worked out on this phone only; never sent. */
+    val nearYou: Boolean,
+    val joined: Boolean,
+)
+
+data class ListingSettingsUi(
+    val listed: Boolean = false,
+    val description: String = "",
+    val category: Int = 8,
+    val tags: List<String> = emptyList(),
 )
 
 data class OpenCommunityUi(

@@ -3968,3 +3968,71 @@ fn community_removal_ffi_presets_quota_and_founder_exempt() {
         .is_err());
     assert!(a.open_community_owner_alerts(c.community_id_hex).is_empty());
 }
+
+/// §20.8 over a real link: Listed off by default (MR53); founder lists,
+/// the neighbour finds it locally with "Near you" (MR63), joins from
+/// discovery; turning Listed off delists (MR57); report sends only the
+/// signed announcement (MR62).
+#[test]
+fn discovery_list_find_join_delist() {
+    let (a, b, la, lb) = paired();
+    pump(&la, &lb, la.start().unwrap());
+    let sync = |n: usize| {
+        for _ in 0..n {
+            a.mesh_tick(now_ms()).unwrap();
+            b.mesh_tick(now_ms()).unwrap();
+            pump(&la, &lb, la.flush().unwrap());
+            pump(&lb, &la, lb.flush().unwrap());
+        }
+    };
+    sync(3);
+    let c = a.open_community_create("Garden club".into()).unwrap();
+    let id = c.community_id_hex.clone();
+    assert!(!a.open_community_listing(id.clone()).listed);
+    assert!(a.discovery_listed_notice().starts_with("Listing makes"));
+    sync(2);
+    assert!(b.discovery_search(String::new(), None, false).is_empty());
+    // Only the founder; description capped at 140 code points.
+    assert!(b
+        .open_community_set_listed(id.clone(), true, "x".into(), 1, vec![], vec![])
+        .is_err());
+    assert!(a
+        .open_community_set_listed(id.clone(), true, "é".repeat(141), 1, vec![], vec![])
+        .is_err());
+    a.open_community_set_listed(
+        id.clone(),
+        true,
+        "Seed swaps and tools".into(),
+        1,
+        vec!["Seeds".into()],
+        vec!["en".into()],
+    )
+    .unwrap();
+    sync(2);
+    let r = b.discovery_search("seeds".into(), Some(1), false);
+    assert_eq!(r.len(), 1);
+    let l = &r[0];
+    assert!(l.near_you && !l.joined);
+    assert_eq!((l.size_min, l.size_max), (1, 10));
+    assert_eq!(l.tags, vec!["seeds".to_string()]);
+    let rep = b.discovery_report(l.community_ref_hex.clone(), 4).unwrap();
+    assert!(omcp_core::community::discovery::Listing::decode(&rep).is_ok());
+    assert!(b.discovery_report(l.community_ref_hex.clone(), 8).is_err());
+    assert!(b.discovery_search("seeds".into(), None, false).is_empty()); // hidden
+    let cref = l.community_ref_hex.clone();
+    // Join from discovery: completes when the genesis arrives.
+    let now = b.discovery_join(cref.clone()).unwrap();
+    if !now {
+        sync(3);
+    }
+    assert!(b
+        .open_communities()
+        .iter()
+        .any(|x| x.community_id_hex == id));
+    // Listed off: delist reaches the neighbour.
+    a.open_community_set_listed(id.clone(), false, String::new(), 1, vec![], vec![])
+        .unwrap();
+    sync(2);
+    let st = b.inner.lock();
+    assert!(st.mesh.engine.discovery().is_empty());
+}

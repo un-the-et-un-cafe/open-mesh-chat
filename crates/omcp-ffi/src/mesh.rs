@@ -201,6 +201,8 @@ pub(crate) struct MeshState {
     pub open_genesis: std::collections::BTreeMap<[u8; 32], Vec<u8>>,
     /// §20.7 private invites (keys, limits, offers).
     pub invites: crate::invites::InviteState,
+    /// §20.8 listings we own and joins started from discovery.
+    pub discovery: crate::discovery::DiscoveryState,
 }
 
 impl MeshState {
@@ -223,6 +225,7 @@ impl MeshState {
             open: Default::default(),
             open_genesis: Default::default(),
             invites: Default::default(),
+            discovery: Default::default(),
             restore_hold: None,
         }
     }
@@ -364,6 +367,20 @@ impl NodeState {
                 mesh.mls.insert(*id, ContactMls { member, ready: r.0 });
             }
         }
+        // §20.8: the index first, so carried listings it no longer holds drop.
+        if let Some(idx) = self
+            .db
+            .get_meta::<omcp_core::community::discovery::DiscoveryIndex>(
+                crate::discovery::INDEX_KEY,
+            )?
+        {
+            mesh.engine.set_discovery_index(idx.clone());
+            mesh.discovery.saved_index = Some(idx);
+        }
+        mesh.discovery.listed = self
+            .db
+            .get_meta(crate::discovery::LISTED_KEY)?
+            .unwrap_or_default();
         for r in self.db.carry_items()? {
             match EnvelopeV1::decode(&r.envelope) {
                 Ok(envelope) if r.expires_at > now => mesh.engine.restore(
@@ -537,6 +554,7 @@ fn mls_key(peer: &[u8; 32]) -> Vec<u8> {
 /// RL2 class of a persisted carry row (rows from before RL2 have none).
 pub(crate) fn carry_class(r: &CarryRec) -> RelayClass {
     match r.class.and_then(RelayClass::from_u8) {
+        Some(RelayClass::Discovery) => RelayClass::Discovery,
         _ if r.own => RelayClass::OwnChat,
         Some(c) if c != RelayClass::OwnChat => c,
         _ => RelayClass::Contact,
@@ -608,12 +626,22 @@ pub(crate) fn refresh_wants(st: &mut NodeState, now: u64) -> Result<(), FfiError
             .keys()
             .map(omcp_core::community::community_tag),
     );
+    // Joins started from discovery wait for the genesis on the community tag.
+    let pending: Vec<MailboxTag> = st
+        .mesh
+        .discovery
+        .pending
+        .keys()
+        .map(omcp_core::community::community_tag)
+        .collect();
+    wants.extend(pending.iter().copied());
     let ctags: Vec<MailboxTag> = st
         .mesh
         .open
         .communities
         .keys()
         .map(omcp_core::community::community_tag)
+        .chain(pending)
         .collect();
     st.mesh.engine.set_community_tags(ctags);
     st.mesh.tags = tags;
@@ -1022,6 +1050,7 @@ impl OmcpNode {
     /// `flush()` on each.
     pub fn mesh_tick(&self, now_ms: u64) -> Result<Vec<u64>, FfiError> {
         let _ = self.invite_maintain(now_ms / 1000);
+        self.discovery_maintain(now_ms)?;
         let mut st = self.inner.lock();
         tick(&mut st, now_ms)
     }

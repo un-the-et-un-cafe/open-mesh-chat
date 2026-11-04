@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- §20.8 discovery, §5.144/5.148/5.149 (TM25–TM31). -->
+<resources>
+    <string name="u_discover">Découvrir</string>
+    <string name="u_disc_search">Rechercher des communautés listées</string>
+    <string name="u_nearby">Près de vous d’abord</string>
+    <string name="u_no_groups_disc">Les groupes privés ne sont jamais listés ni trouvables. On n’y entre que sur invitation.</string>
+    <string name="u_f_nearby">À proximité</string>
+    <string name="u_cat_all">Tout</string>
+    <string name="u_cat_1">Local et quartier</string>
+    <string name="u_cat_2">Actualité</string>
+    <string name="u_cat_3">Loisirs et jeux</string>
+    <string name="u_cat_4">Arts, musique et culture</string>
+    <string name="u_cat_5">Sport et forme</string>
+    <string name="u_cat_6">Sciences, tech et savoir</string>
+    <string name="u_cat_7">Soutien et bien-être</string>
+    <string name="u_cat_8">Autre</string>
+    <string name="u_near_tag">Près de vous</string>
+    <string name="u_disc_note">Affiche les communautés arrivées sur des téléphones proches. Les tailles sont estimées par le ou la propriétaire.</string>
+    <string name="u_range_fmt">%1$s à %2$s membres</string>
+    <string name="u_comm_lbl_range">Communauté · ouverte · %1$s</string>
+    <string name="u_size_after_join">Membres et taille visibles après avoir rejoint</string>
+    <string name="u_open_not_e2ee">Ouverte · pas chiffrée de bout en bout</string>
+    <string name="u_hide">Masquer</string>
+    <string name="u_rep_comm">Signaler la communauté</string>
+    <string name="u_joining">Connexion…</string>
+    <string name="u_listed">Listée</string>
+    <string name="u_listed_d">Annoncée via le maillage et les passerelles. Tout le monde à proximité ou en ligne peut la trouver et lire ses fils.</string>
+    <string name="u_unlisted">Non listée</string>
+    <string name="u_unlisted_d">Pas annoncée. On rejoint par lien d’invitation, QR code ou code, ou invitation privée. Les messages passent quand même par le maillage et ne sont pas chiffrés de bout en bout.</string>
+    <string name="u_vis_change">Non listée par défaut. Seul·e le fondateur ou la fondatrice peut activer Listée, maintenant ou plus tard dans les réglages.</string>
+    <string name="u_listing_rules">Les communautés listées suivent les règles de listage : aucun contenu illégal, une description claire et une modération active.</string>
+    <string name="u_listed_notice">Lister cette communauté la rend trouvable par toute personne à proximité et par les téléphones qui la relaient. Son nom, sa description, ses tags et sa taille approximative deviennent publics. Les messages des communautés sont publics.</string>
+    <string name="u_turn_on_listed">Activer Listée</string>
+    <string name="u_keep_unlisted">Garder non listée</string>
+    <string name="u_desc_l">Description courte</string>
+    <string name="u_tags_l">Tags (5 max.)</string>
+    <string name="u_listing_update">Mettre à jour l’annonce</string>
+    <string name="u_listing_fail">Impossible de mettre à jour l’annonce. Vérifiez la description et les tags.</string>
+    <string name="u_loading">Recherche de communautés à proximité…</string>
+    <string name="u_e_heard">Aucune communauté captée à proximité pour l’instant</string>
+    <string name="u_e_srch2">Aucune communauté listée ne correspond à « %1$s »</string>
+    <string name="u_e_srch2_d">Seules les communautés listées déjà captées apparaissent. Les non listées demandent un code.</string>
+</resources>

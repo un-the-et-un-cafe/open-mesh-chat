@@ -216,6 +216,13 @@ pub struct RelayEngine {
     invite_keys: Vec<crate::invite::InviteKey>,
     /// Takedowns relays apply to `0x5B` post envelopes.
     community_blocks: crate::community::CommunityBlocks,
+    /// §20.8 discovery index and its envelope store (separate budget).
+    discovery: crate::community::discovery::DiscoveryIndex,
+    discovery_store: RelayStore,
+    /// (hour start, discovery envelopes forwarded this hour).
+    discovery_fwd: (u64, u32),
+    /// Links over the gateway / internet path (no "Near you").
+    gateway_links: BTreeSet<u64>,
     /// Full digests received from neighbours (post-restore hold, MR30).
     full_digests: u64,
     items: HashMap<[u8; 16], CarryItem>,
@@ -315,6 +322,13 @@ impl RelayEngine {
             community_tags: BTreeSet::new(),
             invite_keys: Vec::new(),
             community_blocks: Default::default(),
+            discovery: Default::default(),
+            discovery_store: RelayStore::new(RelayBudget {
+                storage_bytes: (crate::community::discovery::INDEX_MAX_BYTES as u64) * 3 / 2,
+                daily_forward_bytes: None,
+            }),
+            discovery_fwd: (0, 0),
+            gateway_links: BTreeSet::new(),
             full_digests: 0,
             store: RelayStore::new(cfg.budget),
             items: HashMap::new(),
@@ -420,6 +434,115 @@ impl RelayEngine {
         self.community_blocks = b;
     }
 
+    /// §20.8 local discovery index (search and browse run on it only).
+    pub fn discovery(&self) -> &crate::community::discovery::DiscoveryIndex {
+        &self.discovery
+    }
+
+    /// Reload the persisted index (before [`Self::restore`] of carry items).
+    pub fn set_discovery_index(&mut self, idx: crate::community::discovery::DiscoveryIndex) {
+        self.discovery = idx;
+    }
+
+    /// Mark `link` as the gateway / internet path (never "Near you").
+    pub fn set_link_gateway(&mut self, link: u64, gateway: bool) {
+        if gateway {
+            self.gateway_links.insert(link);
+        } else {
+            self.gateway_links.remove(&link);
+        }
+    }
+
+    fn drop_discovery(&mut self, ids: Vec<[u8; 16]>, ev: &mut Vec<RelayEvent>) {
+        for id in ids {
+            if self.items.remove(&id).is_some() {
+                self.discovery_store.take(&id);
+                self.sent_to.remove(&id);
+                ev.push(RelayEvent::Removed(id));
+            }
+        }
+    }
+
+    /// New moderation / roster facts for discovery (item 8).
+    pub fn set_discovery_context(
+        &mut self,
+        ctx: crate::community::discovery::DiscoveryContext,
+    ) -> Vec<RelayEvent> {
+        let mut ev = Vec::new();
+        let gone = self.discovery.set_context(ctx);
+        self.drop_discovery(gone, &mut ev);
+        ev
+    }
+
+    /// Local hide (never sent).
+    pub fn discovery_hide(&mut self, cref: [u8; 32], hidden: bool) {
+        self.discovery.set_hidden(cref, hidden);
+    }
+
+    /// Item 6: joining found a roster mismatch; stop relaying this ref.
+    pub fn discovery_distrust(&mut self, cref: [u8; 32]) -> Vec<RelayEvent> {
+        let mut ev = Vec::new();
+        let gone = self.discovery.distrust(cref);
+        self.drop_discovery(gone, &mut ev);
+        ev
+    }
+
+    /// Publish our own announcement or delist (sent once to neighbours).
+    pub fn submit_discovery_own(
+        &mut self,
+        env: EnvelopeV1,
+        now_ms: u64,
+    ) -> Result<Vec<RelayEvent>> {
+        let expires_at = effective_expiry(&env, now_ms)?;
+        let mut ev = Vec::new();
+        self.mark_seen(env.envelope_id, expires_at);
+        if !self.on_discovery(env, expires_at, 0, false, None, now_ms, &mut ev) {
+            return Err(crate::error::OmcpError::Sync("listing refused"));
+        }
+        Ok(ev)
+    }
+
+    /// Validate, index, store and forward one discovery envelope.
+    #[allow(clippy::too_many_arguments)]
+    fn on_discovery(
+        &mut self,
+        env: EnvelopeV1,
+        expires_at: u64,
+        hops: u8,
+        via_radio: bool,
+        from: Option<u64>,
+        now_ms: u64,
+        ev: &mut Vec<RelayEvent>,
+    ) -> bool {
+        use crate::community::discovery::{self as d, Ingested};
+        let Ok(l) = d::open(&env) else {
+            return false;
+        };
+        let id = env.envelope_id;
+        match self.discovery.ingest(&l, id, hops, via_radio, now_ms) {
+            Ok(Ingested::Again) => true,
+            Ok(Ingested::Stored { evicted }) => {
+                self.drop_discovery(evicted, ev);
+                let item = CarryItem {
+                    hop_count: hops,
+                    class: RelayClass::Discovery,
+                    envelope: env,
+                    expires_at,
+                    own: from.is_none(),
+                    ack_of: None,
+                };
+                if !self.admit(&item, now_ms, ev) {
+                    return false;
+                }
+                self.items.insert(id, item.clone());
+                ev.push(RelayEvent::Stored(item));
+                self.forward(&id, from, now_ms, ev);
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
     /// Number of full digests received so far (§22.7(11)).
     pub fn full_digests_received(&self) -> u64 {
         self.full_digests
@@ -438,7 +561,9 @@ impl RelayEngine {
 
     /// RL2 class of an envelope handed over by a neighbour of class `from`.
     fn classify(&self, env: &EnvelopeV1, tags: &[MailboxTag], from: RelayClass) -> RelayClass {
-        if self.is_community(env, tags) {
+        if crate::community::discovery::announce_tlv(&env.header_aad).is_some() {
+            RelayClass::Discovery
+        } else if self.is_community(env, tags) {
             RelayClass::Community
         } else if self.is_news(env, tags) {
             RelayClass::News
@@ -465,11 +590,13 @@ impl RelayEngine {
     /// Put `item` in the capped store; evicted items are dropped (events).
     /// `false` if the store refused it (RL2: it would be the first victim).
     fn admit(&mut self, item: &CarryItem, now_ms: u64, ev: &mut Vec<RelayEvent>) -> bool {
-        if item.class == RelayClass::Community {
-            return match self
-                .community_store
-                .insert(Self::meta(item, now_ms), now_ms)
-            {
+        if matches!(item.class, RelayClass::Community | RelayClass::Discovery) {
+            let store = if item.class == RelayClass::Community {
+                &mut self.community_store
+            } else {
+                &mut self.discovery_store
+            };
+            return match store.insert(Self::meta(item, now_ms), now_ms) {
                 InsertOutcome::Rejected => false,
                 InsertOutcome::Stored { evicted } => {
                     for e in evicted {
@@ -503,8 +630,8 @@ impl RelayEngine {
     }
 
     fn take_any(&mut self, id: &[u8; 16]) {
-        if self.store.take(id).is_none() {
-            self.community_store.take(id);
+        if self.store.take(id).is_none() && self.community_store.take(id).is_none() {
+            self.discovery_store.take(id);
         }
     }
 
@@ -549,6 +676,9 @@ impl RelayEngine {
             return;
         }
         let id = item.envelope.envelope_id;
+        if item.class == RelayClass::Discovery && !self.discovery.holds(&id) {
+            return; // superseded, delisted or evicted while persisted
+        }
         let mut dropped = Vec::new();
         if !self.admit(&item, now_ms, &mut dropped) {
             return;
@@ -759,6 +889,9 @@ impl RelayEngine {
     /// Periodic work: hello beacons, expiry, 30-min digest refresh.
     pub fn tick(&mut self, now_ms: u64) -> Vec<RelayEvent> {
         let mut ev = Vec::new();
+        // §20.8 4(d): listings expire 14 d after their latest issued_ms.
+        let gone = self.discovery.purge(now_ms);
+        self.drop_discovery(gone, &mut ev);
         let expired: Vec<[u8; 16]> = self
             .items
             .iter()
@@ -1013,6 +1146,20 @@ impl RelayEngine {
             return Ok(());
         }
         let tags = routing.route_tags();
+        if crate::community::discovery::announce_tlv(&env.header_aad).is_some() {
+            // §20.8: validated against the local index before it is stored
+            // or relayed; never delivered as a chat.
+            self.mark_seen(id, expires_at);
+            if ack_of.is_some() {
+                return Ok(());
+            }
+            let via_radio = !self.gateway_links.contains(&link);
+            let hops = crate::community::discovery::MAX_TTL
+                .saturating_sub(env.ttl_hops)
+                .max(1);
+            self.on_discovery(env, expires_at, hops, via_radio, Some(link), now_ms, ev);
+            return Ok(());
+        }
         if let Some(tlv) = crate::community::post_tlv(&env.header_aad) {
             if self.community_blocks.blocks(&tlv) {
                 // MR31: post / topic / community under takedown: drop.
@@ -1193,8 +1340,24 @@ impl RelayEngine {
         let Ok(bytes) = env.encode() else {
             return;
         };
-        let community = self.items.get(id).map(|i| i.class) == Some(RelayClass::Community);
-        if !own && !community && self.store.try_forward(bytes.len() as u64, now_ms).is_err() {
+        let class = self.items.get(id).map(|i| i.class);
+        let community = class == Some(RelayClass::Community);
+        if class == Some(RelayClass::Discovery) && !own {
+            // §20.8 5(b): at most 200 discovery envelopes an hour in total.
+            let hour = now_ms / 3_600_000;
+            if self.discovery_fwd.0 != hour {
+                self.discovery_fwd = (hour, 0);
+            }
+            if self.discovery_fwd.1 >= crate::community::discovery::FORWARD_PER_HOUR {
+                return;
+            }
+            self.discovery_fwd.1 += 1;
+        }
+        if !own
+            && !community
+            && class != Some(RelayClass::Discovery)
+            && self.store.try_forward(bytes.len() as u64, now_ms).is_err()
+        {
             return; // daily forwarding budget spent (§22.4)
         }
         let first = self.sent_to.get(id).is_none_or(|s| s.is_empty());

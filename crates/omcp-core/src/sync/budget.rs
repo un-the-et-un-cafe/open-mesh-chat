@@ -49,6 +49,9 @@ pub enum RelayClass {
     /// Open-community posts (§23.10.6): kept in their own store, outside the
     /// relay cap and the §22.4 daily forwarding budget.
     Community = 4,
+    /// Community discovery listings (§20.8): own 2 MB index, outside the
+    /// relay cap, community history and the daily forwarding budget.
+    Discovery = 5,
 }
 
 impl RelayClass {
@@ -63,6 +66,7 @@ impl RelayClass {
             2 => Self::Contact,
             3 => Self::OwnChat,
             4 => Self::Community,
+            5 => Self::Discovery,
             _ => return None,
         })
     }
