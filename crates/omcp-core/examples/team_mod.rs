@@ -3,9 +3,9 @@
 //! ```text
 //! team_mod keygen <secret-file>              # writes a new secret key file (0600), prints the PUBLIC key
 //! team_mod pub <secret-file>                 # prints the public key
-//! team_mod takedown <secret-file> <community_id_hex> <reason 1-7|9> <epoch> [note]
+//! team_mod takedown <secret-file> <community_id_hex> <reason 1-7|9> <epoch> [note] [duration_s, kind 9]
 //! team_mod restore  <secret-file> <community_id_hex> <epoch>
-//! team_mod v2 <secret-file> <kind 3-8> <target_hex> <item_hex|0> <reason|0> <evidence_hash_hex|0> <epoch> [note]
+//! team_mod v2 <secret-file> <kind 3-9> <target_hex> <item_hex|0> <reason|0> <evidence_hash_hex|0> <epoch> [note]
 //! ```
 //! v2 kinds (PROTOCOL §23.10.7): 3 GROUP_TAKEDOWN / 4 GROUP_RESTORE (target =
 //! group_ref, item 0), 5 POST_, 6 TOPIC_, 7 LIVE_TAKEDOWN, 8 ITEM_RESTORE
@@ -63,7 +63,7 @@ fn main() {
         }
         "v2" => {
             let k = load(arg(1));
-            let kind = ActionKind::from_code(arg(2).parse().expect("kind")).expect("kind 3-8");
+            let kind = ActionKind::from_code(arg(2).parse().expect("kind")).expect("kind 3-9");
             let h = |s: &str| {
                 if s == "0" {
                     [0u8; 32]
@@ -80,6 +80,7 @@ fn main() {
                 evidence_hash: h(arg(6)),
                 note: a.get(8).cloned().unwrap_or_default(),
                 epoch: arg(7).parse().expect("epoch"),
+                duration_s: a.get(9).map(|d| d.parse().expect("duration")).unwrap_or(0),
                 sigs: Vec::new(),
             };
             act.sign(&k);

@@ -314,6 +314,7 @@ impl OmcpNode {
                     ActionKind::TopicTakedown => "topic_takedown",
                     ActionKind::LiveTakedown => "live_takedown",
                     ActionKind::ItemRestore => "item_restore",
+                    ActionKind::MemberRemove => "member_remove",
                 }
                 .into(),
                 community_id_hex: hex::encode(e.target_id),

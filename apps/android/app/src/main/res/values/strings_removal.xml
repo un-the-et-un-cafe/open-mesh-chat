@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- DESIGN_SPEC §5W (5.146–5.149), PROTOCOL §23.10.11–12. v0.1.31 -->
+<resources>
+    <string name="u_sh_t">You’re not alone</string>
+    <string name="u_sh_d">If you or someone else is in danger, find a helpline near you.</string>
+    <string name="u_sh_link">Find a helpline (findahelpline.com)</string>
+    <string name="u_sh_ext">Opens in your browser</string>
+    <string name="u_rmm_t">Remove %1$s from the community</string>
+    <string name="u_rmm_menu">Remove member</string>
+    <string name="u_dur">For how long?</string>
+    <string name="u_dur_1h">1 hour</string>
+    <string name="u_dur_24h">24 hours</string>
+    <string name="u_dur_7d">7 days</string>
+    <string name="u_dur_30d">30 days</string>
+    <string name="u_dur_365d">365 days (maximum)</string>
+    <string name="u_rmm_what">They can still read, but can’t post or reply until it ends. They’ll see that a moderator removed them, not who.</string>
+    <string name="u_reason_req">Reason (required)</string>
+    <string name="u_rmm_btn">Remove for %1$s</string>
+    <string name="u_left_q">%1$d of 10 removals left this hour</string>
+    <string name="u_rmm_fail">Couldn’t remove this member.</string>
+    <string name="u_rn_t">A moderator removed you from %1$s</string>
+    <string name="u_rn_a">An admin removed you from %1$s</string>
+    <string name="u_rn_f">The founder removed you from %1$s</string>
+    <string name="u_rn_team">The Hopla team removed you from %1$s</string>
+    <string name="u_rn_d">You can keep reading. You can post again in %1$s.</string>
+    <string name="u_rn_perm">You can keep reading. This removal has no end date.</string>
+    <string name="u_rn_reason">Reason: %1$s</string>
+    <string name="u_rn_appeal">Appeals aren’t available yet.</string>
+    <string name="u_rn_comp">You can’t post here until the removal ends</string>
+    <string name="u_role_a">Admin</string>
+    <string name="u_mod_limit_t">Removal limit reached</string>
+    <string name="u_mod_limit_d">You can still remove posts and report. The limit resets within the hour.</string>
+    <string name="u_fa_t">A moderator made %1$d removals today</string>
+    <string name="u_fa_d">Moderators and admins can remove up to 10 people an hour and 30 a day. Check their removals, and revoke the role if something is wrong.</string>
+    <string name="u_fa_view">View removals</string>
+    <string name="u_fa_revoke">Revoke moderator</string>
+    <string name="u_removals_t">Removals</string>
+    <string name="u_removals_e">No removals by moderators or admins.</string>
+    <string name="u_restore">Restore</string>
+    <string name="u_rmr_hate">Hate</string>
+    <string name="u_rmr_illegal">Illegal content</string>
+    <string name="u_rmr_harass">Harassment</string>
+    <string name="u_rmr_spam">Spam</string>
+    <string name="u_rmr_threats">Threats</string>
+    <string name="u_rmr_selfharm">Self-harm or suicide</string>
+    <string name="u_rmr_other">Other (say why)</string>
+    <string name="g_leave">Leave group</string>
+    <string name="g_leave_t">Leave %1$s?</string>
+    <string name="g_leave_d">Your phone deletes this group’s keys. The others change the group key, so you can’t read anything new. You keep what you already read.</string>
+    <string name="g_left">You left this group. You can still read what you had, but nothing new.</string>
+    <string name="g_removed">You were removed from this group by %1$s. You keep what you already read, but nothing new.</string>
+    <string name="g_removed_admin">a group admin</string>
+    <string name="g_removed_member">a group member</string>
+</resources>

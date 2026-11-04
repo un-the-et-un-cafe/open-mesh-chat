@@ -291,6 +291,10 @@ fun OpenTopicScreen(core: OmcpCore, id: String, topicId: String, onBack: () -> U
                     }
                 }
             }
+            val myRemoval = core.openMyRemoval(id)
+            if (myRemoval != null) {
+                RemovedMemberNotice(myRemoval, info?.name.orEmpty())
+            } else {
             if (replyTo != null) TextButton(onClick = { replyTo = null }, Modifier.padding(horizontal = 8.dp)) { Text(stringResource(R.string.u_reply) + " ✕") }
             Row(Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 OutlinedTextField(draft, { draft = it }, Modifier.weight(1f), label = { Text(stringResource(if (replyTo == null) R.string.u_new_thread else R.string.u_reply)) },
@@ -299,6 +303,7 @@ fun OpenTopicScreen(core: OmcpCore, id: String, topicId: String, onBack: () -> U
                 Button(enabled = draft.isNotBlank() && bytes <= CommunityLimits.POST_BYTES, onClick = ::send, modifier = Modifier.padding(start = 8.dp).heightIn(min = 48.dp)) {
                     Text(stringResource(R.string.u_post_btn))
                 }
+            }
             }
         }
     }
@@ -400,6 +405,9 @@ fun RemoveReasonDialog(onDismiss: () -> Unit, onRemove: (String) -> Unit) {
     }, dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.u_cancel)) } })
 }
 
+/** MR41 / §5.146: help link for reason 10 (same value as Rust `SELF_HARM_HELP_URL`). */
+const val SELF_HARM_URL = "https://findahelpline.com"
+
 /** Report reasons shown in the sheet → protocol reason codes (§23.9). */
 val REPORT_REASONS = listOf(
     R.string.u_rep_r1 to 6, R.string.u_rep_r2 to 7, R.string.u_rep_r3 to 4, R.string.u_rep_r4 to 10,
@@ -436,6 +444,7 @@ fun ReportSheet(title: String, onDismiss: () -> Unit, make: (reason: Int, note: 
                     RadioButton(pick == i, null); Text(stringResource(res), Modifier.padding(start = 8.dp))
                 }
             }
+            if (REPORT_REASONS.getOrNull(pick)?.second == 10) SelfHarmNotice(SELF_HARM_URL)
             OutlinedTextField(note, { note = it.take(500); file = null }, Modifier.fillMaxWidth(), label = { Text(stringResource(R.string.u_note_opt)) })
             if (failed) Callout(stringResource(R.string.u_rep_fail), CalloutKind.Danger)
             if (saved) Callout(stringResource(R.string.u_rep_saved), CalloutKind.Ok)
@@ -469,7 +478,12 @@ fun OpenMembersScreen(core: OmcpCore, id: String, onBack: () -> Unit) {
     val c = LocalOmcpColors.current
     var members by remember { mutableStateOf(listOf<OpenMemberUi>()) }
     val isFounder = remember(id) { core.openCommunities().firstOrNull { it.id == id }?.isFounder == true }
+    var removing by remember { mutableStateOf<OpenMemberUi?>(null) }
     LaunchedEffect(id) { while (true) { members = core.openMembers(id); kotlinx.coroutines.delay(2_000) } }
+    val myRank = roleRank(members.firstOrNull { it.isMe }?.role ?: "member")
+    removing?.let { m ->
+        MemberRemoveSheet(core, id, m.key, m.contactName ?: m.key.take(8)) { removing = null; members = core.openMembers(id) }
+    }
     Scaffold(topBar = {
         TopAppBar(title = { Text(stringResource(R.string.u_members_t)) }, navigationIcon = {
             IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.back)) }
@@ -478,12 +492,16 @@ fun OpenMembersScreen(core: OmcpCore, id: String, onBack: () -> Unit) {
         LazyColumn(Modifier.fillMaxSize().padding(padding)) {
             item { Text(stringResource(R.string.d_id_note), color = c.ink2, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp)) }
             item { Text(stringResource(R.string.u_mod_rule), color = c.ink2, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(16.dp)) }
+            if (myRank >= 2) item { FounderRemovalsSection(core, id, isFounder) { members = core.openMembers(id) } }
             items(members, key = { it.key }) { m ->
                 Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    val role = stringResource(when (m.role) { "founder" -> R.string.u_role_f; "moderator" -> R.string.u_role_m; else -> R.string.u_role_n })
+                    val role = stringResource(when (m.role) { "founder" -> R.string.u_role_f; "admin" -> R.string.u_role_a; "moderator" -> R.string.u_role_m; else -> R.string.u_role_n })
                     MemberIdentity(m.key, if (m.isMe) stringResource(R.string.u_member_you) else m.contactName, role, Modifier.weight(1f))
                     if (isFounder && m.role == "member") OutlinedButton(onClick = { core.openMakeModerator(id, m.key); members = core.openMembers(id) },
                         Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.u_make_mod)) }
+                    if (myRank >= 1 && !m.isMe && roleRank(m.role) < myRank) TextButton(onClick = { removing = m }, Modifier.heightIn(min = 48.dp)) {
+                        Text(stringResource(R.string.u_rmm_menu), color = c.danger)
+                    }
                 }
             }
         }

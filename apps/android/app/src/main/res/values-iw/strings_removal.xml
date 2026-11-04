@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- HE DRAFT, pending native review (DESIGN_SPEC §5.148) -->
+<resources>
+    <string name="u_sh_t">את/ה לא לבד</string>
+    <string name="u_sh_d">אם את/ה או מישהו אחר בסכנה, מצאו קו סיוע קרוב.</string>
+    <string name="u_sh_link">מציאת קו סיוע (findahelpline.com)</string>
+    <string name="u_sh_ext">נפתח בדפדפן</string>
+    <string name="u_rmm_t">הסרת %1$s מהקהילה</string>
+    <string name="u_dur">לכמה זמן?</string>
+    <string name="u_dur_1h">שעה</string>
+    <string name="u_dur_24h">24 שעות</string>
+    <string name="u_dur_7d">7 ימים</string>
+    <string name="u_dur_30d">30 ימים</string>
+    <string name="u_dur_365d">365 ימים (מקסימום)</string>
+    <string name="u_rmm_what">הם עדיין יכולים לקרוא, אבל לא לפרסם או להגיב עד הסוף. הם יראו שמנחה הסיר אותם, לא מי.</string>
+    <string name="u_reason_req">סיבה (חובה)</string>
+    <string name="u_rmm_btn">הסרה ל־%1$s</string>
+    <string name="u_left_q">נותרו %1$d מתוך 10 הסרות בשעה זו</string>
+    <string name="u_rn_t">מנחה הסיר/ה אותך מ%1$s</string>
+    <string name="u_rn_f">המייסד/ת הסיר/ה אותך מ%1$s</string>
+    <string name="u_rn_comp">אי אפשר לפרסם כאן עד סוף ההסרה</string>
+</resources>

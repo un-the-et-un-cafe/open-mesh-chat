@@ -14,6 +14,12 @@ use crate::mls::mls_pq::{
     encapsulate_to_members, mix_exporter, MlsPqKemKeyPair, MLS_PQ_EXPORTER_LABEL,
 };
 
+mod membership;
+pub use membership::{
+    is_removal_notice, GroupStatus, RemovalNotice, RemoverRole, RotationCause, RotationEntry,
+    LEAVE_COMMIT_DEADLINE_MS, MAX_REASON_TEXT, REMOVED_NOTICE_TEXT,
+};
+
 /// RFC 9420 suite required by PROTOCOL §5.1.
 pub const OMCP_MLS_CIPHERSUITE: Ciphersuite =
     Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519;
@@ -55,6 +61,13 @@ pub struct MlsMemberState {
     /// Public half of the pending key package (joiner before the Welcome).
     pub key_package: Option<Vec<u8>>,
     pub storage: Vec<(Vec<u8>, Vec<u8>)>,
+    /// §23.10.12(1)(d) key-rotation log (inside the encrypted state).
+    #[serde(default)]
+    pub rotation_log: Vec<RotationEntry>,
+    #[serde(default)]
+    pub pending_leave_since: Option<u64>,
+    #[serde(default)]
+    pub status: GroupStatus,
 }
 
 fn ratchet() -> SenderRatchetConfiguration {
@@ -79,6 +92,9 @@ pub struct OmcpMlsMember {
     /// ML-KEM key for OMCP-MLS-PQ (out-of-band with credential).
     pub pq_kem: MlsPqKemKeyPair,
     join_config: MlsGroupJoinConfig,
+    rotation_log: Vec<RotationEntry>,
+    pending_leave_since: Option<u64>,
+    status: GroupStatus,
 }
 
 impl OmcpMlsMember {
@@ -115,6 +131,9 @@ impl OmcpMlsMember {
             group: None,
             pq_kem: MlsPqKemKeyPair::generate()?,
             join_config,
+            rotation_log: Vec::new(),
+            pending_leave_since: None,
+            status: GroupStatus::Active,
         })
     }
 
@@ -151,6 +170,9 @@ impl OmcpMlsMember {
                 .map(|g| g.group_id().as_slice().to_vec()),
             key_package,
             storage,
+            rotation_log: self.rotation_log.clone(),
+            pending_leave_since: self.pending_leave_since,
+            status: self.status,
         })
     }
 
@@ -196,6 +218,9 @@ impl OmcpMlsMember {
             group,
             pq_kem: MlsPqKemKeyPair::generate()?,
             join_config: Self::join_config(),
+            rotation_log: st.rotation_log.clone(),
+            pending_leave_since: st.pending_leave_since,
+            status: st.status,
         })
     }
 
@@ -374,6 +399,18 @@ impl OmcpMlsMember {
         if key_packages.is_empty() {
             return Err(OmcpError::Mls("no key packages"));
         }
+        let next = self.epoch()? + 1;
+        let me = Some(self.own_member_id());
+        for kp in key_packages {
+            self.rotation_log.push(RotationEntry {
+                epoch: next,
+                cause: RotationCause::Join,
+                affected: Some(crate::moderation::peer_id_hash_bytes(
+                    kp.leaf_node().credential().serialized_content(),
+                )),
+                committer: me,
+            });
+        }
         let (commit, welcome) = {
             let group = self.group.as_mut().ok_or(OmcpError::Mls("no group"))?;
             if group.members().count() + key_packages.len() > MAX_SMALL_GROUP_MEMBERS {
@@ -418,6 +455,16 @@ impl OmcpMlsMember {
 
     /// Process a commit/proposal from another member (serialized MLS message).
     pub fn process_protocol_message(&mut self, bytes: &[u8]) -> Result<()> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        self.process_protocol_message_at(bytes, now)
+    }
+
+    /// [`Self::process_protocol_message`] with the receive time (pending-leave
+    /// deadline, §23.10.12(1)(c)).
+    pub fn process_protocol_message_at(&mut self, bytes: &[u8], now_ms: u64) -> Result<()> {
         let msg = MlsMessageIn::tls_deserialize_exact(bytes)
             .map_err(|_| OmcpError::Mls("message deserialize"))?;
         let protocol = msg
@@ -447,11 +494,26 @@ impl OmcpMlsMember {
                 {
                     return Err(OmcpError::Mls("unauthorized commit"));
                 }
+                let props: Vec<(Proposal, Sender)> = staged
+                    .queued_proposals()
+                    .map(|q| (q.proposal().clone(), q.sender().clone()))
+                    .collect();
+                let committer = sender_leaf.and_then(|l| self.leaf_member_id(l));
+                let self_removed = staged.self_removed();
+                let new_epoch = self.epoch()? + 1;
+                let entries = self.entries_for(&props, committer, new_epoch);
                 self.group
                     .as_mut()
                     .unwrap()
                     .merge_staged_commit(&self.provider, *staged)
                     .map_err(|_| OmcpError::Mls("merge staged"))?;
+                if self_removed {
+                    // §23.10.12(2)(c): removed even without a notice.
+                    self.mark_removed();
+                    return Ok(());
+                }
+                self.rotation_log.extend(entries);
+                self.pending_leave_since = None;
             }
             ProcessedMessageContent::ApplicationMessage(_) => {
                 return Err(OmcpError::Mls("expected commit, got app"));
@@ -462,6 +524,9 @@ impl OmcpMlsMember {
                     .unwrap()
                     .store_pending_proposal(self.provider.storage(), *p)
                     .map_err(|_| OmcpError::Mls("store proposal"))?;
+                if self.pending_leave_since.is_none() && !self.pending_leavers().is_empty() {
+                    self.pending_leave_since = Some(now_ms);
+                }
             }
             ProcessedMessageContent::ExternalJoinProposalMessage(_)
             | ProcessedMessageContent::OwnPendingCommit
@@ -472,6 +537,12 @@ impl OmcpMlsMember {
 
     /// Commit an Update of the own leaf (any member may do this).
     pub fn self_update(&mut self) -> Result<Vec<u8>> {
+        let props: Vec<(Proposal, Sender)> = self
+            .group_ref()?
+            .pending_proposals()
+            .map(|q| (q.proposal().clone(), q.sender().clone()))
+            .collect();
+        let entries = self.entries_for(&props, Some(self.own_member_id()), self.epoch()? + 1);
         let group = self.group.as_mut().ok_or(OmcpError::Mls("no group"))?;
         let bundle = group
             .commit_builder()
@@ -490,6 +561,8 @@ impl OmcpMlsMember {
         group
             .merge_pending_commit(&self.provider)
             .map_err(|_| OmcpError::Mls("merge self update"))?;
+        self.rotation_log.extend(entries);
+        self.pending_leave_since = None;
         bundle
             .commit()
             .to_bytes()
@@ -512,6 +585,17 @@ impl OmcpMlsMember {
             .iter()
             .map(|&i| LeafNodeIndex::new(i))
             .collect();
+        let next = self.epoch()? + 1;
+        let me = Some(self.own_member_id());
+        for &l in leaf_indices {
+            let affected = self.leaf_member_id(l);
+            self.rotation_log.push(RotationEntry {
+                epoch: next,
+                cause: RotationCause::Remove,
+                affected,
+                committer: me,
+            });
+        }
         let commit = {
             let group = self.group.as_mut().ok_or(OmcpError::Mls("no group"))?;
             let (commit, _welcome, _info) = group
@@ -689,6 +773,9 @@ impl OmcpMlsMember {
         if let Some(mut g) = self.group.take() {
             let _ = g.delete(self.provider.storage());
         }
+        // The key-rotation log is deleted with the group (§23.10.12(1)(d)).
+        self.rotation_log.clear();
+        self.pending_leave_since = None;
     }
 
     /// Collect (leaf_index, identity) for debugging/tests.

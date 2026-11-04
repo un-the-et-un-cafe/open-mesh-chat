@@ -214,7 +214,7 @@ class RustOmcpCore : OmcpCore {
     override fun liveMediaKey(): LiveMediaKeyUi? = node?.liveMediaKey()?.let { LiveMediaKeyUi(it.baseKey, it.kid.toLong()) }
     override fun liveStunServers(): List<String> = chat.omcp.ffi.liveStunServers()
     private fun community(c: chat.omcp.ffi.CommunityInfo) =
-        CommunityUi(c.communityIdHex, c.name, c.members.toInt(), c.founderIsMe, c.removedReason?.toInt(), c.liveCount.toInt(), c.checking)
+        CommunityUi(c.communityIdHex, c.name, c.members.toInt(), c.founderIsMe, c.removedReason?.toInt(), c.liveCount.toInt(), c.checking, c.status, c.removedNotice)
     override fun liveStartBlocked(communityId: String): Boolean = node?.liveStartBlocked(communityId) ?: false
     override fun groupSend(groupId: String, text: String): String? =
         runCatching { node?.privateGroupSend(groupId, text) }.getOrNull()
@@ -247,7 +247,27 @@ class RustOmcpCore : OmcpCore {
     override fun openRemovePost(communityId: String, postId: String, reason: String): Boolean =
         runCatching { node?.openCommunityRemovePost(communityId, postId, reason) != null }.getOrDefault(false)
     override fun groupRemoveMember(groupId: String, peerId: String): Boolean =
-        runCatching { node?.privateGroupRemoveMember(groupId, peerId) != null }.getOrDefault(false)
+        runCatching { node?.privateGroupRemoveMember(groupId, peerId, "") != null }.getOrDefault(false)
+    override fun groupLeave(groupId: String): Boolean =
+        runCatching { node?.privateGroupLeave(groupId) != null }.getOrDefault(false)
+    override fun openRemovalPresets(): List<Int> =
+        node?.openCommunityRemovalPresets()?.map { it.toInt() } ?: super.openRemovalPresets()
+    override fun openRemoveMember(communityId: String, memberKey: String, reason: Int, durationS: Int, note: String): Boolean =
+        runCatching { node?.openCommunityRemoveMember(communityId, memberKey, reason.toUByte(), durationS.toUInt(), note) != null }.getOrDefault(false)
+    override fun openRestoreMember(communityId: String, memberKey: String): Boolean =
+        runCatching { node?.openCommunityRestoreMember(communityId, memberKey) != null }.getOrDefault(false)
+    override fun openRevokeRole(communityId: String, memberKey: String): Boolean =
+        runCatching { node?.openCommunityRevokeRole(communityId, memberKey) != null }.getOrDefault(false)
+    override fun openMyRemoval(communityId: String): OpenRemovalUi? =
+        node?.openCommunityMyRemoval(communityId)?.let { OpenRemovalUi(it.byRole, it.reasonCode.toInt(), it.endsMs?.toLong()) }
+    override fun openOwnerAlerts(communityId: String): List<OpenModAlertUi> =
+        node?.openCommunityOwnerAlerts(communityId)?.map { OpenModAlertUi(it.actorKeyHex, it.removals24h.toInt()) } ?: emptyList()
+    override fun openRemovals(communityId: String): List<OpenRemovalEntryUi> =
+        node?.openCommunityRemovals(communityId)?.map {
+            OpenRemovalEntryUi(it.action.toInt(), it.memberIdHex, it.actorKeyHex, it.actorRole, it.reasonCode.toInt(), it.durationS.toInt(), it.issuedMs.toLong())
+        } ?: emptyList()
+    override fun openRemovalsLeftThisHour(communityId: String): Int? = node?.openCommunityRemovalsLeftThisHour(communityId)?.toInt()
+    override fun selfHarmHelpUrl(): String = node?.selfHarmHelpUrl() ?: super.selfHarmHelpUrl()
     override fun groupSecurity(groupId: String): GroupSecurityUi? = runCatching {
         node?.privateGroupSecurity(groupId)?.let { s ->
             GroupSecurityUi(s.fingerprintHex, s.events.map { GroupKeyEventUi(it.kind, it.name, it.atMs.toLong(), it.members.toInt()) })

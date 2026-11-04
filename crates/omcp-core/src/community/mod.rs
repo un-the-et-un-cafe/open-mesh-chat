@@ -30,8 +30,13 @@ use crate::suite::{ENVELOPE_VERSION_V1, SUITE_OMCP_2026_A};
 use crate::sync::relay::put_expires_in_aad;
 use crate::sync::tag::{parse_routing_aad, put_tag_in_aad, MailboxTag};
 
+pub mod member_mod;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_member_mod;
+
+pub use member_mod::{CommunityModActionV1, MemberModState, MemberRemoval, ModAction, Role};
 
 pub const MAX_MEMBERS: usize = 5_000;
 pub const MAX_POST_BYTES: usize = 4 * 1024;
@@ -282,6 +287,10 @@ pub enum ControlKind {
     DismissModerator {
         member: [u8; 32],
     },
+    /// Founder only (§23.10.11): appoint an admin.
+    AppointAdmin {
+        member: [u8; 32],
+    },
     NewTopic {
         topic_id: [u8; 32],
         title: String,
@@ -380,6 +389,9 @@ pub struct Community {
     pub name: String,
     pub founder: [u8; 32],
     pub moderators: BTreeSet<[u8; 32]>,
+    /// Admins (founder-appointed, §23.10.11): rank between owner and moderator.
+    #[serde(default)]
+    pub admins: BTreeSet<[u8; 32]>,
     pub members: BTreeSet<[u8; 32]>,
     pub topics: BTreeMap<[u8; 32], Topic>,
     pub posts: BTreeMap<[u8; 32], StoredPost>,
@@ -390,7 +402,21 @@ pub struct Community {
 
 impl Community {
     pub fn is_moderator(&self, who: &[u8; 32]) -> bool {
-        *who == self.founder || self.moderators.contains(who)
+        *who == self.founder || self.moderators.contains(who) || self.admins.contains(who)
+    }
+    /// Roster role (`None` if not a member).
+    pub fn role(&self, who: &[u8; 32]) -> Option<Role> {
+        if *who == self.founder {
+            Some(Role::Owner)
+        } else if self.admins.contains(who) {
+            Some(Role::Admin)
+        } else if self.moderators.contains(who) {
+            Some(Role::Moderator)
+        } else if self.members.contains(who) {
+            Some(Role::Member)
+        } else {
+            None
+        }
     }
     pub fn is_member(&self, who: &[u8; 32]) -> bool {
         self.members.contains(who)
@@ -472,6 +498,9 @@ impl Community {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommunityStore {
     pub communities: BTreeMap<[u8; 32], Community>,
+    /// Community member removals (§23.10.11).
+    #[serde(default)]
+    pub member_mods: MemberModState,
 }
 
 /// Encrypted-backup portion for communities: never contains taken-down
@@ -523,6 +552,7 @@ impl CommunityStore {
                         name: name.clone(),
                         founder: c.actor,
                         moderators: BTreeSet::new(),
+                        admins: BTreeSet::new(),
                         members,
                         topics: BTreeMap::new(),
                         posts: BTreeMap::new(),
@@ -531,6 +561,19 @@ impl CommunityStore {
                 );
             }
             return Ok(());
+        }
+        let removed = self
+            .member_mods
+            .removal(
+                m,
+                &c.community_id,
+                &crate::moderation::peer_id_hash(&c.actor),
+                c.created_ms,
+            )
+            .is_some();
+        if removed && !matches!(c.kind, ControlKind::Leave) {
+            // MR42: no re-join, no topics, no profile changes while removed.
+            return err("removed from this community");
         }
         let Some(com) = self.communities.get_mut(&c.community_id) else {
             return err("unknown community");
@@ -549,6 +592,7 @@ impl CommunityStore {
                 }
                 com.members.remove(&c.actor);
                 com.moderators.remove(&c.actor);
+                com.admins.remove(&c.actor);
                 com.invite_pks.remove(&c.actor);
             }
             ControlKind::AppointModerator { member } => {
@@ -565,6 +609,17 @@ impl CommunityStore {
                     return err("only the founder dismisses moderators");
                 }
                 com.moderators.remove(member);
+                com.admins.remove(member);
+            }
+            ControlKind::AppointAdmin { member } => {
+                if c.actor != com.founder {
+                    return err("only the founder appoints admins");
+                }
+                if !com.members.contains(member) || *member == com.founder {
+                    return err("admin must be a member");
+                }
+                com.moderators.remove(member);
+                com.admins.insert(*member);
             }
             ControlKind::NewTopic { topic_id, title } => {
                 if !com.is_member(&c.actor) || title.trim().is_empty() || title.len() > MAX_NAME {
@@ -638,6 +693,17 @@ impl CommunityStore {
         if p.created_ms + HISTORY_MAX_AGE_MS < now_ms {
             return err("post older than the history window");
         }
+        if let Some(r) = self.member_mods.removal(
+            m,
+            &p.community_id,
+            &crate::moderation::peer_id_hash(&p.author),
+            now_ms,
+        ) {
+            // MR42: drop the removed member's posts dated after the removal.
+            if p.created_ms >= r.applied_ms {
+                return err("author removed from this community");
+            }
+        }
         let Some(com) = self.communities.get_mut(&p.community_id) else {
             return err("unknown community");
         };
@@ -662,6 +728,76 @@ impl CommunityStore {
         });
         com.evict(now_ms);
         Ok(id)
+    }
+
+    /// Verify and apply a community moderation action (§23.10.11). On
+    /// `Err(OverLimit)` the action is ignored and MUST NOT be relayed.
+    pub fn apply_member_mod(
+        &mut self,
+        a: &CommunityModActionV1,
+        m: &ModerationState,
+        now_ms: u64,
+    ) -> std::result::Result<member_mod::CommunityLogEntry, member_mod::ModReject> {
+        let Some(id) = self
+            .communities
+            .keys()
+            .find(|id| community_ref(id) == a.community_ref)
+            .copied()
+        else {
+            return Err(member_mod::ModReject::WrongCommunity);
+        };
+        if m.is_community_tombstoned(&id) {
+            return Err(member_mod::ModReject::WrongCommunity);
+        }
+        let com = self.communities.get_mut(&id).expect("found");
+        let e = self.member_mods.apply(com, a, now_ms)?;
+        if a.action == ModAction::RoleRevoke {
+            com.admins.remove(&a.member_pk);
+            com.moderators.remove(&a.member_pk);
+        }
+        Ok(e)
+    }
+
+    /// Removal of `member_pk` in this community at `now_ms` (see
+    /// [`member_mod::effective_now`]).
+    pub fn member_removal(
+        &self,
+        m: &ModerationState,
+        community_id: &[u8; 32],
+        member_pk: &[u8; 32],
+        now_ms: u64,
+    ) -> Option<MemberRemoval> {
+        self.member_mods.removal(
+            m,
+            community_id,
+            &crate::moderation::peer_id_hash(member_pk),
+            now_ms,
+        )
+    }
+
+    /// The removed member's own device: may it post, react, join topics or
+    /// Live here? Reading is never cut (§23.10.11(4)(a)).
+    pub fn can_post(
+        &self,
+        m: &ModerationState,
+        community_id: &[u8; 32],
+        me: &[u8; 32],
+        now_ms: u64,
+    ) -> bool {
+        self.communities
+            .get(community_id)
+            .map(|c| c.is_member(me))
+            .unwrap_or(false)
+            && self.member_removal(m, community_id, me, now_ms).is_none()
+    }
+
+    /// MUST-alert list for the owner's app (§23.10.11(5)(d)).
+    pub fn owner_alerts_for(
+        &self,
+        community_id: &[u8; 32],
+        now_ms: u64,
+    ) -> Vec<member_mod::OwnerAlert> {
+        self.member_mods.owner_alerts(community_id, now_ms)
     }
 
     /// Apply every team takedown in force: full erasure of communities,
