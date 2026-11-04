@@ -222,6 +222,23 @@ impl OmcpMlsMember {
         v
     }
 
+    /// Mark this member state as a 1:1 chat (MR52): leave, removal and
+    /// removal notices are then refused, sent or received.
+    pub fn set_one_to_one(&mut self) {
+        self.one_to_one = true;
+    }
+
+    pub fn is_one_to_one(&self) -> bool {
+        self.one_to_one
+    }
+
+    pub(super) fn not_one_to_one(&self) -> Result<()> {
+        if self.one_to_one {
+            return Err(OmcpError::Mls("no leave or removal in a 1:1 chat"));
+        }
+        Ok(())
+    }
+
     /// The group's key-rotation log, oldest first.
     pub fn rotation_log(&self) -> &[RotationEntry] {
         &self.rotation_log
@@ -235,6 +252,7 @@ impl OmcpMlsMember {
     /// this device never commits it, marks the group left and erases the
     /// MLS state, keys and tags.
     pub fn leave(&mut self) -> Result<Vec<u8>> {
+        self.not_one_to_one()?;
         let p = self.propose_leave()?;
         self.erase_group();
         self.status = GroupStatus::Left;
@@ -295,6 +313,7 @@ impl OmcpMlsMember {
 
     /// Commit the pending leave(s) (any remaining member may). Returns the commit.
     pub fn commit_pending_leave(&mut self) -> Result<Vec<u8>> {
+        self.not_one_to_one()?;
         if self.pending_leave_since.is_none() {
             return Err(OmcpError::Mls("no pending leave"));
         }
@@ -309,6 +328,7 @@ impl OmcpMlsMember {
         leaf: u32,
         reason_text: &str,
     ) -> Result<(Vec<u8>, Vec<u8>)> {
+        self.not_one_to_one()?;
         if reason_text.len() > MAX_REASON_TEXT {
             return Err(OmcpError::Mls("reason text over 280 bytes"));
         }
@@ -340,6 +360,7 @@ impl OmcpMlsMember {
     /// Removed member: open a RemovalNotice message. On success the group is
     /// marked removed and its MLS state erased (§23.10.12(2)(c)).
     pub fn accept_removal_notice(&mut self, msg: &[u8]) -> Result<RemovalNotice> {
+        self.not_one_to_one()?;
         let (plain, _, leaf, _) = self.decrypt_app_message_full(msg)?;
         let n = self.verify_removal_notice(&plain, leaf)?;
         self.mark_removed();
@@ -349,6 +370,7 @@ impl OmcpMlsMember {
     /// Check an already-decrypted notice from `leaf` (group_ref and leaf
     /// signature). Does not change state.
     pub fn verify_removal_notice(&self, plain: &[u8], leaf: u32) -> Result<RemovalNotice> {
+        self.not_one_to_one()?;
         let n = RemovalNotice::decode(plain)?;
         let g = self.group.as_ref().ok_or(OmcpError::Mls("no group"))?;
         let sk = g
@@ -364,6 +386,9 @@ impl OmcpMlsMember {
 
     /// Mark the group removed and erase its MLS state (§23.10.12(2)(c)).
     pub fn mark_removed(&mut self) {
+        if self.one_to_one {
+            return;
+        }
         self.erase_group();
         self.status = GroupStatus::Removed;
     }
@@ -478,6 +503,50 @@ mod tests {
         assert_eq!(b.status(), GroupStatus::Removed);
         assert!(!b.has_group());
         assert_eq!(c.status(), GroupStatus::Active);
+    }
+
+    fn pair() -> (OmcpMlsMember, OmcpMlsMember) {
+        let mut a = OmcpMlsMember::generate(b"alice".to_vec()).unwrap();
+        let mut b = OmcpMlsMember::generate(b"bob".to_vec()).unwrap();
+        a.create_group().unwrap();
+        let (_c, w) = a.add_members(&[b.take_key_package().unwrap()]).unwrap();
+        b.join_from_welcome(&w).unwrap();
+        (a, b)
+    }
+
+    #[test]
+    fn mr52_one_to_one_refuses_leave_removal_and_notices() {
+        // A notice made while it was still a group, delivered to a 1:1 state.
+        let (mut a, mut b) = pair();
+        let (notice, _) = a.remove_member_with_notice(1, "x").unwrap();
+        let (mut a, mut b2) = pair();
+        a.set_one_to_one();
+        b2.set_one_to_one();
+        assert!(a.leave().is_err() && a.has_group());
+        assert!(a.propose_leave().is_err());
+        assert!(a.remove_members(&[1]).is_err());
+        assert!(a.remove_member_with_notice(1, "").is_err());
+        assert!(a.commit_pending_leave().is_err());
+        b.set_one_to_one();
+        assert!(b.accept_removal_notice(&notice).is_err());
+        assert_eq!(b.status(), GroupStatus::Active);
+        b2.mark_removed();
+        assert!(b2.has_group());
+        // A peer that isn't flagged still can't push a leave or removal into
+        // a flagged 1:1: the proposal and the commit are refused.
+        let (mut x, mut y) = pair();
+        y.set_one_to_one();
+        let prop = x.propose_leave().unwrap();
+        assert!(y.process_protocol_message_at(&prop, T0).is_err());
+        assert!(y.has_group());
+        let (mut x, mut y) = pair();
+        y.set_one_to_one();
+        let rm = x.remove_members(&[1]).unwrap();
+        assert!(y.process_protocol_message_at(&rm, T0).is_err());
+        assert!(y.has_group());
+        // The flag survives a restart.
+        let r = OmcpMlsMember::restore(&y.export_state().unwrap()).unwrap();
+        assert!(r.is_one_to_one());
     }
 
     #[test]

@@ -68,6 +68,9 @@ pub struct MlsMemberState {
     pub pending_leave_since: Option<u64>,
     #[serde(default)]
     pub status: GroupStatus,
+    /// 1:1 chat: never leave, remove or removal notice (MR52).
+    #[serde(default)]
+    pub one_to_one: bool,
 }
 
 fn ratchet() -> SenderRatchetConfiguration {
@@ -95,6 +98,7 @@ pub struct OmcpMlsMember {
     rotation_log: Vec<RotationEntry>,
     pending_leave_since: Option<u64>,
     status: GroupStatus,
+    one_to_one: bool,
 }
 
 impl OmcpMlsMember {
@@ -134,6 +138,7 @@ impl OmcpMlsMember {
             rotation_log: Vec::new(),
             pending_leave_since: None,
             status: GroupStatus::Active,
+            one_to_one: false,
         })
     }
 
@@ -173,6 +178,7 @@ impl OmcpMlsMember {
             rotation_log: self.rotation_log.clone(),
             pending_leave_since: self.pending_leave_since,
             status: self.status,
+            one_to_one: self.one_to_one,
         })
     }
 
@@ -221,6 +227,7 @@ impl OmcpMlsMember {
             rotation_log: st.rotation_log.clone(),
             pending_leave_since: st.pending_leave_since,
             status: st.status,
+            one_to_one: st.one_to_one,
         })
     }
 
@@ -494,6 +501,13 @@ impl OmcpMlsMember {
                 {
                     return Err(OmcpError::Mls("unauthorized commit"));
                 }
+                if self.one_to_one
+                    && staged
+                        .queued_proposals()
+                        .any(|q| matches!(q.proposal(), Proposal::Remove(_) | Proposal::SelfRemove))
+                {
+                    return Err(OmcpError::Mls("no leave or removal in a 1:1 chat"));
+                }
                 let props: Vec<(Proposal, Sender)> = staged
                     .queued_proposals()
                     .map(|q| (q.proposal().clone(), q.sender().clone()))
@@ -517,6 +531,12 @@ impl OmcpMlsMember {
             }
             ProcessedMessageContent::ApplicationMessage(_) => {
                 return Err(OmcpError::Mls("expected commit, got app"));
+            }
+            ProcessedMessageContent::ProposalMessage(p)
+                if self.one_to_one
+                    && matches!(p.proposal(), Proposal::Remove(_) | Proposal::SelfRemove) =>
+            {
+                return Err(OmcpError::Mls("no leave or removal in a 1:1 chat"));
             }
             ProcessedMessageContent::ProposalMessage(p) => {
                 self.group
@@ -571,6 +591,7 @@ impl OmcpMlsMember {
 
     /// Propose leaving the group (Remove-self proposal); returns the proposal.
     pub fn propose_leave(&mut self) -> Result<Vec<u8>> {
+        self.not_one_to_one()?;
         let group = self.group.as_mut().ok_or(OmcpError::Mls("no group"))?;
         let msg = group
             .leave_group(&self.provider, &self.signer)
@@ -581,6 +602,7 @@ impl OmcpMlsMember {
 
     /// Remove members by leaf index; returns serialized commit (no welcome).
     pub fn remove_members(&mut self, leaf_indices: &[u32]) -> Result<Vec<u8>> {
+        self.not_one_to_one()?;
         let indices: Vec<LeafNodeIndex> = leaf_indices
             .iter()
             .map(|&i| LeafNodeIndex::new(i))

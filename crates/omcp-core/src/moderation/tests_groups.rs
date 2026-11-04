@@ -278,7 +278,7 @@ fn leaf(k: &SigningKey, identity: &[u8; 32]) -> Vec<u8> {
     tls_vec(&mut b, &sig);
     b
 }
-fn msg(sender_leaf: &SigningKey, sender_id: [u8; 32], body: &[u8]) -> ReportedMessage {
+pub(super) fn msg(sender_leaf: &SigningKey, sender_id: [u8; 32], body: &[u8]) -> ReportedMessage {
     let fc = framed(&GID, 5, body);
     let gc = context(&GID, 5);
     let sig = sender_leaf
@@ -424,7 +424,7 @@ fn mr12_mr19_evidence_holds_hashes_and_selected_senders_only() {
     assert!(!f.windows(32).any(|w| w == carol_id));
     assert!(!f.windows(name.len()).any(|w| w == name));
     let d = EvidenceFile::decode(&f).unwrap();
-    assert_eq!(d.group_ref, evidence_group_ref(&GID));
+    assert_eq!(d.group_ref, Some(evidence_group_ref(&GID)));
     assert!(d.disclosures.is_empty());
     // Only the sender of the selected messages is named.
     assert!(d.messages.iter().all(|m| m.sender_id == [0x11; 32]));

@@ -650,7 +650,18 @@ impl OmcpNode {
             .and_then(|sp| sp.post.clone())
             .ok_or_else(|| invalid("post not available"))?;
         let note: String = note.unwrap_or_default().chars().take(500).collect();
-        Ok(cbor(&("OMCP-community-report-v1", p, reason_code, note)))
+        drop(st);
+        // §23.2 / MR6: signed with this community's report key, not the identity.
+        let identity = self.signing_key()?;
+        omcp_core::moderation::report_key::CommunityReport::new(
+            &identity,
+            oc::community_ref(&id),
+            cbor(&p),
+            reason_code,
+            &note,
+        )
+        .map(|r| r.encode())
+        .map_err(|_| invalid("report fields"))
     }
 }
 

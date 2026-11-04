@@ -359,7 +359,8 @@ impl NodeState {
             let Some(r) = self.db.get_meta::<ContactMlsRec>(&mls_key(id))? else {
                 continue;
             };
-            if let Ok(member) = OmcpMlsMember::restore(&r.1) {
+            if let Ok(mut member) = OmcpMlsMember::restore(&r.1) {
+                member.set_one_to_one(); // MR52: 1:1 chats never leave or remove
                 mesh.mls.insert(*id, ContactMls { member, ready: r.0 });
             }
         }
@@ -762,7 +763,8 @@ impl MeshLink {
             return Ok(());
         }
         if !node.mesh.mls.contains_key(peer) {
-            let member = OmcpMlsMember::generate(me.to_vec()).map_err(mls_err)?;
+            let mut member = OmcpMlsMember::generate(me.to_vec()).map_err(mls_err)?;
+            member.set_one_to_one();
             node.mesh.mls.insert(
                 *peer,
                 ContactMls {
@@ -794,6 +796,7 @@ impl MeshLink {
             (SETUP_KEY_PACKAGE, true) => {
                 // New group (also after the joiner lost its state).
                 let mut member = OmcpMlsMember::generate(me.to_vec()).map_err(mls_err)?;
+                member.set_one_to_one();
                 let kp = member.parse_key_package(body).map_err(mls_err)?;
                 member.create_group().map_err(mls_err)?;
                 let (_commit, welcome) = member.add_members(&[kp]).map_err(mls_err)?;
@@ -814,6 +817,7 @@ impl MeshLink {
                 if m.member.has_group() {
                     // Creator restarted the group: start over with a fresh member.
                     let mut fresh = OmcpMlsMember::generate(me.to_vec()).map_err(mls_err)?;
+                    fresh.set_one_to_one();
                     std::mem::swap(&mut m.member, &mut fresh);
                     m.ready = false;
                     let kp = m.member.key_package_bytes().map_err(mls_err)?;

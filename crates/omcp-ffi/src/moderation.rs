@@ -235,7 +235,10 @@ pub struct EvidenceMessage {
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct EvidenceCheck {
     pub evidence_hash_hex: String,
+    /// Empty for a community file.
     pub group_ref_hex: String,
+    /// Key 10, for a community file.
+    pub community_ref_hex: Option<String>,
     pub reporter_sig_ok: bool,
     pub verified: u32,
     pub total: u32,
@@ -451,9 +454,9 @@ impl OmcpNode {
                 })
             })
             .collect::<Result<Vec<_>, FfiError>>()?;
-        let mut seed = [0u8; 32];
-        getrandom::getrandom(&mut seed).map_err(|_| invalid("rng"))?;
-        let one_off = ed25519_dalek::SigningKey::from_bytes(&seed);
+        // §23.2 / MR71: signed with the report key for this group (derived
+        // from the identity, salt = group_ref), never the identity key.
+        let identity = self.signing_key()?;
         EvidenceFile::export(
             &gid,
             msgs,
@@ -461,7 +464,7 @@ impl OmcpNode {
             note,
             None,
             vec![],
-            &one_off,
+            &identity,
             now_ms(),
         )
         .map_err(|_| invalid("evidence export"))
@@ -475,7 +478,8 @@ impl OmcpNode {
         let f = EvidenceFile::decode(&file).map_err(|_| invalid("not an evidence file"))?;
         Ok(EvidenceCheck {
             evidence_hash_hex: hex::encode(v.evidence_hash),
-            group_ref_hex: hex::encode(f.group_ref),
+            group_ref_hex: f.group_ref.map(hex::encode).unwrap_or_default(),
+            community_ref_hex: f.community_ref.map(hex::encode),
             reporter_sig_ok: v.reporter_sig_ok,
             verified: v.verified() as u32,
             total: v.messages.len() as u32,

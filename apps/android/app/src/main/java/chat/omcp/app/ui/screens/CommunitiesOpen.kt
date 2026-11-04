@@ -176,6 +176,8 @@ fun OpenCommunitiesTab(core: OmcpCore, onOpen: (String) -> Unit, onOpenGroup: (S
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text(stringResource(R.string.u_join_code), style = MaterialTheme.typography.titleMedium)
                         Text(stringResource(R.string.u_join_code_d), color = c.ink2, style = MaterialTheme.typography.bodySmall)
+                        // TM12: POSTS_IDENTITY_NOTICE
+                        Text(stringResource(R.string.u_identity_notice), color = c.ink2, style = MaterialTheme.typography.bodySmall)
                         OutlinedTextField(code, { code = it.trim(); failed = false }, Modifier.fillMaxWidth(), singleLine = true,
                             label = { Text(stringResource(R.string.u_join_code)) }, isError = failed,
                             supportingText = { if (failed) Text(stringResource(R.string.u_join_fail)) })
@@ -262,7 +264,7 @@ fun OpenTopicScreen(core: OmcpCore, id: String, topicId: String, onBack: () -> U
         if (core.openPost(id, topicId, replyTo, draft.trim()) != null) { draft = ""; replyTo = null; posts = core.openPosts(id, topicId) }
     }
     if (firstNotice) AlertDialog(onDismissRequest = { firstNotice = false },
-        title = { Text(stringResource(R.string.u_first_t)) }, text = { Text(stringResource(R.string.u_first_d)) },
+        title = { Text(stringResource(R.string.u_first_t)) }, text = { Column { Text(stringResource(R.string.u_first_d)); Text(stringResource(R.string.u_identity_notice), modifier = Modifier.padding(top = 8.dp)) } },
         confirmButton = { TextButton(onClick = { prefs.edit().putBoolean("first_post_seen", true).apply(); firstNotice = false; send() }) { Text(stringResource(R.string.u_got_it)) } })
     removing?.let { pid ->
         RemoveReasonDialog(onDismiss = { removing = null }) { reason ->

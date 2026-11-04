@@ -64,10 +64,13 @@ use crate::sync::relay::put_expires_in_aad;
 use crate::sync::tag::{parse_routing_aad, put_tag_in_aad, MailboxTag};
 
 pub mod evidence;
+pub mod report_key;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
 mod tests_groups;
+#[cfg(test)]
+mod tests_report_key;
 #[cfg(test)]
 mod tests_v025;
 
