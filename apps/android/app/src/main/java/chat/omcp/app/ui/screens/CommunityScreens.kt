@@ -168,6 +168,12 @@ fun CommunityDetailScreen(
     val online = hasInternet()
     val k = info
     val removed = k?.removedReason != null
+    val readOnly = removed || (k != null && k.status != "active")
+    var confirmLeave by remember { mutableStateOf(false) }
+    if (confirmLeave) androidx.compose.material3.AlertDialog(onDismissRequest = { confirmLeave = false },
+        title = { Text(stringResource(R.string.g_leave_t, k?.name ?: "")) }, text = { Text(stringResource(R.string.g_leave_d)) },
+        confirmButton = { TextButton(onClick = { core.groupLeave(communityId); confirmLeave = false }) { Text(stringResource(R.string.g_leave)) } },
+        dismissButton = { TextButton(onClick = { confirmLeave = false }) { Text(stringResource(R.string.u_cancel)) } })
     val lives = core.liveStreams().filter { it.communityId == communityId && !it.mine }
     val hostingHere = s.hosting?.communityId == communityId
     val snack = remember { SnackbarHostState() }
@@ -208,8 +214,19 @@ fun CommunityDetailScreen(
                     }
                 }
             }
+            if (k?.status == "left" || k?.status == "removed") item {
+                val who = stringResource(if (k.removedNotice?.contains("admin") == true) R.string.g_removed_admin else R.string.g_removed_member)
+                Column(Modifier.padding(horizontal = 16.dp)) {
+                    Callout(if (k.status == "left") stringResource(R.string.g_left) else stringResource(R.string.g_removed, who), CalloutKind.Info)
+                }
+            }
+            if (k != null && !k.founderIsMe && k.status == "active" && !removed) item {
+                OutlinedButton(onClick = { confirmLeave = true }, Modifier.padding(horizontal = 16.dp).heightIn(min = 48.dp)) {
+                    Text(stringResource(R.string.g_leave), color = c.danger)
+                }
+            }
             item {
-                GroupChatSection(core, communityId, members.size, checking = k?.checking == true, removed = removed,
+                GroupChatSection(core, communityId, members.size, checking = k?.checking == true, removed = readOnly,
                     modifier = Modifier.padding(horizontal = 16.dp))
             }
             if (s.notice == "taken_down") {

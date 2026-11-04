@@ -393,6 +393,23 @@ interface OmcpCore {
     fun openMakeModerator(communityId: String, memberKey: String): Boolean = false
     fun openRemovePost(communityId: String, postId: String, reason: String): Boolean = false
     fun groupRemoveMember(groupId: String, peerId: String): Boolean = false
+    /** §23.10.12: leave a private group (Remove-self proposal; others commit within 24 h). */
+    fun groupLeave(groupId: String): Boolean = false
+
+    // §23.10.11 community member removal (timed, 1 h–365 d; founder/team exempt from limits).
+    fun openRemovalPresets(): List<Int> = listOf(3_600, 86_400, 604_800, 2_592_000, 31_536_000)
+    fun openRemoveMember(communityId: String, memberKey: String, reason: Int, durationS: Int, note: String): Boolean = false
+    fun openRestoreMember(communityId: String, memberKey: String): Boolean = false
+    fun openRevokeRole(communityId: String, memberKey: String): Boolean = false
+    /** This device's removal here (read-only state), or null. */
+    fun openMyRemoval(communityId: String): OpenRemovalUi? = null
+    /** Owner MUST-alert: moderators/admins above 5 removals in 24 h. */
+    fun openOwnerAlerts(communityId: String): List<OpenModAlertUi> = emptyList()
+    fun openRemovals(communityId: String): List<OpenRemovalEntryUi> = emptyList()
+    /** null = exempt (founder) or not a moderator. */
+    fun openRemovalsLeftThisHour(communityId: String): Int? = null
+    /** MR41: reason-10 notice link (opened in the browser, nothing sent). */
+    fun selfHarmHelpUrl(): String = "https://findahelpline.com"
     fun groupSecurity(groupId: String): GroupSecurityUi? = null
     /** MR29: when we can go live here again, if blocked now. */
     fun liveBlockedUntilMs(communityId: String): Long? = null
@@ -509,7 +526,16 @@ data class CommunityUi(
     val liveCount: Int = 0,
     /** After a backup restore: "Checking…" until one digest exchange (MR30). */
     val checking: Boolean = false,
+    /** "active", "left" or "removed" (§23.10.12): left/removed are read-only. */
+    val status: String = "active",
+    /** Removal notice: role only, never a name. */
+    val removedNotice: String? = null,
 )
+
+/** `comm-removed-member-notice`: [byRole] team, owner, admin or moderator. */
+data class OpenRemovalUi(val byRole: String, val reason: Int, val endsMs: Long?)
+data class OpenModAlertUi(val actorKey: String, val removals24h: Int)
+data class OpenRemovalEntryUi(val action: Int, val memberId: String, val actorKey: String, val actorRole: String, val reason: Int, val durationS: Int, val issuedMs: Long)
 
 data class GroupMessageUi(
     val id: String,

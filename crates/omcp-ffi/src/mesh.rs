@@ -717,6 +717,8 @@ pub(crate) fn tick(st: &mut NodeState, now: u64) -> Result<Vec<u64>, FfiError> {
     for id in stale {
         st.mesh_cancel_own(&id)?;
     }
+    // §23.10.12(1)(c): bounded commit of pending leaves.
+    st.commit_due_leaves(now)?;
     let ev = st.mesh.engine.tick(now);
     st.route(ev)?;
     Ok(st.mesh.pending_links(None))

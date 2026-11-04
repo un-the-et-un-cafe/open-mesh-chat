@@ -25,7 +25,7 @@ use omcp_core::burn::AppContent;
 use omcp_core::live::community::{community_stream_key, CommunityLive, Rekey};
 use omcp_core::live::host::HostSession;
 use omcp_core::live::LiveInvite;
-use omcp_core::mls::group::{MlsMemberState, OmcpMlsMember};
+use omcp_core::mls::group::{GroupStatus, MlsMemberState, OmcpMlsMember};
 use serde::{Deserialize, Serialize};
 
 use crate::{invalid, now_ms, parse_id, FfiError, NodeState, OmcpNode};
@@ -65,6 +65,18 @@ enum CMsg {
     },
     Rekey {
         rekey: Vec<u8>,
+    },
+    /// §23.10.12(1)(a): a member's Remove-self proposal (never committed by it).
+    Leave {
+        id: [u8; 32],
+        proposal: Vec<u8>,
+    },
+    /// §23.10.12(2): RemovalNotice as an MLS application message in the
+    /// removed member's last epoch; only `target` acts on it.
+    Notice {
+        id: [u8; 32],
+        target: [u8; 32],
+        ct: Vec<u8>,
     },
 }
 
@@ -115,6 +127,8 @@ pub(crate) struct Community {
     pub msgs: std::collections::VecDeque<GroupText>,
     /// Key rotations (member left or removed), oldest first (group-security).
     pub key_events: Vec<KeyEvent>,
+    /// Shown when this device was removed (role only).
+    pub removed_notice: Option<String>,
 }
 
 /// One group key rotation.
@@ -263,6 +277,10 @@ pub struct CommunityInfo {
     /// After a backup restore: "Checking…" until one full digest exchange
     /// and its team actions are applied (MR30). Nothing is shown or relayed.
     pub checking: bool,
+    /// "active", "left" or "removed" (§23.10.12): left/removed are read-only.
+    pub status: String,
+    /// RemovalNotice text when removed ("…by a group admin"), never a name.
+    pub removed_notice: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -278,6 +296,13 @@ pub struct CommunityMember {
     pub name: String,
     pub is_contact: bool,
     pub is_me: bool,
+}
+
+/// Per-group wait before a non-lowest member commits a leave: 10–60 min,
+/// fixed per group so it is stable across ticks (§23.10.12(1)(c)).
+fn leave_jitter(id: &[u8; 32]) -> u64 {
+    let m = omcp_core::mls::group::LEAVE_COMMIT_DEADLINE_MS / 24; // 1 h
+    m / 6 + (u64::from(id[0]) * (m - m / 6)) / 255
 }
 
 impl NodeState {
@@ -296,6 +321,7 @@ impl NodeState {
                         signed: Default::default(),
                         msgs: Default::default(),
                         key_events: Default::default(),
+                        removed_notice: None,
                     },
                 );
             }
@@ -525,6 +551,20 @@ impl NodeState {
         match CMsg::decode(&frame) {
             Some(CMsg::Group { id: gid, ct }) if gid == id => self.on_group([0; 32], id, ct),
             Some(CMsg::Rekey { rekey }) => self.on_rekey([0; 32], rekey),
+            Some(CMsg::Notice {
+                id: gid,
+                target,
+                ct,
+            }) if gid == id => self.on_notice(id, target, ct),
+            Some(CMsg::Leave { id: gid, proposal }) if gid == id => {
+                // Group-tag path: the sender is unknown here; MLS
+                // authenticates the proposal.
+                let now = now_ms();
+                if let Some(c) = self.mesh.community.list.get_mut(&id) {
+                    let _ = c.member.process_protocol_message_at(&proposal, now);
+                }
+                self.save_communities()
+            }
             // Commits are MLS-authenticated (only members can produce one);
             // the founder is the only committer. The roster is checked against
             // the MLS member list in the Commit handler.
@@ -741,6 +781,7 @@ impl NodeState {
                         signed: Default::default(),
                         msgs: Default::default(),
                         key_events: Default::default(),
+                        removed_notice: None,
                     },
                 );
                 self.save_communities()?;
@@ -756,7 +797,9 @@ impl NodeState {
                 let Some(c) = self.mesh.community.list.get_mut(&id) else {
                     return Ok(());
                 };
-                if c.founder != peer {
+                // Any roster member may commit a leave (MLS checks which
+                // proposals a non-founder may commit, §23.10.12(1)(c)).
+                if c.founder != peer && !c.roster.contains_key(&peer) {
                     return Ok(());
                 }
                 if c.member.process_protocol_message(&commit).is_err() {
@@ -791,6 +834,128 @@ impl NodeState {
             }
             CMsg::Group { id, ct } => self.on_group(peer, id, ct)?,
             CMsg::Rekey { rekey } => self.on_rekey(peer, rekey)?,
+            CMsg::Leave { id, proposal } => self.on_leave(peer, id, proposal)?,
+            CMsg::Notice { id, target, ct } => self.on_notice(id, target, ct)?,
+        }
+        Ok(())
+    }
+
+    /// A member's leave proposal: store it, log it, and commit if this
+    /// member is due (lowest remaining leaf at once; others from `tick`).
+    fn on_leave(
+        &mut self,
+        peer: [u8; 32],
+        id: [u8; 32],
+        proposal: Vec<u8>,
+    ) -> Result<(), FfiError> {
+        let now = now_ms();
+        let Some(c) = self.mesh.community.list.get_mut(&id) else {
+            return Ok(());
+        };
+        if !c.roster.contains_key(&peer)
+            || c.member
+                .process_protocol_message_at(&proposal, now)
+                .is_err()
+        {
+            return Ok(());
+        }
+        // Pass the proposal on so every member holds it before the commit.
+        let fwd = CMsg::Leave { id, proposal };
+        for p in self.roster_contacts(&id, &[peer]) {
+            self.post(p, &fwd);
+        }
+        let Some(c) = self.mesh.community.list.get_mut(&id) else {
+            return Ok(());
+        };
+        let leaves: Vec<u32> = c
+            .member
+            .member_identities()
+            .map_err(mls)?
+            .into_iter()
+            .map(|(l, _)| l)
+            .collect();
+        if c.member.leave_commit_due(now, &leaves, leave_jitter(&id)) {
+            self.commit_leave(&id)?;
+        }
+        self.save_communities()
+    }
+
+    /// Commit pending leaves of group `id` and send the commit.
+    fn commit_leave(&mut self, id: &[u8; 32]) -> Result<(), FfiError> {
+        let old_secret = self.group_secret(id);
+        let Some(c) = self.mesh.community.list.get_mut(id) else {
+            return Ok(());
+        };
+        let me: [u8; 32] = c.member.identity.as_slice().try_into().unwrap_or([0; 32]);
+        let Ok(commit) = c.member.commit_pending_leave() else {
+            return Ok(());
+        };
+        let ids: HashSet<Vec<u8>> = c
+            .member
+            .member_identities()
+            .map_err(mls)?
+            .into_iter()
+            .map(|(_, cred)| cred)
+            .collect();
+        let gone: Vec<[u8; 32]> = c
+            .roster
+            .keys()
+            .filter(|k| !ids.contains(k.as_slice()))
+            .copied()
+            .collect();
+        for k in &gone {
+            let n = c.roster.remove(k).unwrap_or_default();
+            c.log_rotation(1, n);
+        }
+        let roster: Vec<_> = c.roster.iter().map(|(a, b)| (*a, b.clone())).collect();
+        self.retire_secret(id, old_secret);
+        self.save_communities()?;
+        let msg = CMsg::Commit {
+            id: *id,
+            commit,
+            roster,
+        };
+        for p in self.roster_contacts(id, &[me]) {
+            self.post(p, &msg);
+        }
+        if let Some(sec) = old_secret {
+            self.publish_group_with(sec, &msg)?;
+        }
+        Ok(())
+    }
+
+    /// `tick`: commit any leave whose 10–60 min wait (or 24 h bound) is over.
+    pub(crate) fn commit_due_leaves(&mut self, now: u64) -> Result<(), FfiError> {
+        let due: Vec<[u8; 32]> = self
+            .mesh
+            .community
+            .list
+            .iter()
+            .filter(|(id, c)| {
+                c.member
+                    .leave_commit_due(now, &[u32::MAX], leave_jitter(id))
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        for id in due {
+            self.commit_leave(&id)?;
+        }
+        Ok(())
+    }
+
+    /// A RemovalNotice for `target` (in the old epoch).
+    fn on_notice(&mut self, id: [u8; 32], target: [u8; 32], ct: Vec<u8>) -> Result<(), FfiError> {
+        let Some(c) = self.mesh.community.list.get_mut(&id) else {
+            return Ok(());
+        };
+        if target.as_slice() != c.member.identity.as_slice() {
+            return Ok(());
+        }
+        if let Ok(n) = c.member.accept_removal_notice(&ct) {
+            c.removed_notice = Some(n.display());
+            c.signed.clear();
+            self.mesh.community.old_tags.remove(&id);
+            self.save_communities()?;
         }
         Ok(())
     }
@@ -972,6 +1137,17 @@ impl NodeState {
             removed_reason: self.mesh.moderation.removal(id).map(|r| r.reason.code()),
             live_count: mine + others,
             checking: self.mesh.restore_hold.is_some(),
+            status: match c.member.status() {
+                GroupStatus::Active => "active",
+                GroupStatus::Left => "left",
+                GroupStatus::Removed => "removed",
+            }
+            .into(),
+            removed_notice: (c.member.status() == GroupStatus::Removed).then(|| {
+                c.removed_notice
+                    .clone()
+                    .unwrap_or_else(|| omcp_core::mls::group::REMOVED_NOTICE_TEXT.to_string())
+            }),
         }
     }
 }
@@ -1033,6 +1209,7 @@ impl OmcpNode {
                 signed: Default::default(),
                 msgs: Default::default(),
                 key_events: Default::default(),
+                removed_notice: None,
             },
         );
         st.save_communities()?;
@@ -1435,6 +1612,7 @@ impl OmcpNode {
         &self,
         group_id_hex: String,
         peer_id_hex: String,
+        reason: String,
     ) -> Result<(), FfiError> {
         let id = parse_cid(&group_id_hex)?;
         let who = parse_cid(&peer_id_hex)?;
@@ -1442,7 +1620,7 @@ impl OmcpNode {
         {
             let mut st = self.inner.lock();
             let old_secret = st.group_secret(&id);
-            let (commit, roster) = {
+            let commit = {
                 let c = st
                     .mesh
                     .community
@@ -1460,12 +1638,29 @@ impl OmcpNode {
                     .find(|(_, cred)| cred.as_slice() == who)
                     .map(|(l, _)| l)
                     .ok_or_else(|| invalid("not a member"))?;
-                let commit = c.member.remove_members(&[leaf]).map_err(mls)?;
+                // §23.10.12(2): the RemovalNotice goes out in the removed
+                // member's last epoch, just before the commit.
+                let (notice, commit) = c
+                    .member
+                    .remove_member_with_notice(leaf, &reason)
+                    .map_err(mls)?;
                 let name = c.roster.remove(&who).unwrap_or_default();
                 c.log_rotation(2, name);
                 let roster: Vec<_> = c.roster.iter().map(|(a, b)| (*a, b.clone())).collect();
-                (commit, roster)
+                (notice, commit, roster)
             };
+            let (notice, commit, roster) = commit;
+            let nmsg = CMsg::Notice {
+                id,
+                target: who,
+                ct: notice,
+            };
+            if let Some(sec) = old_secret {
+                st.publish_group_with(sec, &nmsg)?;
+            } else if st.contacts.contains_key(&who) {
+                // 1:1 fallback (reveals the sender).
+                st.post(who, &nmsg);
+            }
             st.retire_secret(&id, old_secret);
             st.save_communities()?;
             for p in st.roster_contacts(&id, &[me]) {
@@ -1481,6 +1676,41 @@ impl OmcpNode {
             if let Some(sec) = old_secret {
                 st.publish_group_with(sec, &CMsg::Commit { id, commit, roster })?;
             }
+        }
+        self.drain_community_outbox();
+        Ok(())
+    }
+
+    /// Leave a private group (§23.10.12(1)): sends a Remove-self proposal
+    /// that a remaining member commits; this device never commits it, marks
+    /// the group left (history read-only) and erases its MLS state. The
+    /// founder can't leave (v1.0: the founder is the group admin).
+    pub fn private_group_leave(&self, group_id_hex: String) -> Result<(), FfiError> {
+        let id = parse_cid(&group_id_hex)?;
+        let me = self.me();
+        {
+            let mut st = self.inner.lock();
+            let secret = st.group_secret(&id);
+            let c = st
+                .mesh
+                .community
+                .list
+                .get_mut(&id)
+                .ok_or_else(|| invalid("unknown group"))?;
+            if c.founder == me {
+                return Err(invalid("the founder can't leave"));
+            }
+            let proposal = c.member.leave().map_err(mls)?;
+            c.signed.clear();
+            let msg = CMsg::Leave { id, proposal };
+            for p in st.roster_contacts(&id, &[me]) {
+                st.post(p, &msg);
+            }
+            if let Some(sec) = secret {
+                st.publish_group_with(sec, &msg)?;
+            }
+            st.mesh.community.old_tags.remove(&id);
+            st.save_communities()?;
         }
         self.drain_community_outbox();
         Ok(())

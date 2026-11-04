@@ -177,6 +177,8 @@ pub enum ActionKind {
     TopicTakedown = 6,
     LiveTakedown = 7,
     ItemRestore = 8,
+    /// Remove one member from one community (§23.10.11(1)(c)); lifted by 8.
+    MemberRemove = 9,
 }
 
 impl ActionKind {
@@ -190,6 +192,7 @@ impl ActionKind {
             6 => Self::TopicTakedown,
             7 => Self::LiveTakedown,
             8 => Self::ItemRestore,
+            9 => Self::MemberRemove,
             _ => return None,
         })
     }
@@ -209,6 +212,7 @@ impl ActionKind {
                 | Self::PostTakedown
                 | Self::TopicTakedown
                 | Self::LiveTakedown
+                | Self::MemberRemove
         )
     }
     pub fn is_group(self) -> bool {
@@ -249,6 +253,8 @@ pub struct TeamAction {
     pub evidence_hash: [u8; 32],
     pub note: String,
     pub epoch: u64,
+    /// Kind 9 only: removal length in seconds, 0 = permanent (§23.10.11(2)).
+    pub duration_s: u32,
     pub sigs: Vec<TeamSig>,
 }
 
@@ -269,6 +275,7 @@ impl TeamAction {
             evidence_hash: ZERO,
             note: note.to_string(),
             epoch,
+            duration_s: 0,
             sigs: Vec::new(),
         }
     }
@@ -380,6 +387,27 @@ impl TeamAction {
             epoch,
         )
     }
+    /// Team `kind 9 MEMBER_REMOVE` (§23.10.11(1)(c)): `item_id = member_id`,
+    /// `duration_s = 0` is permanent (only the team form may be permanent).
+    pub fn member_remove(
+        community_id: [u8; 32],
+        member_id: [u8; 32],
+        reason: Reason,
+        note: &str,
+        duration_s: u32,
+        epoch: u64,
+    ) -> Self {
+        let mut a = Self::new(
+            ActionKind::MemberRemove,
+            community_id,
+            member_id,
+            Some(reason),
+            note,
+            epoch,
+        );
+        a.duration_s = duration_s;
+        a
+    }
     pub fn with_evidence(mut self, evidence_hash: [u8; 32]) -> Self {
         self.evidence_hash = evidence_hash;
         self
@@ -395,6 +423,9 @@ impl TeamAction {
         b.push(self.reason.map(Reason::code).unwrap_or(0));
         if self.kind.version() == 2 {
             b.extend_from_slice(&self.evidence_hash);
+        }
+        if self.kind == ActionKind::MemberRemove {
+            b.extend_from_slice(&self.duration_s.to_be_bytes());
         }
         b.extend_from_slice(&(self.note.len() as u16).to_be_bytes());
         b.extend_from_slice(self.note.as_bytes());
@@ -428,6 +459,9 @@ impl TeamAction {
         }
         if self.kind.is_group() && self.item_id != ZERO {
             return err("group action item must be zero");
+        }
+        if self.kind != ActionKind::MemberRemove && self.duration_s != 0 {
+            return err("only kind 9 has a duration");
         }
         if self.kind.is_item() && self.item_id == ZERO {
             return err("item action needs an item id");
@@ -494,6 +528,11 @@ impl TeamAction {
         } else {
             ZERO
         };
+        let duration_s = if kind == ActionKind::MemberRemove {
+            u32::from_be_bytes(r.take(4)?.try_into().expect("4"))
+        } else {
+            0
+        };
         let nl = u16::from_be_bytes(r.take(2)?.try_into().expect("2")) as usize;
         if nl > MAX_NOTE_V2 {
             return err("team action note too long");
@@ -525,6 +564,7 @@ impl TeamAction {
             evidence_hash,
             note,
             epoch,
+            duration_s,
             sigs,
         };
         a.check_fields()?;
@@ -728,6 +768,9 @@ struct ItemMod {
     reason_code: u8,
     note: String,
     applied_ms: u64,
+    /// Kind 9: seconds in force from `applied_ms`, 0 = permanent.
+    #[serde(default)]
+    duration_s: u32,
 }
 
 fn default_kind() -> ActionKind {
@@ -735,6 +778,12 @@ fn default_kind() -> ActionKind {
 }
 
 /// Live restart block after a LIVE_TAKEDOWN (§23.10.6, MR29).
+/// MR41: supportive notice shown to the reporter on the device when they
+/// choose reason 10; nothing about it is sent and no phone number is in the
+/// protocol data.
+pub const SELF_HARM_HELP_URL: &str = "https://findahelpline.com";
+pub const SELF_HARM_NOTICE: &str = "If you or someone you know is in danger or thinking about suicide, you can talk to someone now. Find a free, confidential helpline in your country:";
+
 pub const LIVE_RESTART_BLOCK_MS: u64 = 24 * 60 * 60 * 1000;
 
 /// Per-device moderation state (serde; the FFI keeps it in the encrypted store).
@@ -794,6 +843,7 @@ impl ModerationState {
                 reason_code,
                 note: a.note.clone(),
                 applied_ms: now_ms,
+                duration_s: a.duration_s,
             },
         );
         let w = a.encode().map_err(|_| Rejected::Malformed)?;
@@ -859,6 +909,48 @@ impl ModerationState {
         self.items
             .iter()
             .filter(|(_, c)| c.removed && c.kind == ActionKind::LiveTakedown)
+    }
+
+    /// Team `kind 9` removal of `member_id` in force at `now_ms` in this
+    /// community: `(removal, end_ms)`, `end_ms = None` when permanent.
+    pub fn team_member_removal(
+        &self,
+        community_id: &[u8; 32],
+        member_id: &[u8; 32],
+        now_ms: u64,
+    ) -> Option<(Removal, Option<u64>)> {
+        let c = self
+            .items
+            .get(&(SPACE_COMMUNITY, *community_id, *member_id))?;
+        if !c.removed || c.kind != ActionKind::MemberRemove {
+            return None;
+        }
+        let end = (c.duration_s != 0).then(|| c.applied_ms + c.duration_s as u64 * 1000);
+        if end.is_some_and(|e| now_ms >= e) {
+            return None;
+        }
+        Some((
+            self.removal_at(&(SPACE_COMMUNITY, *community_id, *member_id))?,
+            end,
+        ))
+    }
+
+    /// Kind and epoch of the latest team action on `(community_id, item_id)`.
+    pub fn item_kind_epoch(
+        &self,
+        community_id: &[u8; 32],
+        item_id: &[u8; 32],
+    ) -> Option<(ActionKind, u64)> {
+        self.items
+            .get(&(SPACE_COMMUNITY, *community_id, *item_id))
+            .map(|c| (c.kind, c.epoch))
+    }
+
+    /// When the latest team action on `(community_id, item_id)` was applied.
+    pub fn item_applied_ms(&self, community_id: &[u8; 32], item_id: &[u8; 32]) -> Option<u64> {
+        self.items
+            .get(&(SPACE_COMMUNITY, *community_id, *item_id))
+            .map(|c| c.applied_ms)
     }
 
     /// `Some` if the live stream was taken down: hosts stop, viewers stop
@@ -957,6 +1049,7 @@ impl ModerationState {
                             reason_code: t.reason_code,
                             note: String::new(),
                             applied_ms: t.applied_ms,
+                            duration_s: 0,
                         },
                     );
                 }

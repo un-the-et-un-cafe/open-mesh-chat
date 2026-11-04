@@ -3588,9 +3588,10 @@ fn founder_removes_member_rotates_key_and_logs_it() {
     assert_eq!(fp0.len(), 60);
     let cid = c.identity().peer_id_hex;
     assert!(b
-        .private_group_remove_member(gid.clone(), cid.clone())
+        .private_group_remove_member(gid.clone(), cid.clone(), String::new())
         .is_err());
-    a.private_group_remove_member(gid.clone(), cid).unwrap();
+    a.private_group_remove_member(gid.clone(), cid, String::new())
+        .unwrap();
     settle(&links);
     let sa = a.private_group_security(gid.clone()).unwrap();
     let sb = b.private_group_security(gid.clone()).unwrap();
@@ -3605,7 +3606,56 @@ fn founder_removes_member_rotates_key_and_logs_it() {
     // Messages still flow between the remaining members.
     a.private_group_send(gid.clone(), "after".into()).unwrap();
     settle(&links);
-    assert_eq!(b.private_group_messages(gid).last().unwrap().body, "after");
+    assert_eq!(
+        b.private_group_messages(gid.clone()).last().unwrap().body,
+        "after"
+    );
+    // MR51: the removed member got the notice (role only) and is read-only.
+    let gc = c
+        .private_groups()
+        .into_iter()
+        .find(|g| g.community_id_hex == gid)
+        .unwrap();
+    assert_eq!(gc.status, "removed");
+    let n = gc.removed_notice.unwrap();
+    assert!(n.contains("group admin") && !n.contains('A'));
+    for l in [&ab, &ac] {
+        down(l);
+    }
+}
+
+#[test]
+fn mr50_member_leaves_and_a_remaining_member_commits() {
+    let (a, b, c) = (node("A"), node("B"), node("C"));
+    befriend_mls(&a, &b);
+    befriend_mls(&a, &c);
+    let ab = up(&a, &b);
+    let ac = up(&a, &c);
+    let links = [(ab.0.clone(), ab.1.clone()), (ac.0.clone(), ac.1.clone())];
+    let gid = community_of(&a, &[&b, &c], &links);
+    assert!(a.private_group_leave(gid.clone()).is_err()); // founder can't leave
+    c.private_group_leave(gid.clone()).unwrap();
+    settle(&links);
+    let gc = c
+        .private_groups()
+        .into_iter()
+        .find(|g| g.community_id_hex == gid)
+        .unwrap();
+    assert_eq!(gc.status, "left");
+    assert_eq!(a.private_group_members(gid.clone()).len(), 2);
+    let sa = a.private_group_security(gid.clone()).unwrap();
+    assert_eq!(b.private_group_members(gid.clone()).len(), 2);
+    assert_eq!(sa.events.last().unwrap().kind, "left");
+    a.private_group_send(gid.clone(), "after".into()).unwrap();
+    settle(&links);
+    assert_eq!(
+        b.private_group_messages(gid.clone()).last().unwrap().body,
+        "after"
+    );
+    assert!(c
+        .private_group_messages(gid)
+        .iter()
+        .all(|m| m.body != "after"));
     for l in [&ab, &ac] {
         down(l);
     }
@@ -3893,4 +3943,28 @@ fn invite_key_rotation_republishes_profile() {
     assert_ne!(before[..8], after[..8]);
     // Nothing changes on a second call.
     assert!(m.invite_maintain(later).unwrap().is_empty());
+}
+
+#[test]
+fn community_removal_ffi_presets_quota_and_founder_exempt() {
+    let a = node("A");
+    let c = a.open_community_create("Climbers".into()).unwrap();
+    assert_eq!(
+        a.open_community_removal_presets(),
+        vec![3_600, 86_400, 604_800, 2_592_000, 31_536_000]
+    );
+    assert_eq!(a.self_harm_help_url(), "https://findahelpline.com");
+    assert!(a
+        .open_community_my_removal(c.community_id_hex.clone())
+        .is_none());
+    // Founder is exempt from the quota.
+    assert!(a
+        .open_community_removals_left_this_hour(c.community_id_hex.clone())
+        .is_none());
+    // Not a member: refused; permanent (0) refused.
+    let x = hex::encode([5u8; 32]);
+    assert!(a
+        .open_community_remove_member(c.community_id_hex.clone(), x.clone(), 5, 0, String::new())
+        .is_err());
+    assert!(a.open_community_owner_alerts(c.community_id_hex).is_empty());
 }

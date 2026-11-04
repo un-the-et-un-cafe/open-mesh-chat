@@ -195,3 +195,17 @@ only appears in builds that ship a team. If a key is compromised, remove it in t
 - **Not yet**: inviting community members who aren't contacts into a private
   group — deferred: public delivery would show the team who is invited, which
   breaks the hard rule; needs a sealed-delivery spec.
+
+## v0.1.31 — member removal and leaving (PROTOCOL §23.10.11–12)
+
+| Requirement | Where | Tests |
+|---|---|---|
+| TM18 / MR40–41: reason 10, help link `https://findahelpline.com` (on device only) | `moderation::SELF_HARM_HELP_URL`, Android `SelfHarmNotice` | `mr40_*`, `community_removal_ffi_*` |
+| TM19–20 / MR42–46: community `CommunityModActionV1` (TLV `0x5C`), ranks owner > admin > moderator, 1 h–365 d (presets 1 h, 24 h, 7 d, 30 d, 365 d), read-only for the removed member; team `kind 9 MEMBER_REMOVE` (`duration_s = 0` permanent, team only), lifted by `kind 8` | `community::member_mod`, `moderation::TeamAction::member_remove` | `community::tests_member_mod::mr42`–`mr46` |
+| TM21 / MR47: 10 per rolling hour and 30 per rolling 24 h per actor for moderators/admins; founder and team exempt; over-limit ignored, not relayed, but counted; owner alert above 5 a day | `MemberModState::apply`, `owner_alerts` | `mr47_*` |
+| TM22 / MR48–49: community log, team log, matching `0x5C` TLV | `MemberModState::log`, `seal_mod_action` / `open_mod_action` | `mr48_*`, `mr49_*` |
+| TM23 / MR50: leave via Remove-self proposal; any remaining member commits; lowest online leaf at once, others after 10–60 min, all within 24 h; key-rotation log | `mls::group::membership` (`leave`, `leave_commit_due`, `commit_pending_leave`, `rotation_log`), FFI `private_group_leave` + `tick` | `membership::tests::mr50_*`, FFI `mr50_member_leaves_*` |
+| TM24 / MR51–52: RemovalNotice in the removed member's last epoch (old-epoch tag), role only, erase on receipt or on detecting the removing commit | `remove_member_with_notice`, `accept_removal_notice` | `mr51_*`, `mr52_*`, FFI `founder_removes_member_*` |
+
+Not in this version: the 1:1 fallback for the notice is used only when the
+old-epoch tag secret is missing; appeals; discovery screens (§5.143–5.144).
