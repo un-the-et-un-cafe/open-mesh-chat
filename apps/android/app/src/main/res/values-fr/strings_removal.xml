@@ -29,8 +29,8 @@
     <string name="u_role_a">Admin</string>
     <string name="u_mod_limit_t">Limite de retraits atteinte</string>
     <string name="u_mod_limit_d">Vous pouvez toujours retirer des messages et signaler. La limite se réinitialise dans l’heure.</string>
-    <string name="u_fa_t">Un·e modérateur·rice a fait %1$d retraits aujourd’hui</string>
-    <string name="u_fa_d">La modération peut retirer jusqu’à 10 personnes par heure et 30 par jour. Vérifiez ses retraits et retirez le rôle si besoin.</string>
+    <string name="u_fa_t">%1$s a retiré %2$d membres aujourd’hui</string>
+    <string name="u_fa_d">C’est plus de 5 en une journée. Vérifiez ses retraits ou retirez son rôle de modération.</string>
     <string name="u_fa_view">Voir les retraits</string>
     <string name="u_fa_revoke">Retirer le rôle</string>
     <string name="u_removals_t">Retraits</string>

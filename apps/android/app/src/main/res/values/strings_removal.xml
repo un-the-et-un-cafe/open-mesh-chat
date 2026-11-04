@@ -30,8 +30,8 @@
     <string name="u_role_a">Admin</string>
     <string name="u_mod_limit_t">Removal limit reached</string>
     <string name="u_mod_limit_d">You can still remove posts and report. The limit resets within the hour.</string>
-    <string name="u_fa_t">A moderator made %1$d removals today</string>
-    <string name="u_fa_d">Moderators and admins can remove up to 10 people an hour and 30 a day. Check their removals, and revoke the role if something is wrong.</string>
+    <string name="u_fa_t">%1$s removed %2$d members today</string>
+    <string name="u_fa_d">That’s more than 5 in a day. Check their removals, or revoke their moderator role.</string>
     <string name="u_fa_view">View removals</string>
     <string name="u_fa_revoke">Revoke moderator</string>
     <string name="u_removals_t">Removals</string>

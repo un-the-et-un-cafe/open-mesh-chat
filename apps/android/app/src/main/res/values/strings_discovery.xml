@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- §20.8 discovery, §5.144/5.148/5.149 (TM25–TM31). -->
+<resources>
+    <string name="u_discover">Discover</string>
+    <string name="u_disc_search">Search listed communities</string>
+    <string name="u_nearby">Near you first</string>
+    <string name="u_no_groups_disc">Private groups are never listed or searchable. You join them only by invite.</string>
+    <string name="u_f_nearby">Nearby</string>
+    <string name="u_cat_all">All</string>
+    <string name="u_cat_1">Local &amp; neighbourhood</string>
+    <string name="u_cat_2">News &amp; current affairs</string>
+    <string name="u_cat_3">Hobbies &amp; games</string>
+    <string name="u_cat_4">Arts, music &amp; culture</string>
+    <string name="u_cat_5">Sports &amp; fitness</string>
+    <string name="u_cat_6">Science, tech &amp; learning</string>
+    <string name="u_cat_7">Support &amp; wellbeing</string>
+    <string name="u_cat_8">Other</string>
+    <string name="u_near_tag">Near you</string>
+    <string name="u_disc_note">Shows communities that have reached phones near you. Sizes are the owner’s estimate.</string>
+    <string name="u_range_fmt">%1$s–%2$s members</string>
+    <string name="u_comm_lbl_range">Community · open · %1$s</string>
+    <string name="u_size_after_join">Members and size shown after you join</string>
+    <string name="u_open_not_e2ee">Open · not end-to-end encrypted</string>
+    <string name="u_hide">Hide</string>
+    <string name="u_rep_comm">Report community</string>
+    <string name="u_joining">Joining…</string>
+    <string name="u_listed">Listed</string>
+    <string name="u_listed_d">Announced over the mesh and gateways. Anyone nearby or online can find it and read its threads.</string>
+    <string name="u_unlisted">Unlisted</string>
+    <string name="u_unlisted_d">Not announced. People join with an invite link, QR code or code, or a private invite. Posts still travel over the mesh and aren’t end-to-end encrypted.</string>
+    <string name="u_vis_change">Unlisted is the default. Only the founder can turn Listed on, now or later in community settings.</string>
+    <string name="u_listing_rules">Listed communities must follow the listing rules: no illegal content, a clear description, and active moderators.</string>
+    <string name="u_listed_notice">Listing makes this community findable by anyone nearby and by phones that pass it on. Its name, description, tags and approximate size become public. Posts in communities are public.</string>
+    <string name="u_turn_on_listed">Turn on Listed</string>
+    <string name="u_keep_unlisted">Keep unlisted</string>
+    <string name="u_desc_l">Short description</string>
+    <string name="u_tags_l">Tags (up to 5)</string>
+    <string name="u_listing_update">Update listing</string>
+    <string name="u_listing_fail">Couldn’t update the listing. Check the description and tags.</string>
+    <string name="u_loading">Listening for communities nearby…</string>
+    <string name="u_e_heard">No communities heard nearby yet</string>
+    <string name="u_e_srch2">No listed communities match “%1$s”</string>
+    <string name="u_e_srch2_d">Only listed communities heard so far show up. Unlisted ones need a code.</string>
+</resources>

@@ -223,6 +223,22 @@ class RustOmcpCore : OmcpCore {
     } ?: emptyList()
     override fun groupReport(groupId: String, messageIds: List<String>, reason: Int, note: String?): ByteArray? =
         runCatching { node?.privateGroupReport(groupId, messageIds, reason.toUByte(), note) }.getOrNull()
+    override fun discoverySearch(query: String, category: Int?, nearOnly: Boolean): List<DiscoveryUi> =
+        runCatching { node?.discoverySearch(query, category?.toUByte(), nearOnly) }.getOrNull()?.map {
+            DiscoveryUi(it.communityIdHex, it.communityRefHex, it.name, it.description, it.category.toInt(), it.tags,
+                it.sizeMin.toInt(), it.sizeMax.toInt(), it.nearYou, it.joined)
+        } ?: emptyList()
+    override fun discoveryHide(ref: String): Boolean = runCatching { node?.discoveryHide(ref); true }.getOrDefault(false)
+    override fun discoveryReport(ref: String, reason: Int): ByteArray? =
+        runCatching { node?.discoveryReport(ref, reason.toUByte()) }.getOrNull()
+    override fun discoveryJoin(ref: String): Boolean? = runCatching { node?.discoveryJoin(ref) }.getOrNull()
+    override fun listedNotice(): String = node?.discoveryListedNotice() ?: ""
+    override fun communityListing(communityId: String): ListingSettingsUi =
+        node?.openCommunityListing(communityId)?.let { ListingSettingsUi(it.listed, it.description, it.category.toInt(), it.tags) }
+            ?: ListingSettingsUi()
+    override fun setListed(communityId: String, s: ListingSettingsUi): Boolean = runCatching {
+        node?.openCommunitySetListed(communityId, s.listed, s.description, s.category.toUByte(), s.tags, emptyList()); true
+    }.getOrDefault(false)
     private fun open(c: chat.omcp.ffi.OpenCommunityInfo) =
         OpenCommunityUi(c.communityIdHex, c.name, c.members.toInt(), c.isFounder, c.isModerator, c.inviteHex)
     override fun openCommunities(): List<OpenCommunityUi> = node?.openCommunities()?.map(::open) ?: emptyList()

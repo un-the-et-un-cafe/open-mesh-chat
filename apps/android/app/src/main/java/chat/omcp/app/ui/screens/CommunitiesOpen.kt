@@ -159,6 +159,8 @@ fun OpenCommunitiesTab(core: OmcpCore, onOpen: (String) -> Unit, onOpenGroup: (S
         LazyColumn(Modifier.fillMaxSize().padding(padding), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             item { TextButton(onClick = onOpenLive, modifier = Modifier.padding(horizontal = 8.dp).heightIn(min = 48.dp)) { Text(stringResource(R.string.live_entry)) } }
             item { InviteRequestsSection(core) }
+            // §20.8 / TM25: Discover at the top of Communities (local search only).
+            item { DiscoverSection(core, onOpen) }
             if (list.isEmpty()) item { EmptyState(stringResource(R.string.u_e_comm), stringResource(R.string.u_e_comm_d)) }
             else item { Text(stringResource(R.string.u_joined), style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(horizontal = 16.dp)) }
             items(list, key = { it.id }) { k ->
@@ -215,7 +217,14 @@ fun OpenCommunityScreen(core: OmcpCore, id: String, onTopic: (String) -> Unit, o
                 Column(Modifier.padding(horizontal = 16.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         HashTile()
-                        Text(stringResource(R.string.u_comm_lbl, k?.members ?: 0), color = c.ink2)
+                        // §5.149: size as the owner's bucket range, never a count.
+                        val (lo, hi) = sizeRange(k?.members ?: 0)
+                        Text(stringResource(R.string.u_comm_lbl_range, rangeText(lo, hi)), color = c.ink2)
+                    }
+                    // `comm-founder-alert` banner (§5.147/5.149), founder only.
+                    if (k?.isFounder == true) core.openOwnerAlerts(id).forEach { a ->
+                        Callout(stringResource(R.string.u_fa_t, chat.omcp.app.ui.components.Pseudonym.of(a.actorKey).name, a.removals24h) +
+                            "\n" + stringResource(R.string.u_fa_d), CalloutKind.Danger, Modifier.padding(top = 6.dp))
                     }
                     Text(stringResource(R.string.u_c_info), color = c.ink2, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 6.dp))
                     if (k != null) TextButton(onClick = { shareText(ctx, k.code) }, Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.u_share_code)) }
@@ -238,6 +247,7 @@ fun OpenCommunityScreen(core: OmcpCore, id: String, onTopic: (String) -> Unit, o
             }
             // §20.3: community Live is deferred (no start/join here).
             item { HorizontalDivider(Modifier.padding(top = 8.dp)); InviteSettingRow(core, id) }
+            item { ListedSettingRow(core, id, k?.isFounder == true) }
         }
     }
 }

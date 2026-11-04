@@ -156,7 +156,7 @@ fun FounderRemovalsSection(core: OmcpCore, communityId: String, isFounder: Boole
     val alerts = core.openOwnerAlerts(communityId)
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         alerts.forEach { a ->
-            Callout(stringResource(R.string.u_fa_t, a.removals24h) + "\n" + stringResource(R.string.u_fa_d), CalloutKind.Danger)
+            Callout(stringResource(R.string.u_fa_t, chat.omcp.app.ui.components.Pseudonym.of(a.actorKey).name, a.removals24h) + "\n" + stringResource(R.string.u_fa_d), CalloutKind.Danger)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 TextButton(onClick = { show = true }, Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.u_fa_view)) }
                 if (isFounder) TextButton(onClick = { core.openRevokeRole(communityId, a.actorKey); onChanged() }, Modifier.heightIn(min = 48.dp)) {

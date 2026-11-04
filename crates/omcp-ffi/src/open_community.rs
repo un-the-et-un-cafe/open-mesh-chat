@@ -107,7 +107,7 @@ impl NodeState {
         Ok(())
     }
 
-    fn save_open_communities(&mut self) -> Result<(), FfiError> {
+    pub(crate) fn save_open_communities(&mut self) -> Result<(), FfiError> {
         self.mesh
             .open_genesis
             .retain(|id, _| self.mesh.open.communities.contains_key(id));
@@ -145,6 +145,18 @@ impl NodeState {
                 }
             }
             return Ok(false);
+        }
+        let pending: Vec<[u8; 32]> = self.mesh.discovery.pending.keys().copied().collect();
+        for id in pending {
+            if let Ok(Wire::Control(c)) = oc::open(env, &id) {
+                if c.community_id == id {
+                    if self.on_discovery_genesis(&c) == Some(true) {
+                        self.save_open_communities()?;
+                        self.mesh.tags_for = None;
+                    }
+                    return Ok(true);
+                }
+            }
         }
         for id in ids {
             let Ok(w) = oc::open(env, &id) else {
