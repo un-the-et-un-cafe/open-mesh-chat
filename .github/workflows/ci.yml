@@ -34,7 +34,7 @@ jobs:
 
   # M5 Android beta: Rust .so via cargo-ndk + UniFFI bindings, then Gradle.
   android:
-    name: android (stub)
+    name: android (build + shrunk APK)
     runs-on: ubuntu-latest
     env:
       NDK_VERSION: 27.2.12479018
@@ -95,6 +95,41 @@ jobs:
         with:
           name: hopla-debug-apk
           path: apps/android/app/build/outputs/apk/debug/*.apk
+          retention-days: 7
+
+      # Release-style test APK (R8 + resource shrinking, arm64 only) since v0.1.29.
+      # Uses the debug keystore that assembleDebug above created in ~/.android.
+      - name: Ensure debug keystore exists
+        run: |
+          ks="$HOME/.android/debug.keystore"
+          if [ ! -f "$ks" ]; then
+            mkdir -p "$(dirname "$ks")"
+            keytool -genkeypair -v -keystore "$ks" -storepass android -keypass android \
+              -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
+      - name: Build shrunk arm64 test APK
+        working-directory: apps/android
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/${{ env.NDK_VERSION }}
+        run: ./scripts/build-test-apk.sh "$RUNNER_TEMP/hopla-test-arm64.apk"
+
+      - name: Check shrunk APK size (<= 35 MB)
+        run: |
+          size=$(stat -c %s "$RUNNER_TEMP/hopla-test-arm64.apk")
+          limit=$((35 * 1000 * 1000))
+          echo "Shrunk arm64 APK: $size bytes (limit $limit)"
+          echo "Shrunk arm64 APK: $((size / 1000)) kB of $((limit / 1000)) kB allowed" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$size" -gt "$limit" ]; then
+            echo "::error::Shrunk APK is $size bytes, over the 35 MB limit"
+            exit 1
+          fi
+
+      - name: Upload shrunk test APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: hopla-test-arm64-apk
+          path: ${{ runner.temp }}/hopla-test-arm64.apk
           retention-days: 7
 
   # M6 — needs macOS runner; still skipped.
