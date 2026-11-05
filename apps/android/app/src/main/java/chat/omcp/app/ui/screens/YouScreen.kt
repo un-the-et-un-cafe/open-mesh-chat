@@ -62,6 +62,7 @@ fun YouScreen(
     onDiagnostics: () -> Unit = {},
     themeMode: ThemeMode = ThemeMode.System,
     onThemeMode: (ThemeMode) -> Unit = {},
+    privacy: @Composable () -> Unit = {},
 ) {
     val c = LocalOmcpColors.current
     var priv by remember { mutableStateOf(privateNotifications) }
@@ -97,6 +98,7 @@ fun YouScreen(
                 supportingContent = { Text(stringResource(R.string.notif_hide_lock_desc)) },
                 trailingContent = { Switch(checked = hideLock, onCheckedChange = { hideLock = it; onSetHideOnLockScreen(it) }) },
             )
+            privacy()
             Text(stringResource(R.string.appearance), style = MaterialTheme.typography.titleSmall,
                 modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 4.dp).semantics { heading() })
             Column(Modifier.selectableGroup()) {

@@ -80,8 +80,6 @@
     <string name="u_checking">Vérification…</string>
     <string name="u_checking_d">Après une restauration, ce groupe reste masqué jusqu’à ce que votre téléphone se soit synchronisé avec un téléphone proche et ait appliqué les actions de l’équipe.</string>
     <string name="u_live_blocked">Votre direct ici a été retiré. Vous pourrez relancer un direct ici 24 heures après.</string>
-    <string name="u_comm_live_d">Le direct dans les communautés demande une clé de bout en bout ; pour l’instant, lancez-le depuis un groupe privé.</string>
-    <string name="u_comm_live_members">Réservé aux membres de cette communauté. Pas chiffré de bout en bout.</string>
     <string name="u_start_grp_d">Invitez jusqu’à 32 membres de cette communauté, même hors de vos contacts. Le groupe est chiffré de bout en bout et se trouve dans Discussions.</string>
     <string name="u_inv_contacts_note">Les invitations vont à l’identité maillage de chaque personne : pas besoin d’être en contact. 32 membres au plus.</string>
     <string name="u_rep_r7">Autre chose</string>
@@ -96,7 +94,7 @@
     <string name="inv_waiting">Acceptée. En attente de l’entrée…</string>
     <string name="inv_members_h">Membres de %1$s</string>
     <string name="inv_none">Personne ici n’accepte encore d’invitations.</string>
-    <string name="inv_mesh_only">Les invitations passent uniquement par le maillage. Elle peut ne pas atteindre une personne joignable seulement par Internet.</string>
+    <string name="inv_mesh_only">Les invitations passent uniquement par le maillage : une invitation peut ne pas atteindre une personne joignable seulement par internet.</string>
     <string name="inv_status_pending">Pas encore remise</string>
     <string name="inv_status_accepted">Acceptée</string>
     <string name="inv_status_declined">Refusée</string>

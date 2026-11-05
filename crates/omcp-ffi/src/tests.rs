@@ -4036,3 +4036,91 @@ fn discovery_list_find_join_delist() {
     let st = b.inner.lock();
     assert!(st.mesh.engine.discovery().is_empty());
 }
+
+/// §22.7(9): small-group envelopes carry the recipients' sub-tags (TLV
+/// 0x56), the recipient wants its own sub-tag and opens the frame through
+/// it; the chat tag stays as the fallback. Sub-tags change at a commit.
+#[test]
+fn small_group_envelopes_use_recipient_subtags() {
+    let (n, m, cid, gid, mk) = invite_setup();
+    n.private_invite_send(gid.clone(), cid, mk, String::new())
+        .unwrap();
+    deliver(&n, &m);
+    let id = m.private_invite_requests()[0].offer_id_hex.clone();
+    m.private_invite_answer(id, true).unwrap();
+    deliver(&m, &n);
+    deliver(&n, &m);
+    n.inner.lock().mesh.community.test_log.clear();
+    m.private_group_send(gid.clone(), "via sub-tag".into())
+        .unwrap();
+    let envs = std::mem::take(&mut m.inner.lock().mesh.community.test_log);
+    let e = &envs[0];
+    let r = omcp_core::sync::tag::parse_routing_aad(&e.header_aad).unwrap();
+    assert_eq!(r.subtags.len(), 1, "one recipient in a 2-member group");
+    assert!(r.tag.is_some(), "chat tag kept as the fallback");
+    let gidb = parse_id(&gid).unwrap();
+    let mut st = n.inner.lock();
+    st.mesh.tags_for = None;
+    crate::mesh::refresh_wants(&mut st, now_ms()).unwrap();
+    let (g, ep) = st.mesh.group_tags.get(&r.subtags[0]).copied().unwrap();
+    assert_eq!(g, gidb);
+    assert!(st.mesh.engine.wants(&r.subtags[0]));
+    st.on_group_envelope(g, ep, e).unwrap();
+    drop(st);
+    assert!(n
+        .private_group_messages(gid.clone())
+        .iter()
+        .any(|x| x.body == "via sub-tag"));
+    // A different slot gives a different sub-tag.
+    let st = n.inner.lock();
+    let c = &st.mesh.community.list[&gidb];
+    let s = c.member.tag_exporter(0).unwrap();
+    let leaf = c.member.own_leaf_index().unwrap();
+    let e0 = omcp_core::sync::tag::tag_epoch(now_ms());
+    assert_ne!(
+        omcp_core::sync::tag::subtag(&s, leaf, e0).unwrap(),
+        omcp_core::sync::tag::subtag(&s, leaf, e0 + 1).unwrap()
+    );
+}
+
+/// §22.7(13): retired-epoch tag secrets survive an app restart (saved with
+/// the group state, 7-day expiry) and a takedown deletes them for good.
+#[test]
+fn old_epoch_tags_survive_restart_and_die_with_takedown() {
+    use omcp_core::moderation::{Reason, TeamAction};
+    let team = team_key();
+    let (a, b) = (node("A"), node("B"));
+    befriend_mls(&a, &b);
+    with_team(&a, &team);
+    with_team(&b, &team);
+    let ab = up(&a, &b);
+    let links = [(ab.0.clone(), ab.1.clone())];
+    let cid = community_of(&a, &[&b], &links);
+    let gid = parse_id(&cid).unwrap();
+    let restart = |n: &OmcpNode| {
+        let mut st = n.inner.lock();
+        st.mesh.community = Default::default();
+        st.load_communities().unwrap();
+    };
+    let before = a.inner.lock().mesh.community.old_tags[&gid].clone();
+    assert!(!before.is_empty());
+    restart(&a);
+    assert_eq!(a.inner.lock().mesh.community.old_tags[&gid], before);
+    // Past the 7 days they are not loaded.
+    {
+        let st = a.inner.lock();
+        let h = &st.mesh.community.old_tags[&gid];
+        assert!(h
+            .secrets(now_ms() + omcp_core::sync::tag::OLD_EPOCH_ACCEPT_MS)
+            .is_empty());
+    }
+    let gref = omcp_core::moderation::hex32(&a.private_group_ref(cid.clone()).unwrap()).unwrap();
+    let td = team_hex(
+        TeamAction::group_takedown(gref, Reason::Hate, [0; 32], "", 1),
+        &team,
+    );
+    assert_eq!(b.moderation_publish(td).unwrap(), TeamActionResult::Applied);
+    settle(&links);
+    restart(&a);
+    assert!(!a.inner.lock().mesh.community.old_tags.contains_key(&gid));
+}

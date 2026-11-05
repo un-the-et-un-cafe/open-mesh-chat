@@ -143,7 +143,7 @@ private fun ChooserRow(title: String, body: String, glyph: @Composable () -> Uni
 /** `comm-tab`: open communities only (private groups live in Chats). */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun OpenCommunitiesTab(core: OmcpCore, onOpen: (String) -> Unit, onOpenGroup: (String) -> Unit, onOpenLive: () -> Unit) {
+fun OpenCommunitiesTab(core: OmcpCore, onOpen: (String) -> Unit, onOpenGroup: (String) -> Unit) {
     val c = LocalOmcpColors.current
     var list by remember { mutableStateOf(listOf<OpenCommunityUi>()) }
     var code by remember { mutableStateOf("") }
@@ -157,8 +157,7 @@ fun OpenCommunitiesTab(core: OmcpCore, onOpen: (String) -> Unit, onOpenGroup: (S
         })
     }) { padding ->
         LazyColumn(Modifier.fillMaxSize().padding(padding), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            item { TextButton(onClick = onOpenLive, modifier = Modifier.padding(horizontal = 8.dp).heightIn(min = 48.dp)) { Text(stringResource(R.string.live_entry)) } }
-            item { InviteRequestsSection(core) }
+            // §5.150: invite requests live in Chats; §5.153: no Live entry in Communities.
             // §20.8 / TM25: Discover at the top of Communities (local search only).
             item { DiscoverSection(core, onOpen) }
             if (list.isEmpty()) item { EmptyState(stringResource(R.string.u_e_comm), stringResource(R.string.u_e_comm_d)) }
@@ -246,7 +245,7 @@ fun OpenCommunityScreen(core: OmcpCore, id: String, onTopic: (String) -> Unit, o
                 }
             }
             // §20.3: community Live is deferred (no start/join here).
-            item { HorizontalDivider(Modifier.padding(top = 8.dp)); InviteSettingRow(core, id) }
+            item { HorizontalDivider(Modifier.padding(top = 8.dp)); InviteSettingRow(core, id, inCommunity = true) }
             item { ListedSettingRow(core, id, k?.isFounder == true) }
         }
     }

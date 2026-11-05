@@ -226,6 +226,9 @@ struct Saved {
     invites: Vec<([u8; 32], [u8; 32], String)>,
     joining: Vec<([u8; 32], String, MlsMemberState)>,
     invited: Vec<([u8; 32], [u8; 32])>,
+    /// §22.7(13): retired-epoch tag secrets (7-day expiry) survive restarts.
+    #[serde(default)]
+    old_tags: Vec<([u8; 32], omcp_core::sync::tag::EpochTagHistory)>,
 }
 
 #[derive(Default)]
@@ -329,6 +332,13 @@ impl NodeState {
         for (id, from, name) in s.invites {
             c.invites.insert(id, (from, name));
         }
+        let now = now_ms();
+        for (id, mut h) in s.old_tags {
+            h.expire(now);
+            if c.list.contains_key(&id) && !h.is_empty() {
+                c.old_tags.insert(id, h);
+            }
+        }
         for (id, name, m) in s.joining {
             if let Ok(member) = OmcpMlsMember::restore(&m) {
                 c.joining.insert(id, (name, member));
@@ -371,6 +381,18 @@ impl NodeState {
                 .push((*id, name.clone(), m.export_state().map_err(mls)?));
         }
         s.invited = c.invited.iter().copied().collect();
+        let now = now_ms();
+        s.old_tags = c
+            .old_tags
+            .iter()
+            .filter(|(id, _)| c.list.contains_key(*id))
+            .map(|(id, h)| {
+                let mut h = h.clone();
+                h.expire(now);
+                (*id, h)
+            })
+            .filter(|(_, h)| !h.is_empty())
+            .collect();
         self.db.put_meta(STATE_KEY, &s)?;
         let kept: Vec<([u8; 32], Vec<KeptSigned>)> = c
             .list
@@ -503,13 +525,49 @@ impl NodeState {
     /// `secret` (taken before a commit for commits). Reaches members who
     /// are not our contacts; relays see an opaque envelope only.
     fn publish_group_with(&mut self, secret: [u8; 32], m: &CMsg) -> Result<(), FfiError> {
+        self.publish_group_to(secret, &[], m)
+    }
+
+    /// Recipients' §22.7(9) sub-tags for group `id` with `secret` at slot `e`:
+    /// every other member's leaf, only for groups of ≤ 8 (else empty: the
+    /// chat tag + Plumtree path).
+    pub(crate) fn group_subtags(
+        &self,
+        id: &[u8; 32],
+        secret: &[u8; 32],
+        e: u64,
+    ) -> Vec<omcp_core::sync::tag::MailboxTag> {
+        let Some(c) = self.mesh.community.list.get(id) else {
+            return Vec::new();
+        };
+        let (Ok(leaves), Ok(me)) = (c.member.member_leaf_indices(), c.member.own_leaf_index())
+        else {
+            return Vec::new();
+        };
+        if !omcp_core::sync::tag::uses_subtags(leaves.len()) {
+            return Vec::new();
+        }
+        leaves
+            .into_iter()
+            .filter(|l| *l != me)
+            .filter_map(|l| omcp_core::sync::tag::subtag(secret, l, e).ok())
+            .collect()
+    }
+
+    fn publish_group_to(
+        &mut self,
+        secret: [u8; 32],
+        subtags: &[omcp_core::sync::tag::MailboxTag],
+        m: &CMsg,
+    ) -> Result<(), FfiError> {
         let now = now_ms();
         let e = omcp_core::sync::tag::tag_epoch(now);
         let tag = gt::group_tag(&secret, e).map_err(mls)?;
         let ttl = self.mesh.engine.new_ttl();
-        let env = gt::seal(
+        let env = gt::seal_to(
             &secret,
             &tag,
+            subtags,
             &m.encode(),
             crate::mesh::rand16(),
             now,
@@ -526,7 +584,11 @@ impl NodeState {
 
     fn publish_group(&mut self, id: &[u8; 32], m: &CMsg) -> Result<(), FfiError> {
         match self.group_secret(id) {
-            Some(s) => self.publish_group_with(s, m),
+            Some(s) => {
+                let e = omcp_core::sync::tag::tag_epoch(now_ms());
+                let subs = self.group_subtags(id, &s, e);
+                self.publish_group_to(s, &subs, m)
+            }
             None => Ok(()),
         }
     }
@@ -587,11 +649,21 @@ impl NodeState {
             if self.removed(id) {
                 continue;
             }
-            let _ = c;
+            // §22.7(9): our own sub-tag too (small groups), for the current
+            // and retired epochs' secrets; they change every commit and slot.
+            let me = c.member.own_leaf_index().ok().filter(|_| {
+                c.member
+                    .member_count()
+                    .is_ok_and(omcp_core::sync::tag::uses_subtags)
+            });
             for t in [e.saturating_sub(1), e] {
                 for ts in self.group_secrets(id, t) {
                     if let Ok(tag) = gt::group_tag(&ts, t) {
                         out.push((tag, *id, t));
+                    }
+                    if let Some(sub) = me.and_then(|l| omcp_core::sync::tag::subtag(&ts, l, t).ok())
+                    {
+                        out.push((sub, *id, t));
                     }
                 }
             }

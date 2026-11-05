@@ -167,3 +167,9 @@ arm64 core library small enough for the APK to stay under 25 MB.
     news = envelopes on registered news channel tags (`set_news_tags`; news
     tags are not wired up yet). PROTOCOL §22.4 (50 MB default, eviction by
     `(priority, expires_at, hops)`) and SY5 still describe the old budget.
+
+## v0.1.34 — per-recipient sub-tags (§22.7(9)) and persistent old-epoch tags (§22.7(13))
+
+- **Sub-tags (TLV `0x56`):** `subtag_m = BLAKE2b-64(key = exporter secret of the current MLS epoch, "OMCP-sub" || leaf_index_m || 6 h slot)`. 1:1 envelopes carry the other leaf's sub-tag; private-group envelopes for groups of ≤ 8 members carry every other member's sub-tag. Each node wants only its own sub-tags (current and previous slot, current and retired epochs), so they change at every commit and every slot. Delivery acks (§22.8(3)) are sealed to the original sender's sub-tag. The chat tag (`0x54`) stays on every envelope as the fallback; groups over 8 and commit frames sealed with the pre-commit secret use the chat tag only.
+- **Forwarding:** want → lowest carry distance → scoped flood. SY4 test (`sy4_subtags_beat_flooding_and_flood_still_delivers`): with the sub-tag advertised, a star of 8 phones delivers with fewer transmissions than the scoped flood; the cold path still delivers.
+- **Old-epoch tags:** retired tag secrets are saved with the private-group state, reloaded on start with the 7-day expiry applied, and deleted (memory and disk) on a takedown, removal or leave.

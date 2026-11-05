@@ -67,6 +67,7 @@ private object Routes {
     const val Chats = "chats"
     const val Communities = "communities"
     const val Live = "live"
+    const val Invites = "invites"
     const val Community = "community/{id}"
     const val GroupSecurity = "community/{id}/security"
     fun groupSecurity(id: String) = "community/$id/security"
@@ -199,11 +200,16 @@ fun OmcpRoot(
                     onOpenGroup = { nav.navigate(Routes.community(it)) },
                     onOpenCommunity = { nav.navigate(Routes.open(it)) },
                     onBackup = { nav.navigate(Routes.Backup) },
+                    onOpenInvites = { nav.navigate(Routes.Invites) },
+                    onOpenLive = { nav.navigate(Routes.Live) },
                 )
+            }
+            composable(Routes.Invites) {
+                chat.omcp.app.ui.screens.InviteRequestsScreen(repo.core, onBack = { nav.popBackStack() })
             }
             composable(Routes.Communities) {
                 chat.omcp.app.ui.screens.OpenCommunitiesTab(repo.core, onOpen = { nav.navigate(Routes.open(it)) },
-                    onOpenGroup = { nav.navigate(Routes.community(it)) }, onOpenLive = { nav.navigate(Routes.Live) })
+                    onOpenGroup = { nav.navigate(Routes.community(it)) })
             }
             composable(Routes.Open) { e ->
                 val id = e.arguments?.getString("id").orEmpty()
@@ -280,6 +286,7 @@ fun OmcpRoot(
                     onRelay = { nav.navigate(Routes.Relay) },
                     onMyQr = { nav.navigate(Routes.MyQr) },
                     onDiagnostics = { nav.navigate(Routes.Diagnostics) },
+                    privacy = { chat.omcp.app.ui.screens.PrivacyInvitesSection(repo.core) },
                     themeMode = themeMode,
                     onThemeMode = onThemeMode,
                 )
@@ -290,6 +297,7 @@ fun OmcpRoot(
                     vm = vm(key = "thread-$id") { ChatThreadViewModel(repo, id) },
                     onBack = { nav.popBackStack() },
                     onSecurity = { nav.navigate(Routes.security(id)) },
+                    onGoLive = { nav.navigate(Routes.Live) },
                 )
             }
             composable(Routes.Security) { entry ->

@@ -353,7 +353,7 @@ pub const OLD_EPOCH_ACCEPT_MS: u64 = 7 * 24 * 60 * 60 * 1000;
 /// Tag secrets of retired MLS epochs of one group (§22.7(13), TM33).
 /// The RemovalNotice is sent under the old-epoch tag ([`Self::removal_notice_tag`]),
 /// because the removed member cannot derive the new epoch's tags.
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct EpochTagHistory {
     /// (retired_at_ms, exporter secret of the retired epoch), newest last.
     old: Vec<(u64, Vec<u8>)>,

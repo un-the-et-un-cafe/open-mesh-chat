@@ -373,6 +373,11 @@ impl OmcpMlsMember {
         Ok(self.group_ref()?.members().count())
     }
 
+    /// Leaf indices of every member (current epoch), for §22.7(9) sub-tags.
+    pub fn member_leaf_indices(&self) -> Result<Vec<u32>> {
+        Ok(self.group_ref()?.members().map(|m| m.index.u32()).collect())
+    }
+
     /// Own leaf index.
     pub fn own_leaf_index(&self) -> Result<u32> {
         Ok(self.group_ref()?.own_leaf_index().u32())
