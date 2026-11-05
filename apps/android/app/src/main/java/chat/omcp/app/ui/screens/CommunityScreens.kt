@@ -202,6 +202,11 @@ fun CommunityDetailScreen(
         TopAppBar(title = { Text(k?.name ?: "") }, navigationIcon = {
             IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.back)) }
         }, actions = {
+            // `live-entry-headers` (§5.153): members only, E2EE.
+            if (!removed && k?.checking != true) TextButton(onClick = {
+                val u = core.liveBlockedUntilMs(communityId)
+                if (u != null) blockedUntil = u else vm.goLiveCommunity(communityId, title, online)
+            }, Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.u_live_btn)) }
             IconButton(onClick = onSecurity) { Icon(Icons.Filled.Lock, stringResource(R.string.d_security)) }
         })
     }) { padding ->

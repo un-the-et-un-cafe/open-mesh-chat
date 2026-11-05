@@ -1473,6 +1473,92 @@ mod tests {
         nodes[b].link_down(link, 0);
     }
 
+    /// Like `pump`, also counting DATA transmissions (envelopes on air).
+    fn pump_count(
+        nodes: &mut [RelayEngine],
+        wires: &HashMap<(usize, u64), (usize, u64)>,
+        mut pending: Vec<(usize, RelayEvent)>,
+        now: u64,
+    ) -> (Vec<(usize, EnvelopeV1)>, usize) {
+        let mut got = Vec::new();
+        let mut tx = 0;
+        while let Some((n, e)) = pending.pop() {
+            match e {
+                RelayEvent::Send { link, frame } => {
+                    if frame.first() == Some(&FRAME_DATA) {
+                        tx += 1;
+                    }
+                    let Some(&(m, ml)) = wires.get(&(n, link)) else {
+                        continue;
+                    };
+                    for e2 in nodes[m].on_frame(ml, &frame, now).unwrap() {
+                        pending.push((m, e2));
+                    }
+                }
+                RelayEvent::Deliver { envelope, .. } => got.push((n, envelope)),
+                _ => {}
+            }
+        }
+        (got, tx)
+    }
+
+    /// SY4 / §22.7(9): with the recipient's sub-tag advertised, a star of
+    /// 8 phones carries a message with fewer transmissions than the scoped
+    /// flood, and both paths deliver (the flood is the cold-start fallback).
+    #[test]
+    fn sy4_subtags_beat_flooding_and_flood_still_delivers() {
+        let now = 1_000_000;
+        let sub_r = [0x5B; 8];
+        let run = |warm: bool| {
+            // 0 = hub, 1 = sender, 2 = recipient, 3..8 = bystanders.
+            let mut nodes: Vec<RelayEngine> = (0..8)
+                .map(|i| RelayEngine::new(RelayConfig::default(), now, i + 1))
+                .collect();
+            // A mesh big enough that the small-mesh flood shortcut is off.
+            for n in &mut nodes {
+                n.set_visible_peers_override(Some(99));
+            }
+            if warm {
+                nodes[2].set_wants([sub_r].into(), now);
+            }
+            let mut wires = HashMap::new();
+            for leaf in 1..8 {
+                connect(&mut nodes, &mut wires, 0, leaf, leaf as u64, now);
+            }
+            if !warm {
+                // Cold: the recipient only starts wanting it after the send.
+                let ev = nodes[1].submit_own(env(7, sub_r, 6, now), now).unwrap();
+                let (_, tx) = pump_count(
+                    &mut nodes,
+                    &wires,
+                    ev.into_iter().map(|e| (1, e)).collect(),
+                    now,
+                );
+                let ev = nodes[2].set_wants([sub_r].into(), now + 1);
+                let (got, _) = pump_count(
+                    &mut nodes,
+                    &wires,
+                    ev.into_iter().map(|e| (2, e)).collect(),
+                    now + 1,
+                );
+                let held = nodes[2].item(&[7; 16]).is_some() || got.iter().any(|g| g.0 == 2);
+                return (held, tx);
+            }
+            let ev = nodes[1].submit_own(env(7, sub_r, 6, now), now).unwrap();
+            let (got, tx) = pump_count(
+                &mut nodes,
+                &wires,
+                ev.into_iter().map(|e| (1, e)).collect(),
+                now,
+            );
+            (got.iter().any(|g| g.0 == 2), tx)
+        };
+        let (warm_ok, warm_tx) = run(true);
+        let (cold_ok, flood_tx) = run(false);
+        assert!(warm_ok && cold_ok, "delivered warm and cold");
+        assert!(warm_tx < flood_tx, "sub-tags {warm_tx} vs flood {flood_tx}");
+    }
+
     #[test]
     fn store_and_forward_chain_a_b_c_never_in_range() {
         let now = 1_000_000;

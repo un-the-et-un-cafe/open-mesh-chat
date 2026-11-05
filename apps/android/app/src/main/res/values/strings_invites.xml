@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- §5.150–5.155 (Designy §5X): invites, undo toasts, live entries. -->
+<resources>
+    <string name="u_inv_requests">Requests</string>
+    <string name="u_inv_req_n">%1$d private group invites</string>
+    <string name="u_inv_group">Group: %1$s</string>
+    <string name="u_inv_count">Members and size shown after you join</string>
+    <string name="u_inv_e2e">End-to-end encrypted. Accept and Decline stay private; nothing is posted in the community.</string>
+    <string name="u_inv_more">More options for this invite</string>
+    <string name="u_inv_declined_t">Invite declined</string>
+    <string name="u_inv_declined_d">%1$s sees only that you declined, nobody else.</string>
+    <string name="u_inv_blocked_t">%1$s blocked</string>
+    <string name="u_inv_blocked_d">You won’t see invites from them. They aren’t told.</string>
+    <string name="u_undo">Undo</string>
+    <string name="u_inv_accepted_d">You’ll join %1$s when the welcome arrives over the mesh. It shows up in Chats.</string>
+    <string name="u_inv_sent_h">Sent invites</string>
+    <string name="u_inv_exp">Expires in %1$d days</string>
+    <string name="u_inv_noacc">Doesn’t accept invites from non-contacts</string>
+    <string name="u_inv_pending_d">Waiting for a reply. Delivery over the mesh can take hours or days.</string>
+    <string name="u_inv_limits">You can send 10 invites an hour and 30 a day.</string>
+    <string name="u_settings">Community settings</string>
+    <string name="u_notif">Notifications</string>
+    <string name="u_privacy">Privacy</string>
+    <string name="u_set_also">Also in Settings › Privacy, per community.</string>
+    <string name="u_leave">Leave community</string>
+    <string name="u_live_banner">%1$s is live in %2$s</string>
+    <string name="u_live_join">Join</string>
+    <string name="u_live_btn">Go live</string>
+    <string name="u_live_1to1">Live with %1$s</string>
+    <string name="u_call">Call</string>
+    <string name="u_live_where">Live is only in 1:1 chats and private groups, always end-to-end encrypted.</string>
+</resources>

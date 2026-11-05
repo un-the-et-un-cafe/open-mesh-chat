@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- §5.150–5.155 (Designy §5X): invites, undo toasts, live entries. -->
+<resources>
+    <string name="u_inv_requests">Demandes</string>
+    <string name="u_inv_req_n">%1$d invitations à des groupes privés</string>
+    <string name="u_inv_group">Groupe : %1$s</string>
+    <string name="u_inv_count">Membres et taille visibles après avoir rejoint</string>
+    <string name="u_inv_e2e">Chiffré de bout en bout. Accepter et Refuser restent privés ; rien n’est publié dans la communauté.</string>
+    <string name="u_inv_more">Plus d’options pour cette invitation</string>
+    <string name="u_inv_declined_t">Invitation refusée</string>
+    <string name="u_inv_declined_d">Seul·e %1$s voit que vous avez refusé.</string>
+    <string name="u_inv_blocked_t">%1$s bloqué·e</string>
+    <string name="u_inv_blocked_d">Vous ne verrez plus ses invitations. La personne n’est pas prévenue.</string>
+    <string name="u_undo">Annuler</string>
+    <string name="u_inv_accepted_d">Vous rejoindrez %1$s dès que l’accueil arrive par le maillage. Il apparaîtra dans Discussions.</string>
+    <string name="u_inv_sent_h">Invitations envoyées</string>
+    <string name="u_inv_exp">Expire dans %1$d jours</string>
+    <string name="u_inv_noacc">N’accepte pas d’invitations hors contacts</string>
+    <string name="u_inv_pending_d">En attente de réponse. La remise par le maillage peut prendre des heures ou des jours.</string>
+    <string name="u_inv_limits">Vous pouvez envoyer 10 invitations par heure et 30 par jour.</string>
+    <string name="u_settings">Réglages de la communauté</string>
+    <string name="u_notif">Notifications</string>
+    <string name="u_privacy">Confidentialité</string>
+    <string name="u_set_also">Aussi dans Réglages › Confidentialité, par communauté.</string>
+    <string name="u_leave">Quitter la communauté</string>
+    <string name="u_live_banner">%1$s est en direct dans %2$s</string>
+    <string name="u_live_join">Rejoindre</string>
+    <string name="u_live_btn">Lancer un direct</string>
+    <string name="u_live_1to1">Direct avec %1$s</string>
+    <string name="u_call">Appeler</string>
+    <string name="u_live_where">Les directs existent seulement en discussions privées et groupes privés, toujours chiffrés de bout en bout.</string>
+</resources>

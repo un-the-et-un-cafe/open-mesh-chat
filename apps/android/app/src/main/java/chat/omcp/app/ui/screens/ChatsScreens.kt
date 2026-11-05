@@ -112,6 +112,8 @@ fun ChatsListScreen(
     core: chat.omcp.app.core.OmcpCore? = null,
     onOpenGroup: (String) -> Unit = {},
     onOpenCommunity: (String) -> Unit = {},
+    onOpenInvites: () -> Unit = {},
+    onOpenLive: () -> Unit = {},
 ) {
     var groupsOnly by remember { mutableStateOf(false) }
     var chooser by remember { mutableStateOf(false) }
@@ -190,6 +192,11 @@ fun ChatsListScreen(
                 FilterChip(groupsOnly, { groupsOnly = true }, { Text(stringResource(R.string.u_chip_groups)) },
                     leadingIcon = { Icon(Icons.Default.Lock, null, Modifier.size(16.dp)) })
             }
+            // `live-entry-chats` (§5.150/5.153): Requests row + active-live banner.
+            if (core != null) {
+                InviteRequestsRow(core, onOpenInvites)
+                LiveBannerChats(core, groups, contacts.associate { it.id to it.displayName }, onOpenGroup, onOpenLive)
+            }
             invites.forEach { inv ->
                 Card(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
                     Column(Modifier.padding(12.dp)) {
@@ -237,6 +244,7 @@ fun ChatThreadScreen(
     vm: ChatThreadViewModel,
     onBack: () -> Unit,
     onSecurity: () -> Unit,
+    onGoLive: (() -> Unit)? = null,
 ) {
     val all by vm.messages.collectAsState()
     val status by vm.status.collectAsState()
@@ -351,6 +359,8 @@ fun ChatThreadScreen(
                     IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back)) }
                 },
                 actions = {
+                    // `live-entry-headers` (§5.153): Go live in the 1:1 header, E2EE.
+                    if (onGoLive != null) TextButton(onClick = onGoLive, Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.u_live_btn)) }
                     IconButton(onClick = onSecurity) {
                         Icon(Icons.Default.Security, contentDescription = stringResource(R.string.security_centre))
                     }

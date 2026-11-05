@@ -95,6 +95,8 @@ pub struct SentInviteInfo {
     pub offer_id_hex: String,
     pub group_id_hex: String,
     pub status: String,
+    /// When a pending invite expires (ms); shown as "Expires in N days".
+    pub expires_ms: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -584,6 +586,7 @@ impl OmcpNode {
                 offer_id_hex: hex::encode(id),
                 group_id_hex: hex::encode(o.group),
                 status: status_str(o.status).into(),
+                expires_ms: o.expires_s.saturating_mul(1000),
             })
             .collect()
     }

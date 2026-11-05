@@ -302,7 +302,7 @@ class RustOmcpCore : OmcpCore {
         node?.privateInviteSend(groupId, communityId, memberKey, text)?.let { InviteSentUi(it.offerIdHex, groupId, it.status, it.notice) }
     }.getOrNull()
     override fun invitesSent(): List<InviteSentUi> =
-        node?.privateInvitesSent()?.map { InviteSentUi(it.offerIdHex, it.groupIdHex, it.status) } ?: emptyList()
+        node?.privateInvitesSent()?.map { InviteSentUi(it.offerIdHex, it.groupIdHex, it.status, expiresMs = it.expiresMs.toLong()) } ?: emptyList()
     override fun inviteRequests(): List<InviteRequestUi> = node?.privateInviteRequests()?.map {
         InviteRequestUi(it.offerIdHex, it.communityIdHex, it.communityName, it.inviterKeyHex, it.inviterName, it.invitationText, it.groupName, it.accepted)
     } ?: emptyList()

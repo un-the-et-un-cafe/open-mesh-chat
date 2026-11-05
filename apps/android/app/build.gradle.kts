@@ -35,8 +35,8 @@ android {
         applicationId = "chat.omcp.app"
         minSdk = 31 // Android 12+
         targetSdk = 35
-        versionCode = 33
-        versionName = "0.1.33"
+        versionCode = 34
+        versionName = "0.1.34"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
         // Shipped locales only (EN/FR/HE): drops library translations.

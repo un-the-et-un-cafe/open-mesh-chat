@@ -53,8 +53,36 @@ pub fn seal(
     expires_ms: u64,
     ttl_hops: u8,
 ) -> Result<EnvelopeV1> {
+    seal_to(
+        tag_secret,
+        tag,
+        &[],
+        frame,
+        envelope_id,
+        created_ms,
+        expires_ms,
+        ttl_hops,
+    )
+}
+
+/// Like [`seal`], plus the recipients' §22.7(9) sub-tags (TLV `0x56`,
+/// groups of ≤ 8 members); empty = chat tag only (the fallback).
+#[allow(clippy::too_many_arguments)]
+pub fn seal_to(
+    tag_secret: &[u8; 32],
+    tag: &MailboxTag,
+    subtags: &[MailboxTag],
+    frame: &[u8],
+    envelope_id: [u8; 16],
+    created_ms: u64,
+    expires_ms: u64,
+    ttl_hops: u8,
+) -> Result<EnvelopeV1> {
     let mut header_aad = Vec::new();
     put_tag_in_aad(&mut header_aad, tag);
+    if !subtags.is_empty() {
+        crate::sync::tag::put_subtags_in_aad(&mut header_aad, subtags)?;
+    }
     put_expires_in_aad(&mut header_aad, expires_ms);
     let mut env = EnvelopeV1 {
         version: ENVELOPE_VERSION_V1,

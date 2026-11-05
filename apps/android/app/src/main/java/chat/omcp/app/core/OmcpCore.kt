@@ -645,7 +645,7 @@ data class LiveStatsUi(
 
 data class InviteCandidateUi(val key: String, val contactName: String?)
 /** [status] is "Not delivered yet", "Accepted", "Declined" or "Expired"; [notice] is the mesh-only notice (MR39). */
-data class InviteSentUi(val offerId: String, val groupId: String, val status: String, val notice: String = "")
+data class InviteSentUi(val offerId: String, val groupId: String, val status: String, val notice: String = "", val expiresMs: Long = 0)
 data class InviteRequestUi(
     val offerId: String,
     val communityId: String,
