@@ -639,6 +639,7 @@ pub fn reason_label(code: u8) -> &'static str {
     }
 }
 
+
 const OWNER_ACCEPT_DOMAIN: &[u8] = b"OMCP-owner-accept-v1\x00";
 
 /// Acceptance signature over community_ref || member_pk || owner_epoch (§23.10.13(2)(c)).
@@ -671,14 +672,77 @@ pub fn verify_owner_accept(
     vk.verify_strict(&b, &Signature::from_bytes(sig)).is_ok()
 }
 
-/// 1:1 E2E offer payload (§23.10.13(2)(b)).
+/// Build a fully owner-signed `OWNER_HANDOVER` whose `note` is the candidate's
+/// accept signature. The candidate must produce `accept_sig` before the owner
+/// finalizes the offer, so the owner can sign the complete action offline for
+/// the candidate to publish later.
+pub fn build_signed_owner_handover(
+    owner: &SigningKey,
+    community_id: &[u8; 32],
+    new_owner_pk: [u8; 32],
+    owner_epoch: u64,
+    issued_ms: u64,
+    accept_sig: &[u8; 64],
+) -> CommunityModActionV1 {
+    CommunityModActionV1::new_signed(
+        owner,
+        ModAction::OwnerHandover,
+        community_id,
+        new_owner_pk,
+        0,
+        0,
+        issued_ms,
+        owner_epoch,
+        accept_sig,
+    )
+}
+
+/// Preliminary 1:1 request (no secrets). Candidate answers with an accept sig.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OwnerHandoverRequest {
+    pub community_ref: [u8; 32],
+    pub community_id: [u8; 32],
+    pub owner_pk: [u8; 32],
+    pub owner_epoch: u64,
+    pub expires_ms: u64,
+}
+
+impl OwnerHandoverRequest {
+    pub const TYPE: u8 = 0x02;
+
+    pub fn encode(&self) -> Vec<u8> {
+        let mut b = vec![Self::TYPE];
+        b.extend_from_slice(&self.community_ref);
+        b.extend_from_slice(&self.community_id);
+        b.extend_from_slice(&self.owner_pk);
+        b.extend_from_slice(&self.owner_epoch.to_be_bytes());
+        b.extend_from_slice(&self.expires_ms.to_be_bytes());
+        b
+    }
+
+    pub fn decode(b: &[u8]) -> Result<Self> {
+        if b.len() != 1 + 32 * 3 + 8 + 8 || b[0] != Self::TYPE {
+            return err("owner handover request");
+        }
+        let a32 = |o: usize| -> [u8; 32] { b[o..o + 32].try_into().expect("32") };
+        Ok(Self {
+            community_ref: a32(1),
+            community_id: a32(33),
+            owner_pk: a32(65),
+            owner_epoch: u64::from_be_bytes(b[97..105].try_into().expect("8")),
+            expires_ms: u64::from_be_bytes(b[105..113].try_into().expect("8")),
+        })
+    }
+}
+
+/// Full 1:1 offer: community_sk + owner-signed OWNER_HANDOVER (§23.10.13(2)(b)).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OwnerHandoverOffer {
     pub community_ref: [u8; 32],
     pub community_sk: [u8; 32],
     pub owner_epoch: u64,
     pub expires_ms: u64,
-    /// Pre-signed OWNER_HANDOVER action from the current owner (encoded).
+    /// Pre-signed OWNER_HANDOVER action from the current owner (note = accept sig).
     pub action_bytes: Vec<u8>,
 }
 
@@ -715,5 +779,30 @@ impl OwnerHandoverOffer {
             expires_ms: u64::from_be_bytes(b[73..81].try_into().expect("8")),
             action_bytes: b[83..].to_vec(),
         })
+    }
+
+    /// Verify the owner signature, accept signature, and field binding.
+    pub fn verify_chain(&self, now_ms: u64) -> Result<CommunityModActionV1> {
+        if self.expires_ms <= now_ms {
+            return err("owner handover offer expired");
+        }
+        let a = CommunityModActionV1::decode(&self.action_bytes)?;
+        if a.action != ModAction::OwnerHandover
+            || a.community_ref != self.community_ref
+            || a.epoch != self.owner_epoch
+            || a.note.len() != 64
+        {
+            return err("owner handover offer action mismatch");
+        }
+        if !a.sig_ok() {
+            return err("owner handover owner signature");
+        }
+        let Ok(sig) = <[u8; 64]>::try_from(a.note.as_slice()) else {
+            return err("owner handover accept note");
+        };
+        if !verify_owner_accept(&a.member_pk, &a.community_ref, a.epoch, &sig) {
+            return err("owner handover accept signature");
+        }
+        Ok(a)
     }
 }

@@ -1839,6 +1839,90 @@ impl OmcpNode {
         Ok(())
     }
 
+    /// §23.10.13: current admin member_id hex list (empty if no group).
+    pub fn private_group_admins(&self, group_id_hex: String) -> Result<Vec<String>, FfiError> {
+        let id = parse_cid(&group_id_hex)?;
+        let st = self.inner.lock();
+        let c = st
+            .mesh
+            .community
+            .list
+            .get(&id)
+            .ok_or_else(|| invalid("unknown group"))?;
+        // member_id == peer_id (blake2b of identity credential).
+        let ids = c.member.admin_member_ids().map_err(mls)?;
+        Ok(ids.into_iter().map(hex::encode).collect())
+    }
+
+    pub fn private_group_is_admin(&self, group_id_hex: String) -> Result<bool, FfiError> {
+        let id = parse_cid(&group_id_hex)?;
+        let st = self.inner.lock();
+        let c = st
+            .mesh
+            .community
+            .list
+            .get(&id)
+            .ok_or_else(|| invalid("unknown group"))?;
+        Ok(c.member.is_admin())
+    }
+
+    /// Commit a new admin list (current admin only). `peer_id_hex` values
+    /// (same ids as `community_members`); member_id == peer_id.
+    pub fn private_group_set_admins(
+        &self,
+        group_id_hex: String,
+        peer_id_hex: Vec<String>,
+    ) -> Result<(), FfiError> {
+        let id = parse_cid(&group_id_hex)?;
+        let me = self.me();
+        let ids: Vec<[u8; 32]> = peer_id_hex
+            .iter()
+            .map(|h| parse_cid(h))
+            .collect::<Result<_, _>>()?;
+        if ids.is_empty() {
+            return Err(invalid("need at least one admin"));
+        }
+        {
+            let mut st = self.inner.lock();
+            let secret = st.group_secret(&id);
+            let commit = {
+                let c = st
+                    .mesh
+                    .community
+                    .list
+                    .get_mut(&id)
+                    .ok_or_else(|| invalid("unknown group"))?;
+                if !c.member.is_admin() {
+                    return Err(invalid("only an admin changes the admin list"));
+                }
+                for mid in &ids {
+                    if !c.roster.contains_key(mid) {
+                        return Err(invalid("admin must be a current member"));
+                    }
+                }
+                c.member.set_admins(&ids).map_err(mls)?
+            };
+            let roster: Vec<_> = {
+                let c = st.mesh.community.list.get(&id).unwrap();
+                c.roster.iter().map(|(a, b)| (*a, b.clone())).collect()
+            };
+            let msg = CMsg::Commit {
+                id,
+                commit,
+                roster,
+            };
+            for p in st.roster_contacts(&id, &[me]) {
+                st.post(p, &msg);
+            }
+            if let Some(sec) = secret {
+                st.publish_group_with(sec, &msg)?;
+            }
+            st.save_communities()?;
+        }
+        self.drain_community_outbox();
+        Ok(())
+    }
+
     /// Key fingerprint and key-change log (group-security).
     pub fn private_group_security(&self, group_id_hex: String) -> Result<GroupSecurity, FfiError> {
         let id = parse_cid(&group_id_hex)?;

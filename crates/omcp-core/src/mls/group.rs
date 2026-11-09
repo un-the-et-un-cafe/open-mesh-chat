@@ -16,7 +16,7 @@ use crate::mls::mls_pq::{
 
 mod admins;
 mod membership;
-pub use admins::{admins_extension, decode_admins, encode_admins, OMCP_GROUP_ADMINS};
+pub use admins::{admins_extension, decode_admins, encode_admins, member_id_of, OMCP_GROUP_ADMINS};
 pub use membership::{
     is_removal_notice, GroupStatus, RemovalNotice, RemoverRole, RotationCause, RotationEntry,
     LEAVE_COMMIT_DEADLINE_MS, MAX_REASON_TEXT, REMOVED_NOTICE_TEXT,

@@ -1,5 +1,13 @@
 # OMCP Design Pack — Changelog
 
+## v0.1.37 — 2026-11-09
+
+Closes thin spots from v0.1.36:
+
+- **Community owner handover (full path):** `OwnerHandoverRequest` → candidate `owner_accept_sig` → old owner pre-signs `CommunityModActionV1` action 4 with the accept sig in `note` → `OwnerHandoverOffer` carries `community_sk` + signed action; receivers verify the whole chain (`verify_chain`). FFI: `open_community_handover_request` / `make_accept` / `offer` / `accept` / `erase_community_sk_if_handover`. Lean app UI for offer/accept.
+- **Discovery-tag range pacing:** per-neighbour 6 h pacing wired into `RelayEngine::refresh_digest`; test `discovery_ranges_paced_in_digest_send`.
+- **Private-group admins UI:** FFI `private_group_admins` / `is_admin` / `set_admins` (0xF0A1 GCE); admin can add/remove admins in the group member list.
+
 ## v0.1.36 — 2026-11-09
 
 Founder/owner handover (§23.10.13, MR72–MR75, TM35): private-group `0xF0A1` omcp_group_admins, admin commit rules, last-admin handover, lowest-leaf fallback, one-member local delete, rotation cause `admin`; community OwnerHandoverOffer + OWNER_HANDOVER action 4, community_sk, ownerless delist. Discovery §20.8(4)(d) same-seq must not extend expiry; per-neighbour discovery-tag range pacing 6 h. §23.3 v1.0 never sends/applies reputation attestations.

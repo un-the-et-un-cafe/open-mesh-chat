@@ -12,7 +12,8 @@ use omcp_core::community::member_mod::{
     self as mm, CommunityModActionV1, ModAction, RemovedBy, Role,
 };
 use omcp_core::community::{
-    self as oc, owner_accept_sig, Control, ControlKind, OwnerHandoverOffer, Post, Wire,
+    self as oc, build_signed_owner_handover, owner_accept_sig, Control, ControlKind,
+    OwnerHandoverOffer, OwnerHandoverRequest, Post, Wire,
 };
 use omcp_core::EnvelopeV1;
 
@@ -144,6 +145,11 @@ impl NodeState {
                     // not relayed by this device's own store).
                     if self.mesh.open.apply_member_mod(&a, &m, now_ms()).is_ok() {
                         self.save_open_communities()?;
+                        if a.action == ModAction::OwnerHandover {
+                            // community_sk erase: callers use
+                            // open_community_erase_community_sk_if_handover after apply.
+                            let _ = a.actor_pk;
+                        }
                     }
                     return Ok(true);
                 }
@@ -649,8 +655,8 @@ impl OmcpNode {
 
     /// Anonymous report of a community post: the author-signed post plus a
     /// reason and optional note. No reporter key or identity (Q40).
-    /// §23.10.13(2): build an OwnerHandoverOffer for `candidate_key_hex` (1:1 body).
-    pub fn open_community_offer_owner_handover(
+    /// §23.10.13(2): start a handover — returns a request the candidate accepts.
+    pub fn open_community_handover_request(
         &self,
         community_id_hex: String,
         candidate_key_hex: String,
@@ -668,6 +674,74 @@ impl OmcpNode {
             return Err(invalid("candidate must be another member"));
         }
         let rec = st.mesh.discovery.listed.entry(id).or_default();
+        rec.owner_epoch = rec.owner_epoch.saturating_add(1);
+        let epoch = rec.owner_epoch;
+        st.save_listed()?;
+        let req = OwnerHandoverRequest {
+            community_ref: oc::community_ref(&id),
+            community_id: id,
+            owner_pk: k.verifying_key().to_bytes(),
+            owner_epoch: epoch,
+            expires_ms: now.saturating_add(7 * 86_400_000),
+        };
+        Ok(req.encode())
+    }
+
+    /// Candidate: produce the 64-byte accept signature for a handover request.
+    pub fn open_community_handover_make_accept(&self, request: Vec<u8>) -> Result<Vec<u8>, FfiError> {
+        let req = OwnerHandoverRequest::decode(&request).map_err(|_| invalid("request"))?;
+        let now = now_ms();
+        if req.expires_ms <= now {
+            return Err(invalid("request expired"));
+        }
+        let (k, me) = self.key_and_me()?;
+        let st = self.inner.lock();
+        let c = st
+            .mesh
+            .open
+            .get(&req.community_id)
+            .ok_or_else(|| invalid("community"))?;
+        if !c.members.contains(&me) || c.founder == me {
+            return Err(invalid("only a non-owner member can accept"));
+        }
+        if c.founder != req.owner_pk {
+            return Err(invalid("request from non-owner"));
+        }
+        let sig = owner_accept_sig(&k, &req.community_ref, &me, req.owner_epoch);
+        Ok(sig.to_vec())
+    }
+
+    /// Owner: finalize offer with the candidate's accept sig (pre-signs action 4).
+    pub fn open_community_offer_owner_handover(
+        &self,
+        community_id_hex: String,
+        candidate_key_hex: String,
+        accept_sig: Vec<u8>,
+    ) -> Result<Vec<u8>, FfiError> {
+        let id = parse_id(&community_id_hex)?;
+        let cand = parse_id(&candidate_key_hex)?;
+        let (k, me) = self.key_and_me()?;
+        let now = now_ms();
+        let Ok(accept) = <[u8; 64]>::try_from(accept_sig.as_slice()) else {
+            return Err(invalid("accept sig length"));
+        };
+        let mut st = self.inner.lock();
+        let c = st.mesh.open.get(&id).ok_or_else(|| invalid("community"))?;
+        if c.founder != me {
+            return Err(invalid("only the owner can offer handover"));
+        }
+        if !c.members.contains(&cand) || cand == me {
+            return Err(invalid("candidate must be another member"));
+        }
+        let cref = oc::community_ref(&id);
+        let rec = st.mesh.discovery.listed.entry(id).or_default();
+        let epoch = rec.owner_epoch;
+        if epoch == 0 {
+            return Err(invalid("start a handover request first"));
+        }
+        if !oc::verify_owner_accept(&cand, &cref, epoch, &accept) {
+            return Err(invalid("accept signature"));
+        }
         let csk = match rec.community_sk {
             Some(s) => s,
             None => {
@@ -677,27 +751,7 @@ impl OmcpNode {
                 s
             }
         };
-        rec.owner_epoch = rec.owner_epoch.saturating_add(1);
-        let epoch = rec.owner_epoch;
-        let cref = oc::community_ref(&id);
-        // Pre-sign with placeholder accept sig; candidate replaces note on accept.
-        // Spec: old owner signs the action including the accept sig; so candidate
-        // must accept first, then we re-sign — lean path: owner signs after we
-        // embed a zero sig and candidate publishes their own signed accept action.
-        // Here we embed zeros; accept() builds the real action with accept sig.
-        let placeholder = [0u8; 64];
-        let a = oc::CommunityModActionV1::new_signed(
-            &k,
-            oc::ModAction::OwnerHandover,
-            &id,
-            cand,
-            0,
-            0,
-            now,
-            epoch,
-            &placeholder,
-        );
-        // Overwrite note with zeros already; accept rebuilds.
+        let a = build_signed_owner_handover(&k, &id, cand, epoch, now, &accept);
         let offer = OwnerHandoverOffer {
             community_ref: cref,
             community_sk: csk,
@@ -709,14 +763,15 @@ impl OmcpNode {
         Ok(offer.encode())
     }
 
-    /// Accept an OwnerHandoverOffer: publish OWNER_HANDOVER and take community_sk.
+    /// Candidate: verify the chain, apply + gossip OWNER_HANDOVER, store community_sk.
     pub fn open_community_accept_owner_handover(&self, offer: Vec<u8>) -> Result<(), FfiError> {
         let offer = OwnerHandoverOffer::decode(&offer).map_err(|_| invalid("offer"))?;
         let now = now_ms();
-        if offer.expires_ms <= now {
-            return Err(invalid("offer expired"));
-        }
+        let a = offer.verify_chain(now).map_err(|_| invalid("offer chain"))?;
         let (k, me) = self.key_and_me()?;
+        if a.member_pk != me {
+            return Err(invalid("offer not for me"));
+        }
         let mut st = self.inner.lock();
         let id = st
             .mesh
@@ -726,59 +781,52 @@ impl OmcpNode {
             .find(|(id, _)| oc::community_ref(id) == offer.community_ref)
             .map(|(id, _)| *id)
             .ok_or_else(|| invalid("community"))?;
-        let accept = owner_accept_sig(&k, &offer.community_ref, &me, offer.owner_epoch);
-        // Old owner's pre-signed action may have placeholder note; rebuild signed by
-        // decoding actor from action and requiring candidate publishes with accept
-        // embedded. Spec says old owner includes signed action in offer — for lean
-        // v0.1.36 the new owner builds a fresh action that the old owner already
-        // authorized by sending community_sk; we verify the offer's action actor
-        // is the current founder, then the new owner publishes with accept sig
-        // signed by themselves as note and re-signed? Spec: actor_pk = current owner,
-        // note = new owner's accept sig, sig by old owner.
-        let mut a = oc::CommunityModActionV1::decode(&offer.action_bytes)
-            .map_err(|_| invalid("offer action"))?;
-        if a.member_pk != me || a.epoch != offer.owner_epoch {
-            return Err(invalid("offer not for me"));
-        }
-        a.note = accept.to_vec();
-        // Re-sign would need old owner key. Keep the offer's sig only if note
-        // matched; for lean, apply locally with a freshly owner-signed action
-        // reconstructed: use the pre-signed action's actor and require note verify.
-        // Overwrite note and clear sig check by applying through a helper that
-        // trusts the offer's community_sk transfer + accept sig.
-        a.note = accept.to_vec();
-        // Bypass sig_ok by constructing via apply path that verifies accept only:
-        // Re-encode with original sig is invalid. So: verify accept, then force-apply
-        // roster change and store community_sk.
-        if !oc::verify_owner_accept(&me, &offer.community_ref, offer.owner_epoch, &accept) {
-            return Err(invalid("accept sig"));
-        }
+        let m = st.mesh.moderation.clone();
+        st.mesh
+            .open
+            .apply_member_mod(&a, &m, now)
+            .map_err(|_| invalid("handover apply"))?;
         {
-            let c = st
-                .mesh
-                .open
-                .communities
-                .get_mut(&id)
-                .ok_or_else(|| invalid("community"))?;
-            if c.role(&a.actor_pk) != Some(oc::Role::Owner) && c.founder != a.actor_pk {
-                return Err(invalid("offer from non-owner"));
-            }
-            let old = c.founder;
-            c.founder = me;
-            c.admins.remove(&me);
-            c.moderators.remove(&me);
-            c.admins.insert(old);
-        }
-        let listed = {
             let rec = st.mesh.discovery.listed.entry(id).or_default();
             rec.community_sk = Some(offer.community_sk);
             rec.owner_epoch = offer.owner_epoch;
-            rec.on
-        };
+        }
+        st.save_open_communities()?;
         st.save_listed()?;
+        let listed = st
+            .mesh
+            .discovery
+            .listed
+            .get(&id)
+            .is_some_and(|r| r.on);
+        let ttl = st.mesh.engine.new_ttl();
+        let env = mm::seal_mod_action(&a, &id, now, ttl);
+        let ev = st.mesh.engine.submit_own(env, now)?;
+        st.route(ev)?;
         drop(st);
+        let _ = k;
         if listed {
             let _ = self.announce(id, now);
+        }
+        Ok(())
+    }
+
+    /// Old owner: erase community_sk after a gossiped OWNER_HANDOVER applied.
+    pub fn open_community_erase_community_sk_if_handover(
+        &self,
+        community_id_hex: String,
+    ) -> Result<(), FfiError> {
+        let id = parse_id(&community_id_hex)?;
+        let (_, me) = self.key_and_me()?;
+        let mut st = self.inner.lock();
+        let c = st.mesh.open.get(&id).ok_or_else(|| invalid("community"))?;
+        // After handover we are admin, not founder.
+        if c.founder == me {
+            return Ok(());
+        }
+        if let Some(rec) = st.mesh.discovery.listed.get_mut(&id) {
+            rec.community_sk = None;
+            st.save_listed()?;
         }
         Ok(())
     }
