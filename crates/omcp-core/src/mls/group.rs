@@ -845,7 +845,7 @@ impl OmcpMlsMember {
         let Some(mid) = self.leaf_member_id(l) else {
             return false;
         };
-        if ids.iter().any(|a| *a == mid) {
+        if ids.contains(&mid) {
             return true;
         }
         // Extension names nobody still in the group → lowest leaf is admin.
