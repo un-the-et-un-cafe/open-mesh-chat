@@ -490,3 +490,20 @@ fn mr63_near_you_and_categories() {
     );
     assert_eq!(bucket_range(3), (51, 200));
 }
+
+#[test]
+fn mr_discovery_same_seq_does_not_extend_expiry() {
+    // §20.8(4)(d): expiry is from the signed issued_ms of the newest valid
+    // announcement; hearing the same seq again MUST NOT extend it.
+    let mut ix = DiscoveryIndex::default();
+    let a = ann(1, 1, 1, NOW);
+    put(&mut ix, &a, NOW).unwrap();
+    let again_at = NOW + 10 * DAY;
+    let e = seal(&Listing::Announce(a.clone()), OWN_TTL);
+    let r = ix.ingest(&open(&e).unwrap(), e.envelope_id, 1, true, again_at);
+    assert!(matches!(r, Ok(Ingested::Again)));
+    // Still expires 14 d after the *original* issued_ms, not after again_at.
+    assert!(ix.purge(NOW + 13 * DAY).is_empty());
+    assert_eq!(ix.purge(NOW + 14 * DAY).len(), 1);
+    assert!(ix.is_empty());
+}

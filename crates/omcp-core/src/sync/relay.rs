@@ -221,6 +221,8 @@ pub struct RelayEngine {
     discovery_store: RelayStore,
     /// (hour start, discovery envelopes forwarded this hour).
     discovery_fwd: (u64, u32),
+    /// §20.8(4)(a) per-neighbour discovery-tag range pacing.
+    discovery_pacing: crate::community::discovery::DiscoveryPacing,
     /// Links over the gateway / internet path (no "Near you").
     gateway_links: BTreeSet<u64>,
     /// Full digests received from neighbours (post-restore hold, MR30).
@@ -328,6 +330,7 @@ impl RelayEngine {
                 daily_forward_bytes: None,
             }),
             discovery_fwd: (0, 0),
+            discovery_pacing: Default::default(),
             gateway_links: BTreeSet::new(),
             full_digests: 0,
             store: RelayStore::new(cfg.budget),
@@ -439,6 +442,15 @@ impl RelayEngine {
         &self.discovery
     }
 
+    /// §20.8(4)(a): whether discovery-tag ranges may go to `link` now.
+    pub fn discovery_may_send_ranges(&self, link: u64, now_ms: u64) -> bool {
+        self.discovery_pacing.may_send(link, now_ms)
+    }
+
+    pub fn discovery_mark_ranges_sent(&mut self, link: u64, now_ms: u64) {
+        self.discovery_pacing.mark_sent(link, now_ms);
+    }
+
     /// Reload the persisted index (before [`Self::restore`] of carry items).
     pub fn set_discovery_index(&mut self, idx: crate::community::discovery::DiscoveryIndex) {
         self.discovery = idx;
@@ -470,6 +482,9 @@ impl RelayEngine {
     ) -> Vec<RelayEvent> {
         let mut ev = Vec::new();
         let gone = self.discovery.set_context(ctx);
+        if !gone.is_empty() {
+            self.discovery_pacing.bump();
+        }
         self.drop_discovery(gone, &mut ev);
         ev
     }
@@ -522,6 +537,7 @@ impl RelayEngine {
         match self.discovery.ingest(&l, id, hops, via_radio, now_ms) {
             Ok(Ingested::Again) => true,
             Ok(Ingested::Stored { evicted }) => {
+                self.discovery_pacing.bump();
                 self.drop_discovery(evicted, ev);
                 let item = CarryItem {
                     hop_count: hops,
@@ -891,6 +907,9 @@ impl RelayEngine {
         let mut ev = Vec::new();
         // §20.8 4(d): listings expire 14 d after their latest issued_ms.
         let gone = self.discovery.purge(now_ms);
+        if !gone.is_empty() {
+            self.discovery_pacing.bump();
+        }
         self.drop_discovery(gone, &mut ev);
         let expired: Vec<[u8; 16]> = self
             .items

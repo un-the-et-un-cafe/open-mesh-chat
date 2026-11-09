@@ -78,6 +78,8 @@ pub enum ModAction {
     MemberRestore = 2,
     /// Owner only: demote a moderator/admin to member.
     RoleRevoke = 3,
+    /// §23.10.13(2): owner handover; note holds the 64-byte accept signature.
+    OwnerHandover = 4,
 }
 
 impl ModAction {
@@ -86,6 +88,7 @@ impl ModAction {
             1 => Self::MemberRemove,
             2 => Self::MemberRestore,
             3 => Self::RoleRevoke,
+            4 => Self::OwnerHandover,
             _ => return None,
         })
     }
@@ -103,7 +106,7 @@ pub struct CommunityModActionV1 {
     pub issued_ms: u64,
     pub epoch: u64,
     pub actor_pk: [u8; 32],
-    pub note: String,
+    pub note: Vec<u8>,
     pub sig: [u8; 64],
 }
 
@@ -119,7 +122,7 @@ impl CommunityModActionV1 {
         duration_s: u32,
         issued_ms: u64,
         epoch: u64,
-        note: &str,
+        note: &[u8],
     ) -> Self {
         let mut a = Self {
             action,
@@ -131,7 +134,7 @@ impl CommunityModActionV1 {
             issued_ms,
             epoch,
             actor_pk: actor.verifying_key().to_bytes(),
-            note: note.to_string(),
+            note: note.to_vec(),
             sig: [0u8; 64],
         };
         a.sig = actor.sign(&a.signed_body()).to_bytes();
@@ -149,7 +152,7 @@ impl CommunityModActionV1 {
         b.extend_from_slice(&self.epoch.to_be_bytes());
         b.extend_from_slice(&self.actor_pk);
         b.extend_from_slice(&(self.note.len() as u16).to_be_bytes());
-        b.extend_from_slice(self.note.as_bytes());
+        b.extend_from_slice(&self.note);
         b
     }
 
@@ -172,7 +175,7 @@ impl CommunityModActionV1 {
                 if !matches!(self.reason_code, 1..=7 | 9 | 10) {
                     return err("removal reason code");
                 }
-                if self.reason_code == 9 && self.note.trim().is_empty() {
+                if self.reason_code == 9 && self.note_text().trim().is_empty() {
                     return err("reason 9 needs a note");
                 }
                 if !(MIN_DURATION_S..=MAX_DURATION_S).contains(&self.duration_s) {
@@ -189,8 +192,18 @@ impl CommunityModActionV1 {
                     return err("role revoke fields");
                 }
             }
+            ModAction::OwnerHandover => {
+                if self.reason_code != 0 || self.duration_s != 0 || self.note.len() != 64 {
+                    return err("owner handover needs 64-byte accept sig in note");
+                }
+            }
         }
         Ok(())
+    }
+
+    /// UTF-8 view of `note` when it is text (not the handover accept sig).
+    pub fn note_text(&self) -> &str {
+        std::str::from_utf8(&self.note).unwrap_or("")
     }
 
     pub fn sig_ok(&self) -> bool {
@@ -216,9 +229,7 @@ impl CommunityModActionV1 {
         if nl > MAX_NOTE || b.len() != FIXED + nl + 64 {
             return err("community mod action length");
         }
-        let note = std::str::from_utf8(&b[FIXED..FIXED + nl])
-            .map_err(|_| OmcpError::Sync("note utf-8"))?
-            .to_string();
+        let note = b[FIXED..FIXED + nl].to_vec();
         let a = Self {
             action,
             community_ref: a32(1),
@@ -373,6 +384,20 @@ impl MemberModState {
                     return Err(ModReject::NotAllowed);
                 }
             }
+            ModAction::OwnerHandover => {
+                if actor != Role::Owner || a.actor_pk != com.founder {
+                    return Err(ModReject::NotAllowed);
+                }
+                if com.role(&a.member_pk).is_none() || a.member_pk == com.founder {
+                    return Err(ModReject::NotAllowed);
+                }
+                let Ok(sig) = <[u8; 64]>::try_from(a.note.as_slice()) else {
+                    return Err(ModReject::Malformed);
+                };
+                if !verify_owner_accept(&a.member_pk, &a.community_ref, a.epoch, &sig) {
+                    return Err(ModReject::BadSignature);
+                }
+            }
             _ => {
                 if actor < Role::Moderator || target >= actor {
                     return Err(ModReject::NotAllowed);
@@ -380,7 +405,7 @@ impl MemberModState {
             }
         }
         let key = (cref, a.member_id);
-        if a.action != ModAction::RoleRevoke {
+        if a.action != ModAction::RoleRevoke && a.action != ModAction::OwnerHandover {
             if let Some(c) = self.current.get(&key) {
                 if a.epoch <= c.epoch {
                     return Err(ModReject::Replay);
@@ -398,7 +423,7 @@ impl MemberModState {
                 return Err(ModReject::OverLimit);
             }
         }
-        if a.action != ModAction::RoleRevoke {
+        if a.action != ModAction::RoleRevoke && a.action != ModAction::OwnerHandover {
             self.current.insert(
                 key,
                 Current {
@@ -611,5 +636,84 @@ pub fn reason_label(code: u8) -> &'static str {
         Some(Reason::Other) => "Other",
         Some(Reason::SelfHarm) => "Self-harm or suicide",
         None => "",
+    }
+}
+
+const OWNER_ACCEPT_DOMAIN: &[u8] = b"OMCP-owner-accept-v1\x00";
+
+/// Acceptance signature over community_ref || member_pk || owner_epoch (§23.10.13(2)(c)).
+pub fn owner_accept_sig(
+    new_owner: &SigningKey,
+    community_ref: &[u8; 32],
+    member_pk: &[u8; 32],
+    owner_epoch: u64,
+) -> [u8; 64] {
+    let mut b = OWNER_ACCEPT_DOMAIN.to_vec();
+    b.extend_from_slice(community_ref);
+    b.extend_from_slice(member_pk);
+    b.extend_from_slice(&owner_epoch.to_be_bytes());
+    new_owner.sign(&b).to_bytes()
+}
+
+pub fn verify_owner_accept(
+    member_pk: &[u8; 32],
+    community_ref: &[u8; 32],
+    owner_epoch: u64,
+    sig: &[u8; 64],
+) -> bool {
+    let Ok(vk) = VerifyingKey::from_bytes(member_pk) else {
+        return false;
+    };
+    let mut b = OWNER_ACCEPT_DOMAIN.to_vec();
+    b.extend_from_slice(community_ref);
+    b.extend_from_slice(member_pk);
+    b.extend_from_slice(&owner_epoch.to_be_bytes());
+    vk.verify_strict(&b, &Signature::from_bytes(sig)).is_ok()
+}
+
+/// 1:1 E2E offer payload (§23.10.13(2)(b)).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OwnerHandoverOffer {
+    pub community_ref: [u8; 32],
+    pub community_sk: [u8; 32],
+    pub owner_epoch: u64,
+    pub expires_ms: u64,
+    /// Pre-signed OWNER_HANDOVER action from the current owner (encoded).
+    pub action_bytes: Vec<u8>,
+}
+
+impl OwnerHandoverOffer {
+    pub const TYPE: u8 = 0x01;
+
+    pub fn encode(&self) -> Vec<u8> {
+        let mut b = vec![Self::TYPE];
+        b.extend_from_slice(&self.community_ref);
+        b.extend_from_slice(&self.community_sk);
+        b.extend_from_slice(&self.owner_epoch.to_be_bytes());
+        b.extend_from_slice(&self.expires_ms.to_be_bytes());
+        b.extend_from_slice(&(self.action_bytes.len() as u16).to_be_bytes());
+        b.extend_from_slice(&self.action_bytes);
+        b
+    }
+
+    pub fn decode(b: &[u8]) -> Result<Self> {
+        if b.len() < 1 + 32 + 32 + 8 + 8 + 2 {
+            return err("owner handover offer truncated");
+        }
+        if b[0] != Self::TYPE {
+            return err("owner handover offer type");
+        }
+        let a32 = |o: usize| -> [u8; 32] { b[o..o + 32].try_into().expect("32") };
+        let al = u16::from_be_bytes([b[81], b[82]]) as usize;
+        if b.len() != 83 + al {
+            return err("owner handover offer length");
+        }
+        Ok(Self {
+            community_ref: a32(1),
+            community_sk: a32(33),
+            owner_epoch: u64::from_be_bytes(b[65..73].try_into().expect("8")),
+            expires_ms: u64::from_be_bytes(b[73..81].try_into().expect("8")),
+            action_bytes: b[83..].to_vec(),
+        })
     }
 }

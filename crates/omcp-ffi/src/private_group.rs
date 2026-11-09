@@ -1712,8 +1712,8 @@ impl OmcpNode {
                     .list
                     .get_mut(&id)
                     .ok_or_else(|| invalid("unknown group"))?;
-                if c.founder != me || who == me {
-                    return Err(invalid("only the founder removes members"));
+                if who == me || !c.member.is_admin() {
+                    return Err(invalid("only an admin removes members"));
                 }
                 let leaf = c
                     .member
@@ -1766,13 +1766,20 @@ impl OmcpNode {
         Ok(())
     }
 
-    /// Leave a private group (§23.10.12(1)): sends a Remove-self proposal
-    /// that a remaining member commits; this device never commits it, marks
-    /// the group left (history read-only) and erases its MLS state. The
-    /// founder can't leave (v1.0: the founder is the group admin).
-    pub fn private_group_leave(&self, group_id_hex: String) -> Result<(), FfiError> {
+    /// Leave a private group (§23.10.12(1) / §23.10.13). The last admin must
+    /// pass `new_admin_peer_hex` (a remaining member). One-member groups erase
+    /// locally and send nothing.
+    pub fn private_group_leave(
+        &self,
+        group_id_hex: String,
+        new_admin_peer_hex: Option<String>,
+    ) -> Result<(), FfiError> {
         let id = parse_cid(&group_id_hex)?;
         let me = self.me();
+        let successor = match new_admin_peer_hex {
+            Some(h) => Some(omcp_core::moderation::peer_id_hash_bytes(&parse_cid(&h)?)),
+            None => None,
+        };
         {
             let mut st = self.inner.lock();
             let secret = st.group_secret(&id);
@@ -1782,17 +1789,48 @@ impl OmcpNode {
                 .list
                 .get_mut(&id)
                 .ok_or_else(|| invalid("unknown group"))?;
-            if c.founder == me {
-                return Err(invalid("the founder can't leave"));
-            }
-            let proposal = c.member.leave().map_err(mls)?;
+            let out = c.member.leave_as_last_admin(successor).map_err(|e| {
+                let s = e.to_string();
+                if s.contains("last admin must name a successor") {
+                    invalid("pick a new admin before leaving")
+                } else {
+                    mls(e)
+                }
+            })?;
             c.signed.clear();
-            let msg = CMsg::Leave { id, proposal };
-            for p in st.roster_contacts(&id, &[me]) {
-                st.post(p, &msg);
+            if let Some((admin_commit, proposal)) = out {
+                if !admin_commit.is_empty() {
+                    let roster: Vec<_> = c.roster.iter().map(|(a, b)| (*a, b.clone())).collect();
+                    let msg = CMsg::Commit {
+                        id,
+                        commit: admin_commit,
+                        roster,
+                    };
+                    for p in st.roster_contacts(&id, &[me]) {
+                        st.post(p, &msg);
+                    }
+                    if let Some(sec) = secret {
+                        st.publish_group_with(sec, &msg)?;
+                    }
+                }
+                let msg = CMsg::Leave { id, proposal };
+                for p in st.roster_contacts(&id, &[me]) {
+                    st.post(p, &msg);
+                }
+                if let Some(sec) = secret {
+                    st.publish_group_with(sec, &msg)?;
+                }
+            } else {
+                // One-member delete: nothing to send.
+                c.roster.clear();
             }
-            if let Some(sec) = secret {
-                st.publish_group_with(sec, &msg)?;
+            // Mark left in local metadata.
+            if let Some(c) = st.mesh.community.list.get_mut(&id) {
+                c.founder = if c.founder == me {
+                    [0u8; 32]
+                } else {
+                    c.founder
+                };
             }
             st.mesh.community.old_tags.remove(&id);
             st.save_communities()?;

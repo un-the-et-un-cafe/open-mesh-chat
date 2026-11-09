@@ -1,5 +1,11 @@
 # Community discovery (v0.1.33, PROTOCOL §20.8, TM25–TM31)
 
+## v0.1.36 — expiry and discovery-tag pacing
+
+- §20.8(4)(d): listings expire 14 days from the newest valid announcement's signed `issued_ms`; hearing the same `seq` again does **not** extend life (test `mr_discovery_same_seq_does_not_extend_expiry`).
+- §20.8(4)(a): discovery-tag ranges to each neighbour at most once per 6 h unless the local index changed (`DiscoveryPacing`, per-neighbour timestamp + generation).
+- Announcements sign with a distinct `community_sk` when present (owner handover); roster check matches `owner_pk` only.
+
 - **Listed is off by default** (`LISTED_DEFAULT = false`); only the founder can turn it on, after the TM27 notice (`comm-listed-notice`, focus on "Keep unlisted"). Turning it off sends a signed delist. Unlisted communities are never announced (MR53).
 - **Wire:** `CommunityAnnouncementV1` (type `0x01`) and `CommunityDelist` (`0x02`), signed by `community_pk` then `owner_pk`, in public envelopes on the discovery tag, flags `RELAY_OK | STORE_OK`, header TLV `0x5D` (version, community_ref, seq). In v1.0 both keys are the founder's identity key (the key that signs the community genesis/roster).
 - **Limits:** payload ≤ 1,024 B; description ≤ 140 code points (MR54); ttl ≤ 6 hops (own listings start at 5, so they reach 6 hops; MR56); expiry 14 d after `issued_ms`, refresh every 7 d (MR57); index ≤ 2 MB / 5,000 entries in its own relay class, outside the relay cap and community history (MR58); ≤ 200 discovery envelopes forwarded per hour; one new seq per ref per 24 h; ≤ 3 listings per owner/community key (MR59).

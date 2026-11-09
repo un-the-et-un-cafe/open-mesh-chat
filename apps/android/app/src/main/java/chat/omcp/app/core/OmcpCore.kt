@@ -394,7 +394,12 @@ interface OmcpCore {
     fun openRemovePost(communityId: String, postId: String, reason: String): Boolean = false
     fun groupRemoveMember(groupId: String, peerId: String): Boolean = false
     /** §23.10.12: leave a private group (Remove-self proposal; others commit within 24 h). */
-    fun groupLeave(groupId: String): Boolean = false
+    fun groupLeave(groupId: String, newAdminPeerId: String? = null): Boolean = false
+    /** §23.10.13(2)(f): owner leaves without successor (delists first if Listed). */
+    fun leaveOwnerless(communityId: String): Boolean = false
+    /** Offer community ownership to a member (returns offer bytes hex, or null). */
+    fun offerOwnerHandover(communityId: String, candidateKeyHex: String): String? = null
+    fun acceptOwnerHandover(offerHex: String): Boolean = false
 
     // §23.10.11 community member removal (timed, 1 h–365 d; founder/team exempt from limits).
     fun openRemovalPresets(): List<Int> = listOf(3_600, 86_400, 604_800, 2_592_000, 31_536_000)
