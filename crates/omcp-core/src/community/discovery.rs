@@ -987,7 +987,6 @@ impl DiscoveryIndex {
     }
 }
 
-
 /// Per-neighbour pacing for discovery-tag ranges (§20.8(4)(a)).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DiscoveryPacing {

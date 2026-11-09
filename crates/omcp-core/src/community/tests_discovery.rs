@@ -491,7 +491,6 @@ fn mr63_near_you_and_categories() {
     assert_eq!(bucket_range(3), (51, 200));
 }
 
-
 #[test]
 fn mr_discovery_same_seq_does_not_extend_expiry() {
     // §20.8(4)(d): expiry is from the signed issued_ms of the newest valid

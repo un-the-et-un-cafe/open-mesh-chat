@@ -1826,7 +1826,11 @@ impl OmcpNode {
             }
             // Mark left in local metadata.
             if let Some(c) = st.mesh.community.list.get_mut(&id) {
-                c.founder = if c.founder == me { [0u8; 32] } else { c.founder };
+                c.founder = if c.founder == me {
+                    [0u8; 32]
+                } else {
+                    c.founder
+                };
             }
             st.mesh.community.old_tags.remove(&id);
             st.save_communities()?;

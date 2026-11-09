@@ -553,7 +553,6 @@ fn mr49_envelopes_carry_matching_0x5c_tlv() {
     assert!(open_mod_action(&env, &w.id).is_err());
 }
 
-
 #[test]
 fn mr74_owner_handover_offer_accept_and_roster() {
     let mut w = setup();

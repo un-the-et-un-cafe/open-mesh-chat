@@ -11,7 +11,9 @@ use ed25519_dalek::SigningKey;
 use omcp_core::community::member_mod::{
     self as mm, CommunityModActionV1, ModAction, RemovedBy, Role,
 };
-use omcp_core::community::{self as oc, owner_accept_sig, Control, ControlKind, OwnerHandoverOffer, Post, Wire};
+use omcp_core::community::{
+    self as oc, owner_accept_sig, Control, ControlKind, OwnerHandoverOffer, Post, Wire,
+};
 use omcp_core::EnvelopeV1;
 
 use crate::{invalid, now_ms, parse_id, FfiError, NodeState, OmcpNode};

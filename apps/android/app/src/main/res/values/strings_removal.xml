@@ -44,6 +44,7 @@
     <string name="u_rmr_threats">Threats</string>
     <string name="u_rmr_selfharm">Self-harm or suicide</string>
     <string name="u_rmr_other">Other (say why)</string>
+    <string name="g_leave_pick_admin">Pick a new admin before you leave</string>
     <string name="g_leave">Leave group</string>
     <string name="g_leave_t">Leave %1$s?</string>
     <string name="g_leave_d">Your phone deletes this group’s keys. The others change the group key, so you can’t read anything new. You keep what you already read.</string>

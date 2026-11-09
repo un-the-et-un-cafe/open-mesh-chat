@@ -639,7 +639,6 @@ pub fn reason_label(code: u8) -> &'static str {
     }
 }
 
-
 const OWNER_ACCEPT_DOMAIN: &[u8] = b"OMCP-owner-accept-v1\x00";
 
 /// Acceptance signature over community_ref || member_pk || owner_epoch (§23.10.13(2)(c)).

@@ -65,7 +65,6 @@ use crate::sync::tag::{parse_routing_aad, put_tag_in_aad, MailboxTag};
 
 pub mod evidence;
 pub mod report_key;
-mod v1_deferred;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -74,6 +73,7 @@ mod tests_groups;
 mod tests_report_key;
 #[cfg(test)]
 mod tests_v025;
+mod v1_deferred;
 
 const DOMAIN_V1: &[u8] = b"OMCP-team-mod-v1\x00";
 const DOMAIN_V2: &[u8] = b"OMCP-team-mod-v2\x00";
@@ -1193,4 +1193,7 @@ pub fn hex32(s: &str) -> Option<[u8; 32]> {
     Some(o)
 }
 
-pub use v1_deferred::{ignore_receive as ignore_deferred_reputation, refuse_send as refuse_deferred_reputation, DeferredReputationKind};
+pub use v1_deferred::{
+    ignore_receive as ignore_deferred_reputation, refuse_send as refuse_deferred_reputation,
+    DeferredReputationKind,
+};

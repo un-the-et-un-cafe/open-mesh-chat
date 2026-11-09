@@ -336,11 +336,8 @@ impl OmcpMlsMember {
             &[],
             &[],
         );
-        let exts = Extensions::from_vec(vec![
-            Extension::RequiredCapabilities(req),
-            admins_ext,
-        ])
-        .map_err(|_| OmcpError::Mls("group extensions"))?;
+        let exts = Extensions::from_vec(vec![Extension::RequiredCapabilities(req), admins_ext])
+            .map_err(|_| OmcpError::Mls("group extensions"))?;
         let config = MlsGroupCreateConfig::builder()
             .ciphersuite(OMCP_MLS_CIPHERSUITE)
             .use_ratchet_tree_extension(true)
@@ -883,11 +880,8 @@ impl OmcpMlsMember {
             &[],
             &[],
         );
-        let exts = Extensions::from_vec(vec![
-            Extension::RequiredCapabilities(req),
-            admins_ext,
-        ])
-        .map_err(|_| OmcpError::Mls("admin extensions"))?;
+        let exts = Extensions::from_vec(vec![Extension::RequiredCapabilities(req), admins_ext])
+            .map_err(|_| OmcpError::Mls("admin extensions"))?;
         let next = self.epoch()? + 1;
         let me = Some(self.own_member_id());
         for id in member_ids {
@@ -945,17 +939,13 @@ impl OmcpMlsMember {
         let prop = self.leave()?;
         Ok(Some((Vec::new(), prop)))
     }
-
-
 }
-
 
 impl crate::sync::tag::TagSecretSource for OmcpMlsMember {
     fn tag_secret(&self, tag_epoch: u64) -> Result<[u8; 32]> {
         self.tag_exporter(tag_epoch)
     }
 }
-
 
 /// §22.7 / §23.10.12: proposals a non-admin member may commit.
 fn commit_allowed_for_member(q: &QueuedProposal) -> bool {
@@ -1226,5 +1216,4 @@ mod tests {
             .iter()
             .any(|e| e.cause == RotationCause::Admin));
     }
-
 }
