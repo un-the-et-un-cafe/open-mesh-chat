@@ -18,8 +18,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install stable Rust
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust 1.99.1
+        uses: dtolnay/rust-toolchain@d124f86f28ff42855784ff3319f48ac182c248f8 # 1.99.1, matches rust-toolchain.toml
         with:
           components: rustfmt, clippy
 
@@ -42,8 +42,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install stable Rust + Android targets
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust 1.99.1 + Android targets
+        uses: dtolnay/rust-toolchain@d124f86f28ff42855784ff3319f48ac182c248f8 # 1.99.1, matches rust-toolchain.toml
         with:
           targets: aarch64-linux-android,x86_64-linux-android
 
@@ -144,8 +144,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install stable Rust + iOS targets
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust 1.99.1 + iOS targets
+        uses: dtolnay/rust-toolchain@d124f86f28ff42855784ff3319f48ac182c248f8 # 1.99.1, matches rust-toolchain.toml
         with:
           targets: aarch64-apple-ios,aarch64-apple-ios-sim
 
