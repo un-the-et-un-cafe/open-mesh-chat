@@ -1809,7 +1809,7 @@ impl OmcpNode {
                     for p in st.roster_contacts(&id, &[me]) {
                         st.post(p, &msg);
                     }
-                    if let Some(sec) = secret.clone() {
+                    if let Some(sec) = secret {
                         st.publish_group_with(sec, &msg)?;
                     }
                 }
