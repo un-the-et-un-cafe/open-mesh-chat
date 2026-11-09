@@ -115,7 +115,7 @@ fun CreateChooserSheet(core: OmcpCore, onDismiss: () -> Unit, onCreated: (kind: 
                 Text(stringResource(if (kind == "group") R.string.u_create_grp_d else R.string.u_create_comm_d), color = c.ink2)
                 OutlinedTextField(name, { name = it.take(60) }, Modifier.fillMaxWidth(), label = { Text(stringResource(R.string.u_create_name)) }, singleLine = true)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = { kind = null }, Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.u_cancel)) }
+                    OutlinedButton(onClick = { kind = null }, modifier = Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.u_cancel)) }
                     Button(enabled = name.isNotBlank(), modifier = Modifier.heightIn(min = 48.dp), onClick = {
                         val id = if (kind == "group") core.communityCreate(name.trim())?.id else core.openCommunityCreate(name.trim())?.id
                         if (id != null) onCreated(kind!!, id)
@@ -226,7 +226,7 @@ fun OpenCommunityScreen(core: OmcpCore, id: String, onTopic: (String) -> Unit, o
                             "\n" + stringResource(R.string.u_fa_d), CalloutKind.Danger, Modifier.padding(top = 6.dp))
                     }
                     Text(stringResource(R.string.u_c_info), color = c.ink2, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 6.dp))
-                    if (k != null) TextButton(onClick = { shareText(ctx, k.code) }, Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.u_share_code)) }
+                    if (k != null) TextButton(onClick = { shareText(ctx, k.code) }, modifier = Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.u_share_code)) }
                     HorizontalDivider()
                     Text(stringResource(R.string.u_tp), style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
                 }
@@ -537,7 +537,7 @@ fun OpenMembersScreen(core: OmcpCore, id: String, onBack: () -> Unit) {
                         Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.u_make_mod)) }
                     if (isFounder && !m.isMe) OutlinedButton(onClick = { handoverTarget = m },
                         Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.u_handover)) }
-                    if (myRank >= 1 && !m.isMe && roleRank(m.role) < myRank) TextButton(onClick = { removing = m }, Modifier.heightIn(min = 48.dp)) {
+                    if (myRank >= 1 && !m.isMe && roleRank(m.role) < myRank) TextButton(onClick = { removing = m }, modifier = Modifier.heightIn(min = 48.dp)) {
                         Text(stringResource(R.string.u_rmm_menu), color = c.danger)
                     }
                 }
@@ -568,7 +568,7 @@ private fun OwnerHandoverSheet(core: OmcpCore, id: String, candidateKey: String,
                     Button(onClick = {
                         requestHex = core.handoverRequest(id, candidateKey)
                         if (requestHex == null) err = "request failed"
-                    }, Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.u_handover)) }
+                    }, modifier = Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.u_handover)) }
                 } else {
                     Text(stringResource(R.string.u_handover_req), style = MaterialTheme.typography.bodySmall)
                     Text(requestHex!!.take(64) + "…", style = MaterialTheme.typography.bodySmall)
@@ -576,7 +576,7 @@ private fun OwnerHandoverSheet(core: OmcpCore, id: String, candidateKey: String,
                     Button(onClick = {
                         offerHex = core.offerOwnerHandover(id, candidateKey, acceptHex.trim())
                         if (offerHex == null) err = "offer failed"
-                    }, enabled = acceptHex.isNotBlank(), Modifier.heightIn(min = 48.dp)) {
+                    }, enabled = acceptHex.isNotBlank(), modifier = Modifier.heightIn(min = 48.dp)) {
                         Text(stringResource(R.string.u_handover_make_offer))
                     }
                     offerHex?.let {
@@ -603,7 +603,7 @@ private fun AcceptOwnerHandoverSheet(core: OmcpCore, onDone: () -> Unit) {
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(requestHex, { requestHex = it }, label = { Text(stringResource(R.string.u_handover_accept_hint)) })
-                Button(onClick = { acceptSig = core.handoverMakeAccept(requestHex.trim()) }, enabled = requestHex.isNotBlank(), Modifier.heightIn(min = 48.dp)) {
+                Button(onClick = { acceptSig = core.handoverMakeAccept(requestHex.trim()) }, enabled = requestHex.isNotBlank(), modifier = Modifier.heightIn(min = 48.dp)) {
                     Text(stringResource(R.string.u_handover_make_offer))
                 }
                 acceptSig?.let { Text(it.take(64) + "…", style = MaterialTheme.typography.bodySmall) }
