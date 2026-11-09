@@ -210,6 +210,14 @@ only appears in builds that ship a team. If a key is compromised, remove it in t
 Not in this version: the 1:1 fallback for the notice is used only when the
 old-epoch tag secret is missing; appeals; discovery screens (§5.143–5.144).
 
+## v0.1.35 — toolchain pins, RemovalNotice persistence, restore in Removals
+
+- **Rust:** `rust-toolchain.toml` pinned to `1.99.1` (1.99.0 miscompiles bool returns across FFI).
+- **Gradle:** Android wrapper bumped to **8.14.6** with `distributionSha256Sum` (GHSA-xwqc-3h47-hg64). AGP stays 8.7.2 (compatible; AGP 9.x needs Gradle 9.6+).
+- **RemovalNotice:** display text (role only) is saved with private-group state and reloaded on start (MR51).
+- **Removals → Restore:** owner/admin Removals list can issue `MEMBER_RESTORE` (0x5C action 2, reason 8); rank rules unchanged in core.
+- Deferred: founder/admin leave handover (no PROTOCOL handover); attestations (no wire format yet).
+
 ## v0.1.32 — report keys (PROTOCOL §23.2/23.3), MR52, TM12
 
 - **Report key (TM34, MR70):** Ed25519 seed = HKDF-SHA256(identity seed, salt = community_ref or group_ref, info `OMCP-report-key-v1`). Derived on demand, never stored or backed up. Signs only reports and evidence files; one key per community/group, so reports can't be linked across scopes or to the identity.

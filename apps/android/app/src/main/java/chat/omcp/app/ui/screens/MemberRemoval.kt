@@ -172,6 +172,13 @@ fun FounderRemovalsSection(core: OmcpCore, communityId: String, isFounder: Boole
                 Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
                     val reason = REMOVAL_REASONS.firstOrNull { it.second == e.reason }?.first
                     Text("${e.actorRole} · ${e.memberId.take(8)} · " + (reason?.let { stringResource(it) } ?: ""), Modifier.weight(1f), color = c.ink2)
+                    // MEMBER_RESTORE (0x5C action 2): rank rules enforced in core.
+                    if (e.action == 1 && e.memberKey.isNotEmpty()) {
+                        TextButton(
+                            onClick = { if (core.openRestoreMember(communityId, e.memberKey)) onChanged() },
+                            Modifier.heightIn(min = 48.dp),
+                        ) { Text(stringResource(R.string.u_restore)) }
+                    }
                 }
             }
         }

@@ -3619,6 +3619,19 @@ fn founder_removes_member_rotates_key_and_logs_it() {
     assert_eq!(gc.status, "removed");
     let n = gc.removed_notice.unwrap();
     assert!(n.contains("group admin") && !n.contains('A'));
+    // Notice text survives an app restart (saved with the group state).
+    {
+        let mut st = c.inner.lock();
+        st.mesh.community = Default::default();
+        st.load_communities().unwrap();
+    }
+    let gc = c
+        .private_groups()
+        .into_iter()
+        .find(|g| g.community_id_hex == gid)
+        .unwrap();
+    assert_eq!(gc.status, "removed");
+    assert_eq!(gc.removed_notice.as_deref(), Some(n.as_str()));
     for l in [&ab, &ac] {
         down(l);
     }

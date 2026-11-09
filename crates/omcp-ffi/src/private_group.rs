@@ -229,6 +229,9 @@ struct Saved {
     /// §22.7(13): retired-epoch tag secrets (7-day expiry) survive restarts.
     #[serde(default)]
     old_tags: Vec<([u8; 32], omcp_core::sync::tag::EpochTagHistory)>,
+    /// RemovalNotice display text (role only) survives restarts (MR51).
+    #[serde(default)]
+    notices: Vec<([u8; 32], String)>,
 }
 
 #[derive(Default)]
@@ -329,6 +332,11 @@ impl NodeState {
                 );
             }
         }
+        for (id, notice) in s.notices {
+            if let Some(k) = c.list.get_mut(&id) {
+                k.removed_notice = Some(notice);
+            }
+        }
         for (id, from, name) in s.invites {
             c.invites.insert(id, (from, name));
         }
@@ -381,6 +389,11 @@ impl NodeState {
                 .push((*id, name.clone(), m.export_state().map_err(mls)?));
         }
         s.invited = c.invited.iter().copied().collect();
+        s.notices = c
+            .list
+            .iter()
+            .filter_map(|(id, k)| k.removed_notice.clone().map(|n| (*id, n)))
+            .collect();
         let now = now_ms();
         s.old_tags = c
             .old_tags
