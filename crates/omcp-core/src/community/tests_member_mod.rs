@@ -560,23 +560,16 @@ fn mr74_owner_handover_offer_accept_and_roster() {
     let cref = community_ref(&w.id);
     let epoch = 1u64;
     let accept = owner_accept_sig(&cand, &cref, &pk(&cand), epoch);
-    let a = CommunityModActionV1::new_signed(
-        &w.owner,
-        ModAction::OwnerHandover,
-        &w.id,
-        pk(&cand),
-        0,
-        0,
-        NOW,
-        epoch,
-        &accept,
-    );
+    let a = build_signed_owner_handover(&w.owner, &w.id, pk(&cand), epoch, NOW, &accept);
     assert!(a.check_fields().is_ok());
+    assert!(a.sig_ok());
+    assert!(verify_owner_accept(&pk(&cand), &cref, epoch, &accept));
+    // Gossiped action applies on every member.
     w.s.apply_member_mod(&a, &w.m, NOW).unwrap();
     let c = w.s.get(&w.id).unwrap();
     assert_eq!(c.founder, pk(&cand));
     assert!(c.admins.contains(&pk(&w.owner)));
-    // Offer roundtrip
+    // Offer carries the same signed action; receivers verify the whole chain.
     let offer = OwnerHandoverOffer {
         community_ref: cref,
         community_sk: [9u8; 32],
@@ -584,14 +577,29 @@ fn mr74_owner_handover_offer_accept_and_roster() {
         expires_ms: NOW + 7 * 86_400_000,
         action_bytes: a.encode(),
     };
+    let verified = offer.verify_chain(NOW).unwrap();
+    assert_eq!(verified, a);
     let back = OwnerHandoverOffer::decode(&offer.encode()).unwrap();
-    assert_eq!(back.community_sk, [9u8; 32]);
-    assert_eq!(CommunityModActionV1::decode(&back.action_bytes).unwrap(), a);
+    assert_eq!(back.verify_chain(NOW).unwrap(), a);
+    // Tampered action bytes fail the chain.
+    let mut twisted = offer.encode();
+    let last = twisted.len() - 1;
+    twisted[last] ^= 0x5a;
+    assert!(OwnerHandoverOffer::decode(&twisted)
+        .and_then(|o| o.verify_chain(NOW))
+        .is_err());
+    // Request roundtrip
+    let req = OwnerHandoverRequest {
+        community_ref: cref,
+        community_id: w.id,
+        owner_pk: pk(&w.owner),
+        owner_epoch: epoch,
+        expires_ms: NOW + 7 * 86_400_000,
+    };
+    assert_eq!(OwnerHandoverRequest::decode(&req.encode()).unwrap(), req);
 }
 
 #[test]
 fn mr75_ownerless_requires_delist_first_flag() {
-    // Leaving without a successor: community stays usable; Listed must delist.
-    // Core flag helper used by the FFI leave path.
     assert!(ModAction::from_code(4) == Some(ModAction::OwnerHandover));
 }

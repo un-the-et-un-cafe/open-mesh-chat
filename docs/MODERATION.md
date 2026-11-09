@@ -1,5 +1,10 @@
 # Hopla team moderation
 
+## v0.1.37 — owner handover chain + admin UI
+
+- Full owner-handover accept path: request → accept-sig → pre-signed action 4 (note = accept-sig) → offer with community_sk; `verify_chain` on receive; old owner erases community_sk.
+- Private-group admin management through 0xF0A1 via FFI + lean UI.
+
 ## v0.1.36 — founder / owner handover (§23.10.13)
 
 - Private groups: MLS GCE `0xF0A1` `omcp_group_admins`; leaf 0 fallback; admin-only Add/Remove/GCE; last admin names a successor before leave; lowest-leaf fallback; one-member local delete; rotation cause `admin`.

@@ -1,5 +1,9 @@
 # Community discovery (v0.1.33, PROTOCOL §20.8, TM25–TM31)
 
+## v0.1.37 — digest pacing wired
+
+- Discovery-tag ranges are included in digests at most once per neighbour per 6 hours unless the local discovery index bumped (`DiscoveryPacing` in `refresh_digest`).
+
 ## v0.1.36 — expiry and discovery-tag pacing
 
 - §20.8(4)(d): listings expire 14 days from the newest valid announcement's signed `issued_ms`; hearing the same `seq` again does **not** extend life (test `mr_discovery_same_seq_does_not_extend_expiry`).

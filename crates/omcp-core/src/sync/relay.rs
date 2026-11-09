@@ -451,6 +451,11 @@ impl RelayEngine {
         self.discovery_pacing.mark_sent(link, now_ms);
     }
 
+    /// Test/ops: mark the local discovery index as changed (§20.8(4)(a)).
+    pub fn discovery_bump_pacing(&mut self) {
+        self.discovery_pacing.bump();
+    }
+
     /// Reload the persisted index (before [`Self::restore`] of carry items).
     pub fn set_discovery_index(&mut self, idx: crate::community::discovery::DiscoveryIndex) {
         self.discovery = idx;
@@ -960,7 +965,36 @@ impl RelayEngine {
         self.carry.update_from_neighbours(&nd, now_ms);
         let mut next: BTreeSet<MailboxTag> = self.wants.clone();
         next.extend(self.carry.advertised());
+        // §20.8(4)(a): advertise the discovery tag so neighbours can reconcile
+        // announcement ranges; per-neighbour pacing gates the actual send.
+        if !self.discovery.is_empty() || !self.discovery_store.is_empty() {
+            next.insert(crate::community::discovery::discovery_tag());
+        }
         if next == self.advertised {
+            // Still may need to (re)send paced discovery ranges to neighbours.
+            let dtag = crate::community::discovery::discovery_tag();
+            if next.contains(&dtag) {
+                let links: Vec<u64> = self.neighbours.keys().copied().collect();
+                let mut ev = Vec::new();
+                for l in links {
+                    if self.discovery_pacing.may_send(l, now_ms) {
+                        self.discovery_pacing.mark_sent(l, now_ms);
+                        let full = full_digest_frame(&self.digest);
+                        let hello = LinkControl::hello_for(&self.digest, false).encode();
+                        ev.push(RelayEvent::Send {
+                            link: l,
+                            frame: full,
+                        });
+                        ev.push(RelayEvent::Send {
+                            link: l,
+                            frame: hello.to_vec(),
+                        });
+                    }
+                }
+                if !ev.is_empty() {
+                    return ev;
+                }
+            }
             return Vec::new();
         }
         let old = self.digest.clone();
@@ -980,22 +1014,46 @@ impl RelayEngine {
         }
         self.advertised = next;
         let mut ev = Vec::new();
-        let (frame, has_delta) = match old.delta_to(&self.digest) {
-            Some(d) => {
-                let mut f = vec![FRAME_DIGEST_DELTA, DELTA_MODE_DELTA];
-                f.extend_from_slice(&d.encode());
-                (f, true)
+        let dtag = crate::community::discovery::discovery_tag();
+        let links: Vec<u64> = self.neighbours.keys().copied().collect();
+        for l in links {
+            let include_discovery =
+                self.advertised.contains(&dtag) && self.discovery_pacing.may_send(l, now_ms);
+            let (frame, has_delta, digest_for_hello) =
+                if include_discovery || !self.advertised.contains(&dtag) {
+                    // Full advertised set (with or without discovery absent entirely).
+                    match old.delta_to(&self.digest) {
+                        Some(d) => {
+                            let mut f = vec![FRAME_DIGEST_DELTA, DELTA_MODE_DELTA];
+                            f.extend_from_slice(&d.encode());
+                            (f, true, self.digest.clone())
+                        }
+                        None => (full_digest_frame(&self.digest), false, self.digest.clone()),
+                    }
+                } else {
+                    // Paced: send digest without the discovery tag.
+                    let mut tags: Vec<_> = self
+                        .advertised
+                        .iter()
+                        .copied()
+                        .filter(|t| *t != dtag)
+                        .collect();
+                    tags.sort();
+                    match CuckooFilter::build_digest(&tags, DIGEST_MIN_ENTRIES, &mut self.rng) {
+                        Ok(f) => (full_digest_frame(&f), false, f),
+                        Err(_) => continue,
+                    }
+                };
+            if include_discovery {
+                self.discovery_pacing.mark_sent(l, now_ms);
             }
-            None => (full_digest_frame(&self.digest), false),
-        };
-        let hello = LinkControl::hello_for(&self.digest, has_delta).encode();
-        for l in self.neighbours.keys() {
+            let hello = LinkControl::hello_for(&digest_for_hello, has_delta).encode();
             ev.push(RelayEvent::Send {
-                link: *l,
+                link: l,
                 frame: frame.clone(),
             });
             ev.push(RelayEvent::Send {
-                link: *l,
+                link: l,
                 frame: hello.to_vec(),
             });
         }
@@ -2351,5 +2409,26 @@ mod tests {
         q.header_aad.extend_from_slice(&[0u8; 64]);
         b.on_frame(1, &data(&q), now).unwrap();
         assert!(b.item(&q.envelope_id).is_none());
+    }
+
+    #[test]
+    fn discovery_ranges_paced_in_digest_send() {
+        use crate::community::discovery::{discovery_tag, DISCOVERY_PACING_MS};
+        let now = 1_000_000u64;
+        let mut a = RelayEngine::new(RelayConfig::default(), now, 1);
+        a.link_up(1, b"peer", true, now);
+        let mut wants = std::collections::BTreeSet::new();
+        wants.insert(discovery_tag());
+        let ev1 = a.set_wants(wants, now);
+        assert!(ev1
+            .iter()
+            .any(|e| matches!(e, RelayEvent::Send { link: 1, .. })));
+        a.discovery_mark_ranges_sent(1, now);
+        assert!(!a.discovery_may_send_ranges(1, now + 1));
+        a.discovery_bump_pacing();
+        assert!(a.discovery_may_send_ranges(1, now + 1));
+        a.discovery_mark_ranges_sent(1, now + 1);
+        assert!(!a.discovery_may_send_ranges(1, now + 1 + DISCOVERY_PACING_MS - 1));
+        assert!(a.discovery_may_send_ranges(1, now + 1 + DISCOVERY_PACING_MS));
     }
 }

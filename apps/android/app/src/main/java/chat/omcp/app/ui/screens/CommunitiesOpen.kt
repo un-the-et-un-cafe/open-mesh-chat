@@ -115,7 +115,7 @@ fun CreateChooserSheet(core: OmcpCore, onDismiss: () -> Unit, onCreated: (kind: 
                 Text(stringResource(if (kind == "group") R.string.u_create_grp_d else R.string.u_create_comm_d), color = c.ink2)
                 OutlinedTextField(name, { name = it.take(60) }, Modifier.fillMaxWidth(), label = { Text(stringResource(R.string.u_create_name)) }, singleLine = true)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = { kind = null }, Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.u_cancel)) }
+                    OutlinedButton(onClick = { kind = null }, modifier = Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.u_cancel)) }
                     Button(enabled = name.isNotBlank(), modifier = Modifier.heightIn(min = 48.dp), onClick = {
                         val id = if (kind == "group") core.communityCreate(name.trim())?.id else core.openCommunityCreate(name.trim())?.id
                         if (id != null) onCreated(kind!!, id)
@@ -226,7 +226,7 @@ fun OpenCommunityScreen(core: OmcpCore, id: String, onTopic: (String) -> Unit, o
                             "\n" + stringResource(R.string.u_fa_d), CalloutKind.Danger, Modifier.padding(top = 6.dp))
                     }
                     Text(stringResource(R.string.u_c_info), color = c.ink2, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 6.dp))
-                    if (k != null) TextButton(onClick = { shareText(ctx, k.code) }, Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.u_share_code)) }
+                    if (k != null) TextButton(onClick = { shareText(ctx, k.code) }, modifier = Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.u_share_code)) }
                     HorizontalDivider()
                     Text(stringResource(R.string.u_tp), style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
                 }
@@ -507,10 +507,18 @@ fun OpenMembersScreen(core: OmcpCore, id: String, onBack: () -> Unit) {
     var members by remember { mutableStateOf(listOf<OpenMemberUi>()) }
     val isFounder = remember(id) { core.openCommunities().firstOrNull { it.id == id }?.isFounder == true }
     var removing by remember { mutableStateOf<OpenMemberUi?>(null) }
+    var handoverTarget by remember { mutableStateOf<OpenMemberUi?>(null) }
+    var acceptOffer by remember { mutableStateOf(false) }
     LaunchedEffect(id) { while (true) { members = core.openMembers(id); kotlinx.coroutines.delay(2_000) } }
     val myRank = roleRank(members.firstOrNull { it.isMe }?.role ?: "member")
     removing?.let { m ->
         MemberRemoveSheet(core, id, m.key, m.contactName ?: m.key.take(8)) { removing = null; members = core.openMembers(id) }
+    }
+    handoverTarget?.let { m ->
+        OwnerHandoverSheet(core, id, m.key, m.contactName ?: m.key.take(8)) { handoverTarget = null; members = core.openMembers(id) }
+    }
+    if (acceptOffer) {
+        AcceptOwnerHandoverSheet(core) { acceptOffer = false; members = core.openMembers(id) }
     }
     Scaffold(topBar = {
         TopAppBar(title = { Text(stringResource(R.string.u_members_t)) }, navigationIcon = {
@@ -527,13 +535,93 @@ fun OpenMembersScreen(core: OmcpCore, id: String, onBack: () -> Unit) {
                     MemberIdentity(m.key, if (m.isMe) stringResource(R.string.u_member_you) else m.contactName, role, Modifier.weight(1f))
                     if (isFounder && m.role == "member") OutlinedButton(onClick = { core.openMakeModerator(id, m.key); members = core.openMembers(id) },
                         Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.u_make_mod)) }
-                    if (myRank >= 1 && !m.isMe && roleRank(m.role) < myRank) TextButton(onClick = { removing = m }, Modifier.heightIn(min = 48.dp)) {
+                    if (isFounder && !m.isMe) OutlinedButton(onClick = { handoverTarget = m },
+                        modifier = Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.u_handover)) }
+                    if (myRank >= 1 && !m.isMe && roleRank(m.role) < myRank) TextButton(onClick = { removing = m }, modifier = Modifier.heightIn(min = 48.dp)) {
                         Text(stringResource(R.string.u_rmm_menu), color = c.danger)
                     }
                 }
             }
+            if (!isFounder) item {
+                TextButton(onClick = { acceptOffer = true }, Modifier.padding(16.dp).heightIn(min = 48.dp)) {
+                    Text(stringResource(R.string.u_handover_paste_offer))
+                }
+            }
         }
     }
+}
+
+@Composable
+private fun OwnerHandoverSheet(core: OmcpCore, id: String, candidateKey: String, name: String, onDone: () -> Unit) {
+    var requestHex by remember { mutableStateOf<String?>(null) }
+    var acceptHex by remember { mutableStateOf("") }
+    var offerHex by remember { mutableStateOf<String?>(null) }
+    var err by remember { mutableStateOf<String?>(null) }
+    AlertDialog(
+        onDismissRequest = onDone,
+        title = { Text(stringResource(R.string.u_handover)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(stringResource(R.string.u_handover_d))
+                Text(name, style = MaterialTheme.typography.labelLarge)
+                if (requestHex == null) {
+                    Button(onClick = {
+                        requestHex = core.handoverRequest(id, candidateKey)
+                        if (requestHex == null) err = "request failed"
+                    }, modifier = Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.u_handover)) }
+                } else {
+                    Text(stringResource(R.string.u_handover_req), style = MaterialTheme.typography.bodySmall)
+                    Text(requestHex!!.take(64) + "…", style = MaterialTheme.typography.bodySmall)
+                    OutlinedTextField(acceptHex, { acceptHex = it }, label = { Text(stringResource(R.string.u_handover_accept_hint)) })
+                    Button(onClick = {
+                        offerHex = core.offerOwnerHandover(id, candidateKey, acceptHex.trim())
+                        if (offerHex == null) err = "offer failed"
+                    }, enabled = acceptHex.isNotBlank(), modifier = Modifier.heightIn(min = 48.dp)) {
+                        Text(stringResource(R.string.u_handover_make_offer))
+                    }
+                    offerHex?.let {
+                        Text(stringResource(R.string.u_handover_offer_ready), style = MaterialTheme.typography.bodySmall)
+                        Text(it.take(64) + "…", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                err?.let { Text(it, color = LocalOmcpColors.current.danger) }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDone) { Text(stringResource(R.string.back)) } },
+    )
+}
+
+@Composable
+private fun AcceptOwnerHandoverSheet(core: OmcpCore, onDone: () -> Unit) {
+    var offerHex by remember { mutableStateOf("") }
+    var requestHex by remember { mutableStateOf("") }
+    var acceptSig by remember { mutableStateOf<String?>(null) }
+    var ok by remember { mutableStateOf<Boolean?>(null) }
+    AlertDialog(
+        onDismissRequest = onDone,
+        title = { Text(stringResource(R.string.u_handover_accept)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(requestHex, { requestHex = it }, label = { Text(stringResource(R.string.u_handover_accept_hint)) })
+                Button(onClick = { acceptSig = core.handoverMakeAccept(requestHex.trim()) }, enabled = requestHex.isNotBlank(), modifier = Modifier.heightIn(min = 48.dp)) {
+                    Text(stringResource(R.string.u_handover_make_offer))
+                }
+                acceptSig?.let { Text(it.take(64) + "…", style = MaterialTheme.typography.bodySmall) }
+                OutlinedTextField(offerHex, { offerHex = it }, label = { Text(stringResource(R.string.u_handover_paste_offer)) })
+                when (ok) {
+                    true -> Text(stringResource(R.string.u_handover_ok))
+                    false -> Text(stringResource(R.string.u_handover_fail), color = LocalOmcpColors.current.danger)
+                    null -> {}
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                ok = core.acceptOwnerHandover(offerHex.trim())
+            }, enabled = offerHex.isNotBlank()) { Text(stringResource(R.string.u_handover_accept)) }
+        },
+        dismissButton = { TextButton(onClick = onDone) { Text(stringResource(R.string.back)) } },
+    )
 }
 
 /** Private-group chat section: E2EE header, "Checking…" hold, messages, report. */

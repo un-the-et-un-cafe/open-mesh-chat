@@ -52,4 +52,7 @@
     <string name="g_removed">You were removed from this group by %1$s. You keep what you already read, but nothing new.</string>
     <string name="g_removed_admin">a group admin</string>
     <string name="g_removed_member">a group member</string>
+    <string name="g_admins">Admins</string>
+    <string name="g_admin_add">Make admin</string>
+    <string name="g_admin_rm">Remove admin</string>
 </resources>

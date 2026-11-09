@@ -266,18 +266,32 @@ class RustOmcpCore : OmcpCore {
         runCatching { node?.privateGroupRemoveMember(groupId, peerId, "") != null }.getOrDefault(false)
     override fun groupLeave(groupId: String, newAdminPeerId: String?): Boolean =
         runCatching { node?.privateGroupLeave(groupId, newAdminPeerId) != null }.getOrDefault(false)
+    private fun unhex(h: String) = h.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+    private fun toHex(bs: ByteArray?) = bs?.joinToString("") { b -> "%02x".format(b.toInt() and 0xff) }
     override fun leaveOwnerless(communityId: String): Boolean =
         runCatching { node?.openCommunityLeaveOwnerless(communityId); true }.getOrDefault(false)
-    override fun offerOwnerHandover(communityId: String, candidateKeyHex: String): String? =
+    override fun handoverRequest(communityId: String, candidateKeyHex: String): String? =
+        runCatching { toHex(node?.openCommunityHandoverRequest(communityId, candidateKeyHex)) }.getOrNull()
+    override fun handoverMakeAccept(requestHex: String): String? =
         runCatching {
-            node?.openCommunityOfferOwnerHandover(communityId, candidateKeyHex)
+            node?.openCommunityHandoverMakeAccept(unhex(requestHex))
+                ?.joinToString("") { b -> "%02x".format(b.toInt() and 0xff) }
+        }.getOrNull()
+    override fun offerOwnerHandover(communityId: String, candidateKeyHex: String, acceptSigHex: String): String? =
+        runCatching {
+            node?.openCommunityOfferOwnerHandover(communityId, candidateKeyHex, unhex(acceptSigHex))
                 ?.joinToString("") { b -> "%02x".format(b.toInt() and 0xff) }
         }.getOrNull()
     override fun acceptOwnerHandover(offerHex: String): Boolean =
-        runCatching {
-            val bytes = offerHex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
-            node?.openCommunityAcceptOwnerHandover(bytes); true
-        }.getOrDefault(false)
+        runCatching { node?.openCommunityAcceptOwnerHandover(unhex(offerHex)); true }.getOrDefault(false)
+    override fun eraseCommunitySkIfHandover(communityId: String): Boolean =
+        runCatching { node?.openCommunityEraseCommunitySkIfHandover(communityId); true }.getOrDefault(false)
+    override fun groupAdmins(groupId: String): List<String> =
+        runCatching { node?.privateGroupAdmins(groupId) ?: emptyList() }.getOrDefault(emptyList())
+    override fun groupIsAdmin(groupId: String): Boolean =
+        runCatching { node?.privateGroupIsAdmin(groupId) == true }.getOrDefault(false)
+    override fun groupSetAdmins(groupId: String, memberIdHex: List<String>): Boolean =
+        runCatching { node?.privateGroupSetAdmins(groupId, memberIdHex); true }.getOrDefault(false)
     override fun openRemovalPresets(): List<Int> =
         node?.openCommunityRemovalPresets()?.map { it.toInt() } ?: super.openRemovalPresets()
     override fun openRemoveMember(communityId: String, memberKey: String, reason: Int, durationS: Int, note: String): Boolean =

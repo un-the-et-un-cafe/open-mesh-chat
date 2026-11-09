@@ -103,4 +103,14 @@
     <string name="u_identity_notice">Your posts show your Hopla identity, and people can see the same identity in other communities you join.</string>
     <string name="u_owner_leave">Leave without an owner</string>
     <string name="u_owner_leave_d">Nobody will be able to change roles. If Listed, this delists the community first.</string>
+    <string name="u_handover">Hand over ownership</string>
+    <string name="u_handover_d">The member must accept. Paste their accept signature, then share the offer.</string>
+    <string name="u_handover_req">Request ready — share with the candidate</string>
+    <string name="u_handover_accept_hint">Accept signature (hex)</string>
+    <string name="u_handover_make_offer">Make offer</string>
+    <string name="u_handover_offer_ready">Offer ready — share with the candidate</string>
+    <string name="u_handover_paste_offer">Paste ownership offer</string>
+    <string name="u_handover_accept">Accept ownership</string>
+    <string name="u_handover_ok">You are now the owner</string>
+    <string name="u_handover_fail">Could not accept offer</string>
 </resources>

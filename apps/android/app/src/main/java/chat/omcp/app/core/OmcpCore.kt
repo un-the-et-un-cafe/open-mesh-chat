@@ -397,9 +397,19 @@ interface OmcpCore {
     fun groupLeave(groupId: String, newAdminPeerId: String? = null): Boolean = false
     /** §23.10.13(2)(f): owner leaves without successor (delists first if Listed). */
     fun leaveOwnerless(communityId: String): Boolean = false
-    /** Offer community ownership to a member (returns offer bytes hex, or null). */
-    fun offerOwnerHandover(communityId: String, candidateKeyHex: String): String? = null
+    /** §23.10.13: start handover — request hex for the candidate. */
+    fun handoverRequest(communityId: String, candidateKeyHex: String): String? = null
+    /** Candidate: accept-sig hex for a request. */
+    fun handoverMakeAccept(requestHex: String): String? = null
+    /** Owner: finalize offer with accept-sig (pre-signed action 4). */
+    fun offerOwnerHandover(communityId: String, candidateKeyHex: String, acceptSigHex: String): String? = null
+    /** Candidate: verify chain, gossip OWNER_HANDOVER, store community_sk. */
     fun acceptOwnerHandover(offerHex: String): Boolean = false
+    fun eraseCommunitySkIfHandover(communityId: String): Boolean = false
+    /** Private-group admin list (member_id hex). */
+    fun groupAdmins(groupId: String): List<String> = emptyList()
+    fun groupIsAdmin(groupId: String): Boolean = false
+    fun groupSetAdmins(groupId: String, memberIdHex: List<String>): Boolean = false
 
     // §23.10.11 community member removal (timed, 1 h–365 d; founder/team exempt from limits).
     fun openRemovalPresets(): List<Int> = listOf(3_600, 86_400, 604_800, 2_592_000, 31_536_000)

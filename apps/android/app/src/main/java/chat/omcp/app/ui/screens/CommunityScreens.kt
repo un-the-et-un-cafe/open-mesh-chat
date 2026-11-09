@@ -217,6 +217,9 @@ fun CommunityDetailScreen(
     }
     report?.let { ReportLiveDialog(it) { report = null } }
     var removeMember by remember { mutableStateOf<CommunityMemberUi?>(null) }
+    val amAdmin = remember(communityId) { core.groupIsAdmin(communityId) }
+    var adminPeers by remember { mutableStateOf(core.groupAdmins(communityId)) }
+    LaunchedEffect(communityId) { while (true) { adminPeers = core.groupAdmins(communityId); kotlinx.coroutines.delay(2_000) } }
     removeMember?.let { m ->
         GroupRemoveSheet(m.name, (members.size - 2).coerceAtLeast(0), onDismiss = { removeMember = null }) {
             core.groupRemoveMember(communityId, m.peerId); removeMember = null; members = core.communityMembers(communityId)
@@ -327,6 +330,17 @@ fun CommunityDetailScreen(
                 Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(if (m.isMe) stringResource(R.string.community_you) else m.name, Modifier.weight(1f))
                     if (hostingHere && m.isMe) Text(stringResource(R.string.live_host_label), color = c.ink3)
+                    if (amAdmin && !removed) {
+                        val isAdm = m.peerId in adminPeers
+                        if (!isAdm) OutlinedButton(onClick = {
+                            val next = (adminPeers + m.peerId).distinct()
+                            if (core.groupSetAdmins(communityId, next)) adminPeers = core.groupAdmins(communityId)
+                        }, Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.g_admin_add)) }
+                        else if (adminPeers.size > 1) OutlinedButton(onClick = {
+                            val next = adminPeers.filter { it != m.peerId }
+                            if (core.groupSetAdmins(communityId, next)) adminPeers = core.groupAdmins(communityId)
+                        }, Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.g_admin_rm)) }
+                    }
                     if (!hostingHere && k?.founderIsMe == true && !m.isMe && !removed) {
                         OutlinedButton(onClick = { removeMember = m }, Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.d_grm_btn)) }
                     }
