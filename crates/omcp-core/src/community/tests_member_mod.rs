@@ -585,7 +585,9 @@ fn mr74_owner_handover_offer_accept_and_roster() {
     let mut twisted = offer.encode();
     let last = twisted.len() - 1;
     twisted[last] ^= 0x5a;
-    assert!(OwnerHandoverOffer::decode(&twisted).and_then(|o| o.verify_chain(NOW)).is_err());
+    assert!(OwnerHandoverOffer::decode(&twisted)
+        .and_then(|o| o.verify_chain(NOW))
+        .is_err());
     // Request roundtrip
     let req = OwnerHandoverRequest {
         community_ref: cref,

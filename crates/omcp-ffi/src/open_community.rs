@@ -688,7 +688,10 @@ impl OmcpNode {
     }
 
     /// Candidate: produce the 64-byte accept signature for a handover request.
-    pub fn open_community_handover_make_accept(&self, request: Vec<u8>) -> Result<Vec<u8>, FfiError> {
+    pub fn open_community_handover_make_accept(
+        &self,
+        request: Vec<u8>,
+    ) -> Result<Vec<u8>, FfiError> {
         let req = OwnerHandoverRequest::decode(&request).map_err(|_| invalid("request"))?;
         let now = now_ms();
         if req.expires_ms <= now {
@@ -767,7 +770,9 @@ impl OmcpNode {
     pub fn open_community_accept_owner_handover(&self, offer: Vec<u8>) -> Result<(), FfiError> {
         let offer = OwnerHandoverOffer::decode(&offer).map_err(|_| invalid("offer"))?;
         let now = now_ms();
-        let a = offer.verify_chain(now).map_err(|_| invalid("offer chain"))?;
+        let a = offer
+            .verify_chain(now)
+            .map_err(|_| invalid("offer chain"))?;
         let (k, me) = self.key_and_me()?;
         if a.member_pk != me {
             return Err(invalid("offer not for me"));
@@ -793,12 +798,7 @@ impl OmcpNode {
         }
         st.save_open_communities()?;
         st.save_listed()?;
-        let listed = st
-            .mesh
-            .discovery
-            .listed
-            .get(&id)
-            .is_some_and(|r| r.on);
+        let listed = st.mesh.discovery.listed.get(&id).is_some_and(|r| r.on);
         let ttl = st.mesh.engine.new_ttl();
         let env = mm::seal_mod_action(&a, &id, now, ttl);
         let ev = st.mesh.engine.submit_own(env, now)?;

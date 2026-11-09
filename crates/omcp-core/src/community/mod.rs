@@ -39,7 +39,10 @@ mod tests_discovery;
 #[cfg(test)]
 mod tests_member_mod;
 
-pub use member_mod::{build_signed_owner_handover, owner_accept_sig, verify_owner_accept, CommunityModActionV1, MemberModState, MemberRemoval, ModAction, OwnerHandoverOffer, OwnerHandoverRequest, Role};
+pub use member_mod::{
+    build_signed_owner_handover, owner_accept_sig, verify_owner_accept, CommunityModActionV1,
+    MemberModState, MemberRemoval, ModAction, OwnerHandoverOffer, OwnerHandoverRequest, Role,
+};
 
 pub const MAX_MEMBERS: usize = 5_000;
 pub const MAX_POST_BYTES: usize = 4 * 1024;

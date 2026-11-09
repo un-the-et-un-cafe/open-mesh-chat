@@ -981,7 +981,10 @@ impl RelayEngine {
                         self.discovery_pacing.mark_sent(l, now_ms);
                         let full = full_digest_frame(&self.digest);
                         let hello = LinkControl::hello_for(&self.digest, false).encode();
-                        ev.push(RelayEvent::Send { link: l, frame: full });
+                        ev.push(RelayEvent::Send {
+                            link: l,
+                            frame: full,
+                        });
                         ev.push(RelayEvent::Send {
                             link: l,
                             frame: hello.to_vec(),
@@ -1014,34 +1017,33 @@ impl RelayEngine {
         let dtag = crate::community::discovery::discovery_tag();
         let links: Vec<u64> = self.neighbours.keys().copied().collect();
         for l in links {
-            let include_discovery = self.advertised.contains(&dtag)
-                && self.discovery_pacing.may_send(l, now_ms);
-            let (frame, has_delta, digest_for_hello) = if include_discovery
-                || !self.advertised.contains(&dtag)
-            {
-                // Full advertised set (with or without discovery absent entirely).
-                match old.delta_to(&self.digest) {
-                    Some(d) => {
-                        let mut f = vec![FRAME_DIGEST_DELTA, DELTA_MODE_DELTA];
-                        f.extend_from_slice(&d.encode());
-                        (f, true, self.digest.clone())
+            let include_discovery =
+                self.advertised.contains(&dtag) && self.discovery_pacing.may_send(l, now_ms);
+            let (frame, has_delta, digest_for_hello) =
+                if include_discovery || !self.advertised.contains(&dtag) {
+                    // Full advertised set (with or without discovery absent entirely).
+                    match old.delta_to(&self.digest) {
+                        Some(d) => {
+                            let mut f = vec![FRAME_DIGEST_DELTA, DELTA_MODE_DELTA];
+                            f.extend_from_slice(&d.encode());
+                            (f, true, self.digest.clone())
+                        }
+                        None => (full_digest_frame(&self.digest), false, self.digest.clone()),
                     }
-                    None => (full_digest_frame(&self.digest), false, self.digest.clone()),
-                }
-            } else {
-                // Paced: send digest without the discovery tag.
-                let mut tags: Vec<_> = self
-                    .advertised
-                    .iter()
-                    .copied()
-                    .filter(|t| *t != dtag)
-                    .collect();
-                tags.sort();
-                match CuckooFilter::build_digest(&tags, DIGEST_MIN_ENTRIES, &mut self.rng) {
-                    Ok(f) => (full_digest_frame(&f), false, f),
-                    Err(_) => continue,
-                }
-            };
+                } else {
+                    // Paced: send digest without the discovery tag.
+                    let mut tags: Vec<_> = self
+                        .advertised
+                        .iter()
+                        .copied()
+                        .filter(|t| *t != dtag)
+                        .collect();
+                    tags.sort();
+                    match CuckooFilter::build_digest(&tags, DIGEST_MIN_ENTRIES, &mut self.rng) {
+                        Ok(f) => (full_digest_frame(&f), false, f),
+                        Err(_) => continue,
+                    }
+                };
             if include_discovery {
                 self.discovery_pacing.mark_sent(l, now_ms);
             }
@@ -2409,7 +2411,6 @@ mod tests {
         assert!(b.item(&q.envelope_id).is_none());
     }
 
-
     #[test]
     fn discovery_ranges_paced_in_digest_send() {
         use crate::community::discovery::{discovery_tag, DISCOVERY_PACING_MS};
@@ -2419,7 +2420,9 @@ mod tests {
         let mut wants = std::collections::BTreeSet::new();
         wants.insert(discovery_tag());
         let ev1 = a.set_wants(wants, now);
-        assert!(ev1.iter().any(|e| matches!(e, RelayEvent::Send { link: 1, .. })));
+        assert!(ev1
+            .iter()
+            .any(|e| matches!(e, RelayEvent::Send { link: 1, .. })));
         a.discovery_mark_ranges_sent(1, now);
         assert!(!a.discovery_may_send_ranges(1, now + 1));
         a.discovery_bump_pacing();
@@ -2428,5 +2431,4 @@ mod tests {
         assert!(!a.discovery_may_send_ranges(1, now + 1 + DISCOVERY_PACING_MS - 1));
         assert!(a.discovery_may_send_ranges(1, now + 1 + DISCOVERY_PACING_MS));
     }
-
 }

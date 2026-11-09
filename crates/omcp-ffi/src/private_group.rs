@@ -1906,11 +1906,7 @@ impl OmcpNode {
                 let c = st.mesh.community.list.get(&id).unwrap();
                 c.roster.iter().map(|(a, b)| (*a, b.clone())).collect()
             };
-            let msg = CMsg::Commit {
-                id,
-                commit,
-                roster,
-            };
+            let msg = CMsg::Commit { id, commit, roster };
             for p in st.roster_contacts(&id, &[me]) {
                 st.post(p, &msg);
             }
