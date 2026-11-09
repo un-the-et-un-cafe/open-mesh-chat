@@ -19,4 +19,5 @@
     <string name="u_rn_t">מנחה הסיר/ה אותך מ%1$s</string>
     <string name="u_rn_f">המייסד/ת הסיר/ה אותך מ%1$s</string>
     <string name="u_rn_comp">אי אפשר לפרסם כאן עד סוף ההסרה</string>
+    <string name="u_restore">שחזור</string>
 </resources>

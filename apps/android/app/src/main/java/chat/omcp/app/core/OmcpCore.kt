@@ -545,7 +545,7 @@ data class CommunityUi(
 /** `comm-removed-member-notice`: [byRole] team, owner, admin or moderator. */
 data class OpenRemovalUi(val byRole: String, val reason: Int, val endsMs: Long?)
 data class OpenModAlertUi(val actorKey: String, val removals24h: Int)
-data class OpenRemovalEntryUi(val action: Int, val memberId: String, val actorKey: String, val actorRole: String, val reason: Int, val durationS: Int, val issuedMs: Long)
+data class OpenRemovalEntryUi(val action: Int, val memberId: String, val memberKey: String, val actorKey: String, val actorRole: String, val reason: Int, val durationS: Int, val issuedMs: Long)
 
 data class GroupMessageUi(
     val id: String,

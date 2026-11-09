@@ -168,6 +168,11 @@ arm64 core library small enough for the APK to stay under 25 MB.
     tags are not wired up yet). PROTOCOL §22.4 (50 MB default, eviction by
     `(priority, expires_at, hops)`) and SY5 still describe the old budget.
 
+## v0.1.35 — toolchain pins and RemovalNotice persistence
+
+- `rust-toolchain.toml` → channel `1.99.1`; Android Gradle wrapper → 8.14.6 (+ distribution SHA-256). No workflow edits (Pipely).
+- Private-group RemovalNotice text survives restarts with the group state.
+
 ## v0.1.34 — per-recipient sub-tags (§22.7(9)) and persistent old-epoch tags (§22.7(13))
 
 - **Sub-tags (TLV `0x56`):** `subtag_m = BLAKE2b-64(key = exporter secret of the current MLS epoch, "OMCP-sub" || leaf_index_m || 6 h slot)`. 1:1 envelopes carry the other leaf's sub-tag; private-group envelopes for groups of ≤ 8 members carry every other member's sub-tag. Each node wants only its own sub-tags (current and previous slot, current and retired epochs), so they change at every commit and every slot. Delivery acks (§22.8(3)) are sealed to the original sender's sub-tag. The chat tag (`0x54`) stays on every envelope as the fallback; groups over 8 and commit frames sealed with the pre-commit secret use the chat tag only.

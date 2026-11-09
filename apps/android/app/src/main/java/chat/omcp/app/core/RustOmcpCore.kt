@@ -280,7 +280,7 @@ class RustOmcpCore : OmcpCore {
         node?.openCommunityOwnerAlerts(communityId)?.map { OpenModAlertUi(it.actorKeyHex, it.removals24h.toInt()) } ?: emptyList()
     override fun openRemovals(communityId: String): List<OpenRemovalEntryUi> =
         node?.openCommunityRemovals(communityId)?.map {
-            OpenRemovalEntryUi(it.action.toInt(), it.memberIdHex, it.actorKeyHex, it.actorRole, it.reasonCode.toInt(), it.durationS.toInt(), it.issuedMs.toLong())
+            OpenRemovalEntryUi(it.action.toInt(), it.memberIdHex, it.memberKeyHex, it.actorKeyHex, it.actorRole, it.reasonCode.toInt(), it.durationS.toInt(), it.issuedMs.toLong())
         } ?: emptyList()
     override fun openRemovalsLeftThisHour(communityId: String): Int? = node?.openCommunityRemovalsLeftThisHour(communityId)?.toInt()
     override fun selfHarmHelpUrl(): String = node?.selfHarmHelpUrl() ?: super.selfHarmHelpUrl()

@@ -55,6 +55,8 @@ pub struct OpenCommunityRemovalEntry {
     /// 1 remove, 2 restore, 3 role revoke.
     pub action: u8,
     pub member_id_hex: String,
+    /// Target identity public key hex (for MEMBER_RESTORE).
+    pub member_key_hex: String,
     pub actor_key_hex: String,
     pub actor_role: String,
     pub reason_code: u8,
@@ -568,6 +570,7 @@ impl OmcpNode {
             .map(|e| OpenCommunityRemovalEntry {
                 action: e.action,
                 member_id_hex: hex::encode(e.member_id),
+                member_key_hex: hex::encode(e.member_pk),
                 actor_key_hex: hex::encode(e.actor_pk),
                 actor_role: role_name(e.actor_role).into(),
                 reason_code: e.reason_code,

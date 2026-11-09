@@ -262,6 +262,9 @@ pub enum ModReject {
 pub struct CommunityLogEntry {
     pub action: u8,
     pub member_id: [u8; 32],
+    /// Target identity public key (needed to restore; serde-default for old logs).
+    #[serde(default)]
+    pub member_pk: [u8; 32],
     pub reason_code: u8,
     pub duration_s: u32,
     pub issued_ms: u64,
@@ -412,6 +415,7 @@ impl MemberModState {
         let e = CommunityLogEntry {
             action: a.action as u8,
             member_id: a.member_id,
+            member_pk: a.member_pk,
             reason_code: a.reason_code,
             duration_s: a.duration_s,
             issued_ms: a.issued_ms,
