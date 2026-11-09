@@ -536,7 +536,7 @@ fun OpenMembersScreen(core: OmcpCore, id: String, onBack: () -> Unit) {
                     if (isFounder && m.role == "member") OutlinedButton(onClick = { core.openMakeModerator(id, m.key); members = core.openMembers(id) },
                         Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.u_make_mod)) }
                     if (isFounder && !m.isMe) OutlinedButton(onClick = { handoverTarget = m },
-                        Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.u_handover)) }
+                        modifier = Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.u_handover)) }
                     if (myRank >= 1 && !m.isMe && roleRank(m.role) < myRank) TextButton(onClick = { removing = m }, modifier = Modifier.heightIn(min = 48.dp)) {
                         Text(stringResource(R.string.u_rmm_menu), color = c.danger)
                     }
