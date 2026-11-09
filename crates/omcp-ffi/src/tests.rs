@@ -3646,8 +3646,8 @@ fn mr50_member_leaves_and_a_remaining_member_commits() {
     let ac = up(&a, &c);
     let links = [(ab.0.clone(), ab.1.clone()), (ac.0.clone(), ac.1.clone())];
     let gid = community_of(&a, &[&b, &c], &links);
-    assert!(a.private_group_leave(gid.clone()).is_err()); // founder can't leave
-    c.private_group_leave(gid.clone()).unwrap();
+    assert!(a.private_group_leave(gid.clone(), None).is_err()); // last admin needs successor
+    c.private_group_leave(gid.clone(), None).unwrap();
     settle(&links);
     let gc = c
         .private_groups()

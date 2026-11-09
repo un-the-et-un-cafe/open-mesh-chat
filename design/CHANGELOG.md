@@ -1,5 +1,10 @@
 # OMCP Design Pack — Changelog
 
+## v0.1.36 — 2026-11-09
+
+Founder/owner handover (§23.10.13, MR72–MR75, TM35): private-group `0xF0A1` omcp_group_admins, admin commit rules, last-admin handover, lowest-leaf fallback, one-member local delete, rotation cause `admin`; community OwnerHandoverOffer + OWNER_HANDOVER action 4, community_sk, ownerless delist. Discovery §20.8(4)(d) same-seq must not extend expiry; per-neighbour discovery-tag range pacing 6 h. §23.3 v1.0 never sends/applies reputation attestations.
+
+
 ## v0.1.22 — 2026-10-29
 
 Communities with Live, matched to PR #19. `DESIGN_SPEC.md` §5T (5.120–5.127).

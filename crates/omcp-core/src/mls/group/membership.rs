@@ -50,6 +50,8 @@ pub enum RotationCause {
     Leave,
     Remove,
     Update,
+    /// §23.10.13: admin list change.
+    Admin,
 }
 
 /// One key-rotation log line (§23.10.12(1)(d)).
@@ -202,6 +204,10 @@ impl OmcpMlsMember {
                         _ => None,
                     },
                 ),
+                Proposal::GroupContextExtensions(_) => {
+                    // §23.10.13(f): admin-list changes land as GCE.
+                    (RotationCause::Admin, None)
+                }
                 _ => continue,
             };
             v.push(RotationEntry {

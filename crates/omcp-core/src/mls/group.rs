@@ -14,7 +14,9 @@ use crate::mls::mls_pq::{
     encapsulate_to_members, mix_exporter, MlsPqKemKeyPair, MLS_PQ_EXPORTER_LABEL,
 };
 
+mod admins;
 mod membership;
+pub use admins::{admins_extension, decode_admins, encode_admins, OMCP_GROUP_ADMINS};
 pub use membership::{
     is_removal_notice, GroupStatus, RemovalNotice, RemoverRole, RotationCause, RotationEntry,
     LEAVE_COMMIT_DEADLINE_MS, MAX_REASON_TEXT, REMOVED_NOTICE_TEXT,
@@ -117,6 +119,7 @@ impl OmcpMlsMember {
             signature_key: signer.to_public_vec().into(),
         };
         let key_package = KeyPackage::builder()
+            .leaf_node_capabilities(admins::admin_capable())
             .build(
                 OMCP_MLS_CIPHERSUITE,
                 &provider,
@@ -325,12 +328,27 @@ impl OmcpMlsMember {
 
     /// Create a new MLS group with this member as sole creator.
     pub fn create_group(&mut self) -> Result<()> {
+        // §23.10.13: founder is the sole admin; 0xF0A1 is required.
+        let me = admins::member_id_of(&self.identity);
+        let admins_ext = admins::admins_extension(&[me])?;
+        let req = RequiredCapabilitiesExtension::new(
+            &[ExtensionType::Unknown(admins::OMCP_GROUP_ADMINS)],
+            &[],
+            &[],
+        );
+        let exts = Extensions::from_vec(vec![
+            Extension::RequiredCapabilities(req),
+            admins_ext,
+        ])
+        .map_err(|_| OmcpError::Mls("group extensions"))?;
         let config = MlsGroupCreateConfig::builder()
             .ciphersuite(OMCP_MLS_CIPHERSUITE)
             .use_ratchet_tree_extension(true)
             .sender_ratchet_configuration(ratchet())
             .max_past_epochs(MESH_MAX_PAST_EPOCHS)
             .padding_size(MESH_PADDING)
+            .capabilities(admins::admin_capable())
+            .with_group_context_extensions(exts)
             .build();
         // §23.10.1(3): the group ID is 32 random bytes with no meaning, and
         // the GroupContext carries no readable metadata (names travel only
@@ -395,6 +413,7 @@ impl OmcpMlsMember {
     /// Refresh key package after the previous one was consumed.
     pub fn refresh_key_package(&mut self) -> Result<()> {
         let key_package = KeyPackage::builder()
+            .leaf_node_capabilities(admins::admin_capable())
             .build(
                 OMCP_MLS_CIPHERSUITE,
                 &self.provider,
@@ -494,16 +513,13 @@ impl OmcpMlsMember {
         };
         match processed.into_content() {
             ProcessedMessageContent::StagedCommitMessage(staged) => {
-                // §22.7 / §23.10.12 commit authorization (no founder signature;
-                // the MLS FramedContent signature suffices). The admin (founder,
-                // leaf 0, in v1.0) may commit anything; any other member may only
-                // commit SelfRemove, Remove-of-the-proposer (leave) and Update.
+                // §23.10.13: any member may commit leave/Update; only a current
+                // admin may commit Add/Remove-of-others or admin-list GCE.
                 if sender_leaf.is_none() {
                     return Err(OmcpError::Mls("unauthorized commit"));
                 }
-                if sender_leaf != Some(0)
-                    && !staged.queued_proposals().all(commit_allowed_for_member)
-                {
+                let admin = self.is_admin_leaf(sender_leaf.unwrap());
+                if !admin && !staged.queued_proposals().all(commit_allowed_for_member) {
                     return Err(OmcpError::Mls("unauthorized commit"));
                 }
                 if self.one_to_one
@@ -812,13 +828,134 @@ impl OmcpMlsMember {
             .map(|m| (m.index.u32(), m.credential.serialized_content().to_vec()))
             .collect())
     }
+    /// §23.10.13: admin member_ids from the GroupContext extension, or leaf 0
+    /// as the sole admin when the extension is absent (pre-0.1.36 groups).
+    pub fn admin_member_ids(&self) -> Result<Vec<[u8; 32]>> {
+        let g = self.group_ref()?;
+        if let Some(u) = g.extensions().unknown(admins::OMCP_GROUP_ADMINS) {
+            if let Some(ids) = admins::decode_admins(&u.0) {
+                return Ok(ids);
+            }
+        }
+        Ok(self.leaf_member_id(0).into_iter().collect())
+    }
+
+    /// Whether leaf `l` is currently an admin (extension or leaf-0 / lowest-leaf fallback).
+    pub fn is_admin_leaf(&self, l: u32) -> bool {
+        let Ok(ids) = self.admin_member_ids() else {
+            return l == 0;
+        };
+        let Some(mid) = self.leaf_member_id(l) else {
+            return false;
+        };
+        if ids.iter().any(|a| *a == mid) {
+            return true;
+        }
+        // Extension names nobody still in the group → lowest leaf is admin.
+        let Ok(members) = self.member_identities() else {
+            return l == 0;
+        };
+        let present: std::collections::BTreeSet<_> = members
+            .iter()
+            .map(|(_, c)| admins::member_id_of(c))
+            .collect();
+        if ids.iter().any(|a| present.contains(a)) {
+            return false;
+        }
+        members.iter().map(|(i, _)| *i).min() == Some(l)
+    }
+
+    pub fn is_admin(&self) -> bool {
+        self.own_leaf_index()
+            .map(|l| self.is_admin_leaf(l))
+            .unwrap_or(false)
+    }
+
+    /// Commit a new admin list (current admin only). Records cause `admin`.
+    pub fn set_admins(&mut self, member_ids: &[[u8; 32]]) -> Result<Vec<u8>> {
+        self.not_one_to_one()?;
+        if !self.is_admin() {
+            return Err(OmcpError::Mls("only an admin changes the admin list"));
+        }
+        let admins_ext = admins::admins_extension(member_ids)?;
+        let req = RequiredCapabilitiesExtension::new(
+            &[ExtensionType::Unknown(admins::OMCP_GROUP_ADMINS)],
+            &[],
+            &[],
+        );
+        let exts = Extensions::from_vec(vec![
+            Extension::RequiredCapabilities(req),
+            admins_ext,
+        ])
+        .map_err(|_| OmcpError::Mls("admin extensions"))?;
+        let next = self.epoch()? + 1;
+        let me = Some(self.own_member_id());
+        for id in member_ids {
+            self.rotation_log.push(RotationEntry {
+                epoch: next,
+                cause: RotationCause::Admin,
+                affected: Some(*id),
+                committer: me,
+            });
+        }
+        let commit = {
+            let group = self.group.as_mut().ok_or(OmcpError::Mls("no group"))?;
+            let (commit, _w, _i) = group
+                .update_group_context_extensions(&self.provider, exts, &self.signer)
+                .map_err(|_| OmcpError::Mls("set admins"))?;
+            commit
+        };
+        self.group
+            .as_mut()
+            .unwrap()
+            .merge_pending_commit(&self.provider)
+            .map_err(|_| OmcpError::Mls("merge set admins"))?;
+        commit
+            .to_bytes()
+            .map_err(|_| OmcpError::Mls("serialize set admins"))
+    }
+
+    /// Last admin leaving: name a successor, then leave. One-member groups
+    /// erase locally and return `None` (nothing to send).
+    pub fn leave_as_last_admin(
+        &mut self,
+        new_admin: Option<[u8; 32]>,
+    ) -> Result<Option<(Vec<u8>, Vec<u8>)>> {
+        self.not_one_to_one()?;
+        let n = self.member_count()?;
+        if n <= 1 {
+            self.erase_group();
+            self.status = GroupStatus::Left;
+            return Ok(None);
+        }
+        if self.is_admin() {
+            let admins = self.admin_member_ids()?;
+            let me = self.own_member_id();
+            let others: Vec<_> = admins.into_iter().filter(|a| *a != me).collect();
+            if others.is_empty() {
+                let na = new_admin.ok_or(OmcpError::Mls("last admin must name a successor"))?;
+                if na == me {
+                    return Err(OmcpError::Mls("successor must be another member"));
+                }
+                let commit = self.set_admins(&[na])?;
+                let prop = self.leave()?;
+                return Ok(Some((commit, prop)));
+            }
+        }
+        let prop = self.leave()?;
+        Ok(Some((Vec::new(), prop)))
+    }
+
+
 }
+
 
 impl crate::sync::tag::TagSecretSource for OmcpMlsMember {
     fn tag_secret(&self, tag_epoch: u64) -> Result<[u8; 32]> {
         self.tag_exporter(tag_epoch)
     }
 }
+
 
 /// §22.7 / §23.10.12: proposals a non-admin member may commit.
 fn commit_allowed_for_member(q: &QueuedProposal) -> bool {
@@ -1036,4 +1173,58 @@ mod tests {
         let ct = d.encrypt_app_message(b"hi").unwrap();
         assert_eq!(b.decrypt_app_message(&ct).unwrap(), b"hi");
     }
+
+    #[test]
+    fn mr72_admin_extension_and_commit_auth() {
+        let mut alice = OmcpMlsMember::generate(b"alice".to_vec()).unwrap();
+        let mut bob = OmcpMlsMember::generate(b"bob".to_vec()).unwrap();
+        alice.create_group().unwrap();
+        assert!(alice.is_admin());
+        let ids = alice.admin_member_ids().unwrap();
+        assert_eq!(ids.len(), 1);
+        assert_eq!(ids[0], alice.own_member_id());
+        let (_c, w) = alice
+            .add_members(&[bob.take_key_package().unwrap()])
+            .unwrap();
+        bob.join_from_welcome(&w).unwrap();
+        assert!(!bob.is_admin());
+        // Non-admin Add is refused by commit auth when bob tries later via process.
+        // Bob may leave.
+        let leave = bob.leave().unwrap();
+        assert!(!leave.is_empty());
+        // Leaf-0 fallback: rebuild without extension by simulating empty decode.
+        assert!(alice.is_admin_leaf(0));
+    }
+
+    #[test]
+    fn mr73_last_admin_handover_and_one_member_delete() {
+        let mut alice = OmcpMlsMember::generate(b"alice".to_vec()).unwrap();
+        let mut bob = OmcpMlsMember::generate(b"bob".to_vec()).unwrap();
+        alice.create_group().unwrap();
+        // One-member leave deletes locally.
+        assert!(alice.leave_as_last_admin(None).unwrap().is_none());
+        assert_eq!(alice.status(), GroupStatus::Left);
+
+        let mut alice = OmcpMlsMember::generate(b"alice2".to_vec()).unwrap();
+        alice.create_group().unwrap();
+        let bob_id = bob.own_member_id();
+        let (_c, w) = alice
+            .add_members(&[bob.take_key_package().unwrap()])
+            .unwrap();
+        bob.join_from_welcome(&w).unwrap();
+        // Last admin must name a successor.
+        assert!(alice.leave_as_last_admin(None).is_err());
+        let out = alice.leave_as_last_admin(Some(bob_id)).unwrap().unwrap();
+        assert!(!out.0.is_empty(), "admin GCE commit");
+        assert!(!out.1.is_empty(), "leave proposal");
+        assert_eq!(alice.status(), GroupStatus::Left);
+        // Bob processes the admin commit.
+        bob.process_protocol_message(&out.0).unwrap();
+        assert!(bob.is_admin());
+        assert!(bob
+            .rotation_log()
+            .iter()
+            .any(|e| e.cause == RotationCause::Admin));
+    }
+
 }

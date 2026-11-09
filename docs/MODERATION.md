@@ -1,5 +1,11 @@
 # Hopla team moderation
 
+## v0.1.36 — founder / owner handover (§23.10.13)
+
+- Private groups: MLS GCE `0xF0A1` `omcp_group_admins`; leaf 0 fallback; admin-only Add/Remove/GCE; last admin names a successor before leave; lowest-leaf fallback; one-member local delete; rotation cause `admin`.
+- Communities: `OwnerHandoverOffer` 1:1 + `CommunityModActionV1` action 4 `OWNER_HANDOVER` (64-byte accept sig in `note`); accepting publishes roster and stores `community_sk`; old owner erases it on leave; Listed re-announces (24 h seq limit); ownerless leave delists first.
+- §23.3: v1.0 must not send attestations, endorsements, gossiped REPORT or REPUTATION_SUMMARY; receivers ignore them (`moderation::v1_deferred`).
+
 Implements PROTOCOL §23.9 (App-team moderation) and REQUIREMENTS TM1–TM4 in `omcp-core`
 (`crates/omcp-core/src/moderation/`), the FFI (`crates/omcp-ffi/src/moderation.rs`) and both apps
 ("You → Removed communities").

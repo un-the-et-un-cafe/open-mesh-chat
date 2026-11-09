@@ -170,10 +170,37 @@ fun CommunityDetailScreen(
     val removed = k?.removedReason != null
     val readOnly = removed || (k != null && k.status != "active")
     var confirmLeave by remember { mutableStateOf(false) }
-    if (confirmLeave) androidx.compose.material3.AlertDialog(onDismissRequest = { confirmLeave = false },
-        title = { Text(stringResource(R.string.g_leave_t, k?.name ?: "")) }, text = { Text(stringResource(R.string.g_leave_d)) },
-        confirmButton = { TextButton(onClick = { core.groupLeave(communityId); confirmLeave = false }) { Text(stringResource(R.string.g_leave)) } },
-        dismissButton = { TextButton(onClick = { confirmLeave = false }) { Text(stringResource(R.string.u_cancel)) } })
+    var leaveAdmin by remember { mutableStateOf<String?>(null) }
+    if (confirmLeave) {
+        val others = members.filter { !it.isMe }
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { confirmLeave = false },
+            title = { Text(stringResource(R.string.g_leave_t, k?.name ?: "")) },
+            text = {
+                Column {
+                    Text(stringResource(R.string.g_leave_d))
+                    if (k?.founderIsMe == true && others.isNotEmpty()) {
+                        Text(stringResource(R.string.g_leave_pick_admin), color = c.ink2, modifier = Modifier.padding(top = 8.dp))
+                        others.forEach { m ->
+                            TextButton(onClick = { leaveAdmin = m.peerId }) {
+                                Text((if (leaveAdmin == m.peerId) "✓ " else "") + m.name)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        core.groupLeave(communityId, if (k?.founderIsMe == true) leaveAdmin else null)
+                        confirmLeave = false
+                    },
+                    enabled = k?.founderIsMe != true || others.isEmpty() || leaveAdmin != null,
+                ) { Text(stringResource(R.string.g_leave)) }
+            },
+            dismissButton = { TextButton(onClick = { confirmLeave = false }) { Text(stringResource(R.string.u_cancel)) } },
+        )
+    }
     val lives = core.liveStreams().filter { it.communityId == communityId && !it.mine }
     val hostingHere = s.hosting?.communityId == communityId
     val snack = remember { SnackbarHostState() }
@@ -225,7 +252,7 @@ fun CommunityDetailScreen(
                     Callout(if (k.status == "left") stringResource(R.string.g_left) else stringResource(R.string.g_removed, who), CalloutKind.Info)
                 }
             }
-            if (k != null && !k.founderIsMe && k.status == "active" && !removed) item {
+            if (k != null && k.status == "active" && !removed) item {
                 OutlinedButton(onClick = { confirmLeave = true }, Modifier.padding(horizontal = 16.dp).heightIn(min = 48.dp)) {
                     Text(stringResource(R.string.g_leave), color = c.danger)
                 }

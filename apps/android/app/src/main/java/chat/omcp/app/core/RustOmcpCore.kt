@@ -264,8 +264,20 @@ class RustOmcpCore : OmcpCore {
         runCatching { node?.openCommunityRemovePost(communityId, postId, reason) != null }.getOrDefault(false)
     override fun groupRemoveMember(groupId: String, peerId: String): Boolean =
         runCatching { node?.privateGroupRemoveMember(groupId, peerId, "") != null }.getOrDefault(false)
-    override fun groupLeave(groupId: String): Boolean =
-        runCatching { node?.privateGroupLeave(groupId) != null }.getOrDefault(false)
+    override fun groupLeave(groupId: String, newAdminPeerId: String?): Boolean =
+        runCatching { node?.privateGroupLeave(groupId, newAdminPeerId) != null }.getOrDefault(false)
+    override fun leaveOwnerless(communityId: String): Boolean =
+        runCatching { node?.openCommunityLeaveOwnerless(communityId); true }.getOrDefault(false)
+    override fun offerOwnerHandover(communityId: String, candidateKeyHex: String): String? =
+        runCatching {
+            node?.openCommunityOfferOwnerHandover(communityId, candidateKeyHex)
+                ?.joinToString("") { b -> "%02x".format(b.toInt() and 0xff) }
+        }.getOrNull()
+    override fun acceptOwnerHandover(offerHex: String): Boolean =
+        runCatching {
+            val bytes = offerHex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+            node?.openCommunityAcceptOwnerHandover(bytes); true
+        }.getOrDefault(false)
     override fun openRemovalPresets(): List<Int> =
         node?.openCommunityRemovalPresets()?.map { it.toInt() } ?: super.openRemovalPresets()
     override fun openRemoveMember(communityId: String, memberKey: String, reason: Int, durationS: Int, note: String): Boolean =

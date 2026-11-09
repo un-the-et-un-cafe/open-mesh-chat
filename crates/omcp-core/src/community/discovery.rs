@@ -53,6 +53,9 @@ pub const OWN_TTL: u8 = 5;
 const DAY: u64 = 24 * 60 * 60 * 1000;
 pub const REFRESH_MS: u64 = 7 * DAY;
 pub const EXPIRY_MS: u64 = 14 * DAY;
+/// §20.8(4)(a): discovery-tag ranges to a neighbour at most once per 6 h
+/// unless the local discovery index changed.
+pub const DISCOVERY_PACING_MS: u64 = 6 * 60 * 60 * 1000;
 pub const DELIST_KEEP_MS: u64 = 14 * DAY;
 pub const FUTURE_SKEW_MS: u64 = DAY;
 pub const SEQ_RATE_MS: u64 = DAY;
@@ -753,11 +756,14 @@ impl DiscoveryIndex {
                 {
                     return Err(Rejected::Moderated);
                 }
+                // owner_pk must match the known roster owner; community_pk is
+                // the community identity key (§20.1) and may differ after
+                // §23.10.13 separates it from the owner's key.
                 if self
                     .ctx
                     .roster_owner
                     .get(&cref)
-                    .is_some_and(|o| *o != a.owner_pk || *o != a.community_pk)
+                    .is_some_and(|o| *o != a.owner_pk)
                 {
                     return Err(Rejected::RosterMismatch);
                 }
@@ -978,5 +984,52 @@ impl DiscoveryIndex {
                 .then(b.ann.member_bucket.cmp(&a.ann.member_bucket))
         });
         out
+    }
+}
+
+
+/// Per-neighbour pacing for discovery-tag ranges (§20.8(4)(a)).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DiscoveryPacing {
+    /// Monotonic generation; bump when the local index changes.
+    pub gen: u64,
+    /// link → (last_sent_ms, gen_at_send).
+    last: BTreeMap<u64, (u64, u64)>,
+}
+
+impl DiscoveryPacing {
+    pub fn bump(&mut self) {
+        self.gen = self.gen.saturating_add(1);
+    }
+
+    /// Whether discovery ranges may be included for `link` at `now_ms`.
+    pub fn may_send(&self, link: u64, now_ms: u64) -> bool {
+        match self.last.get(&link) {
+            None => true,
+            Some((sent, g)) if *g != self.gen => true,
+            Some((sent, _)) => now_ms.saturating_sub(*sent) >= DISCOVERY_PACING_MS,
+        }
+    }
+
+    pub fn mark_sent(&mut self, link: u64, now_ms: u64) {
+        self.last.insert(link, (now_ms, self.gen));
+    }
+}
+
+#[cfg(test)]
+mod pacing_tests {
+    use super::*;
+
+    #[test]
+    fn discovery_ranges_paced_per_neighbour_unless_index_changed() {
+        let mut p = DiscoveryPacing::default();
+        assert!(p.may_send(1, 0));
+        p.mark_sent(1, 0);
+        assert!(!p.may_send(1, DISCOVERY_PACING_MS - 1));
+        assert!(p.may_send(1, DISCOVERY_PACING_MS));
+        assert!(p.may_send(2, 0), "other neighbour unaffected");
+        p.mark_sent(1, DISCOVERY_PACING_MS);
+        p.bump(); // local index changed
+        assert!(p.may_send(1, DISCOVERY_PACING_MS + 1));
     }
 }

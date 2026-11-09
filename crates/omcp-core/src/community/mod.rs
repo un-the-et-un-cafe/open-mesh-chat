@@ -39,7 +39,7 @@ mod tests_discovery;
 #[cfg(test)]
 mod tests_member_mod;
 
-pub use member_mod::{CommunityModActionV1, MemberModState, MemberRemoval, ModAction, Role};
+pub use member_mod::{CommunityModActionV1, MemberModState, MemberRemoval, ModAction, OwnerHandoverOffer, Role, owner_accept_sig, verify_owner_accept};
 
 pub const MAX_MEMBERS: usize = 5_000;
 pub const MAX_POST_BYTES: usize = 4 * 1024;
@@ -757,6 +757,14 @@ impl CommunityStore {
         if a.action == ModAction::RoleRevoke {
             com.admins.remove(&a.member_pk);
             com.moderators.remove(&a.member_pk);
+        } else if a.action == ModAction::OwnerHandover {
+            // New owner; old owner becomes admin (§23.10.13(2)(c)).
+            let old = com.founder;
+            com.founder = a.member_pk;
+            com.admins.remove(&a.member_pk);
+            com.moderators.remove(&a.member_pk);
+            com.admins.insert(old);
+            com.members.insert(a.member_pk);
         }
         Ok(e)
     }

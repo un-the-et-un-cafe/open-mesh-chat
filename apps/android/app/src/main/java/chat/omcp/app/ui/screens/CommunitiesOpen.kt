@@ -247,6 +247,23 @@ fun OpenCommunityScreen(core: OmcpCore, id: String, onTopic: (String) -> Unit, o
             // §20.3: community Live is deferred (no start/join here).
             item { HorizontalDivider(Modifier.padding(top = 8.dp)); InviteSettingRow(core, id, inCommunity = true) }
             item { ListedSettingRow(core, id, k?.isFounder == true) }
+            if (k?.isFounder == true) item {
+                var confirm by remember { mutableStateOf(false) }
+                OutlinedButton(onClick = { confirm = true }, Modifier.padding(horizontal = 16.dp).heightIn(min = 48.dp)) {
+                    Text(stringResource(R.string.u_owner_leave), color = c.danger)
+                }
+                if (confirm) androidx.compose.material3.AlertDialog(
+                    onDismissRequest = { confirm = false },
+                    title = { Text(stringResource(R.string.u_owner_leave)) },
+                    text = { Text(stringResource(R.string.u_owner_leave_d)) },
+                    confirmButton = {
+                        TextButton(onClick = { core.leaveOwnerless(id); confirm = false; onBack() }) {
+                            Text(stringResource(R.string.u_owner_leave))
+                        }
+                    },
+                    dismissButton = { TextButton(onClick = { confirm = false }) { Text(stringResource(R.string.u_cancel)) } },
+                )
+            }
         }
     }
 }

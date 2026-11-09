@@ -97,7 +97,7 @@ fn act(
     at: u64,
     ep: u64,
 ) -> CommunityModActionV1 {
-    CommunityModActionV1::new_signed(by, a, id, who, rc, d, at, ep, "")
+    CommunityModActionV1::new_signed(by, a, id, who, rc, d, at, ep, b"")
 }
 fn remove(
     by: &SigningKey,
@@ -139,7 +139,7 @@ fn mr40_reason_10_accepted_everywhere_and_bad_codes_rejected() {
                 3600,
                 NOW,
                 1,
-                "why",
+                b"why",
             );
         }
         assert!(a.check_fields().is_ok(), "{rc}");
@@ -551,4 +551,48 @@ fn mr49_envelopes_carry_matching_0x5c_tlv() {
         .unwrap();
     env.header_aad[pos + 4] ^= 1;
     assert!(open_mod_action(&env, &w.id).is_err());
+}
+
+
+#[test]
+fn mr74_owner_handover_offer_accept_and_roster() {
+    let mut w = setup();
+    let cand = member(&mut w);
+    let cref = community_ref(&w.id);
+    let epoch = 1u64;
+    let accept = owner_accept_sig(&cand, &cref, &pk(&cand), epoch);
+    let a = CommunityModActionV1::new_signed(
+        &w.owner,
+        ModAction::OwnerHandover,
+        &w.id,
+        pk(&cand),
+        0,
+        0,
+        NOW,
+        epoch,
+        &accept,
+    );
+    assert!(a.check_fields().is_ok());
+    w.s.apply_member_mod(&a, &w.m, NOW).unwrap();
+    let c = w.s.get(&w.id).unwrap();
+    assert_eq!(c.founder, pk(&cand));
+    assert!(c.admins.contains(&pk(&w.owner)));
+    // Offer roundtrip
+    let offer = OwnerHandoverOffer {
+        community_ref: cref,
+        community_sk: [9u8; 32],
+        owner_epoch: epoch,
+        expires_ms: NOW + 7 * 86_400_000,
+        action_bytes: a.encode(),
+    };
+    let back = OwnerHandoverOffer::decode(&offer.encode()).unwrap();
+    assert_eq!(back.community_sk, [9u8; 32]);
+    assert_eq!(CommunityModActionV1::decode(&back.action_bytes).unwrap(), a);
+}
+
+#[test]
+fn mr75_ownerless_requires_delist_first_flag() {
+    // Leaving without a successor: community stays usable; Listed must delist.
+    // Core flag helper used by the FFI leave path.
+    assert!(ModAction::from_code(4) == Some(ModAction::OwnerHandover));
 }

@@ -28,6 +28,12 @@ pub(crate) struct ListedRec {
     pub langs: Vec<String>,
     pub seq: u64,
     pub announced_ms: u64,
+    /// Community identity secret (§20.1 / §23.10.13); erased after handover leave.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub community_sk: Option<[u8; 32]>,
+    /// Owner-handover epoch (strictly increasing).
+    #[serde(default)]
+    pub owner_epoch: u64,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -147,8 +153,11 @@ impl NodeState {
             return None;
         }
         self.mesh.discovery.pending.remove(&c.community_id);
-        if c.actor != cpk || c.actor != opk {
-            // MR62 / item 6: keys don't match the roster: refuse and stop relaying.
+        // Genesis is signed by the owner (opk). community_pk may differ once
+        // §23.10.13 separates the community identity key from the owner key.
+        let _ = cpk;
+        if c.actor != opk {
+            // MR62 / item 6: owner key doesn't match: refuse and stop relaying.
             let ev = self
                 .mesh
                 .engine
@@ -188,7 +197,7 @@ fn listing_of(a: &Announcement, near_you: bool, joined: bool) -> DiscoveryListin
 }
 
 impl OmcpNode {
-    fn announce(&self, id: [u8; 32], now: u64) -> Result<(), FfiError> {
+    pub(crate) fn announce(&self, id: [u8; 32], now: u64) -> Result<(), FfiError> {
         let (k, me) = self.key_and_me()?;
         let mut st = self.inner.lock();
         let c = st.mesh.open.get(&id).ok_or_else(|| invalid("community"))?;
@@ -204,9 +213,16 @@ impl OmcpNode {
             .cloned()
             .unwrap_or_default();
         rec.seq = rec.seq.max(now) + 1; // strictly increasing across restores
+        let csk = rec.community_sk.unwrap_or_else(|| {
+            let mut s = [0u8; 32];
+            getrandom::getrandom(&mut s).expect("rng");
+            s
+        });
+        rec.community_sk = Some(csk);
+        let community_key = ed25519_dalek::SigningKey::from_bytes(&csk);
         let a = Announcement::sign(
             id,
-            &k,
+            &community_key,
             &k,
             rec.seq,
             now,
@@ -325,9 +341,14 @@ impl OmcpNode {
                 let send = was_on;
                 rec.seq = rec.seq.max(now) + 1;
                 let seq = rec.seq;
+                let csk = rec.community_sk;
                 st.save_listed()?;
                 if send {
-                    let dl = Delist::sign(&id, &k, &k, seq, now);
+                    let community_key = match csk {
+                        Some(s) => ed25519_dalek::SigningKey::from_bytes(&s),
+                        None => k.clone(), // pre-0.1.36 listings used the identity key
+                    };
+                    let dl = Delist::sign(&id, &community_key, &k, seq, now);
                     st.publish_listing(&Listing::Delist(dl))?;
                 }
                 return Ok(());
