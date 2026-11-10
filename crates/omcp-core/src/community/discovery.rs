@@ -921,6 +921,18 @@ impl DiscoveryIndex {
             .is_some_and(|t| now_ms.saturating_sub(t) <= NEAR_MS)
     }
 
+    /// BCP 47 tags present in the local index (for the language filter UI).
+    pub fn languages(&self) -> Vec<String> {
+        let mut out: Vec<String> = self
+            .entries
+            .values()
+            .flat_map(|e| e.ann.langs.iter().cloned())
+            .collect();
+        out.sort();
+        out.dedup();
+        out
+    }
+
     /// Local search (item 7). Empty `query` browses. `category` filters by
     /// display category; `lang` by announced language.
     pub fn search(

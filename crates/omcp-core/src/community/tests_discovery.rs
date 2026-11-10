@@ -492,6 +492,29 @@ fn mr63_near_you_and_categories() {
 }
 
 #[test]
+fn language_filter_matches_announced_bcp47_tags() {
+    let mut ix = DiscoveryIndex::default();
+    let mut fr = fields("Jardin");
+    fr.langs = vec!["fr".into()];
+    let mut en = fields("Garden");
+    en.langs = vec!["en".into()];
+    let none = fields("Garden");
+    for (k, id, f) in [(1u32, [1u8; 32], fr), (2, [2; 32], en), (3, [3; 32], none)] {
+        let a = ann_with(&key(k), id, 1, NOW, f);
+        let e = env(&a);
+        ix.ingest(&open(&e).unwrap(), e.envelope_id, 1, true, NOW)
+            .unwrap();
+    }
+    assert_eq!(ix.languages(), vec!["en".to_string(), "fr".to_string()]);
+    let r = ix.search("", None, Some("fr"), NOW);
+    assert_eq!(r.len(), 1);
+    assert_eq!(r[0].ann.name, "Jardin");
+    assert_eq!(ix.search("", None, Some("FR"), NOW).len(), 1);
+    assert_eq!(ix.search("", None, Some("de"), NOW).len(), 0);
+    assert_eq!(ix.search("", None, None, NOW).len(), 3);
+}
+
+#[test]
 fn mr_discovery_same_seq_does_not_extend_expiry() {
     // §20.8(4)(d): expiry is from the signed issued_ms of the newest valid
     // announcement; hearing the same seq again MUST NOT extend it.

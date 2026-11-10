@@ -363,6 +363,7 @@ impl OmcpNode {
         &self,
         query: String,
         category: Option<u8>,
+        lang: Option<String>,
         near_only: bool,
     ) -> Vec<DiscoveryListing> {
         let now = now_ms();
@@ -370,7 +371,7 @@ impl OmcpNode {
         st.mesh
             .engine
             .discovery()
-            .search(&query, category, None, now)
+            .search(&query, category, lang.as_deref(), now)
             .into_iter()
             .filter(|f| !near_only || f.near_you)
             .map(|f| {
@@ -378,6 +379,11 @@ impl OmcpNode {
                 listing_of(f.ann, f.near_you, joined)
             })
             .collect()
+    }
+
+    /// Languages announced in the local index, for the filter chips (never sent).
+    pub fn discovery_languages(&self) -> Vec<String> {
+        self.inner.lock().mesh.engine.discovery().languages()
     }
 
     /// Hide a listing on this phone only.

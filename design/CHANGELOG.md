@@ -1,5 +1,10 @@
 # OMCP Design Pack — Changelog
 
+## v0.1.40 — 2026-11-10
+
+- **Language filter (TM25, §20.8(7)):** Discover filters the on-device index by announced BCP 47 tags; the founder can set up to 3 languages on a listing. Nothing about the filter is sent.
+- **Battery-saver pause (TM30, §20.8(5)(b)):** discovery digest exchange pauses while the OS battery saver / Low Power Mode is on (Android `PowerManager`, iOS `isLowPowerModeEnabled`).
+
 ## v0.1.39 — 2026-11-10
 
 - **Pending leaves use real online status:** `online_leaves_for` (self + live-link peers) drives `leave_commit_due` instead of the fixed `[u32::MAX]` sentinel.

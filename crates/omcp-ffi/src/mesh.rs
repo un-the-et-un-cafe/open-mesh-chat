@@ -1194,6 +1194,15 @@ impl OmcpNode {
             .mesh_set_free_storage(free_bytes, total_bytes)
     }
 
+    /// §20.8(5)(b): pause discovery digest exchange while the OS battery saver is on.
+    pub fn set_battery_saver(&self, on: bool) {
+        self.inner.lock().mesh.engine.set_battery_saver(on);
+    }
+
+    pub fn battery_saver(&self) -> bool {
+        self.inner.lock().mesh.engine.battery_saver()
+    }
+
     pub fn mesh_stats(&self) -> MeshStats {
         self.inner.lock().mesh_stats()
     }

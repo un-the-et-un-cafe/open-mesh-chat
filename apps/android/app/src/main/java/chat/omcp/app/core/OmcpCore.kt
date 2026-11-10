@@ -431,7 +431,8 @@ interface OmcpCore {
     /** MR29: when we can go live here again, if blocked now. */
     fun liveBlockedUntilMs(communityId: String): Long? = null
     // §20.8 discovery: local search only; Listed is off by default (TM27).
-    fun discoverySearch(query: String, category: Int?, nearOnly: Boolean): List<DiscoveryUi> = emptyList()
+    fun discoverySearch(query: String, category: Int?, lang: String?, nearOnly: Boolean): List<DiscoveryUi> = emptyList()
+    fun discoveryLanguages(): List<String> = emptyList()
     fun discoveryHide(ref: String): Boolean = false
     /** Signed announcement bytes only (MR62). */
     fun discoveryReport(ref: String, reason: Int): ByteArray? = null
@@ -473,6 +474,9 @@ interface OmcpCore {
     fun parseNewsCard(text: String): NewsCardUi? = null
     /** RL2: report free/total storage; under 10 % free Rust lowers the relay cap. */
     fun meshSetFreeStorage(freeBytes: Long, totalBytes: Long) {}
+    /** §20.8(5)(b): pause discovery exchange while OS battery saver is on. */
+    fun setBatterySaver(on: Boolean) {}
+
     /** Periodic relay work; returns link handles with frames waiting. */
     fun meshTick(nowMs: Long): List<Long> = emptyList()
     fun meshPendingLinks(): List<Long> = emptyList()
@@ -581,6 +585,7 @@ data class DiscoveryUi(
     /** 1–8 (unknown codes arrive as 8, Other). */
     val category: Int,
     val tags: List<String>,
+    val langs: List<String> = emptyList(),
     val sizeMin: Int,
     val sizeMax: Int,
     /** Worked out on this phone only; never sent. */
@@ -593,6 +598,7 @@ data class ListingSettingsUi(
     val description: String = "",
     val category: Int = 8,
     val tags: List<String> = emptyList(),
+    val langs: List<String> = emptyList(),
 )
 
 data class OpenCommunityUi(

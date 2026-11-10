@@ -96,8 +96,10 @@ final class BleMeshTransport: NSObject, MeshKick {
             let v = (d.batteryLevel < 0 ? -1 : Int(d.batteryLevel * 100), d.batteryState == .charging || d.batteryState == .full)
             self?.q.async { self?.battery = v }
         }
+        let saver = ProcessInfo.processInfo.isLowPowerModeEnabled
+        repo.core.setBatterySaver(saver)
         return MeshDutyCycle.profile(batteryPercent: battery.pct, charging: battery.charging,
-                                     lowPowerMode: ProcessInfo.processInfo.isLowPowerModeEnabled,
+                                     lowPowerMode: saver,
                                      coreMaxLinks: repo.core.meshMaxLinks())
     }
 

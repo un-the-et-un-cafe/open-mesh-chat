@@ -370,6 +370,7 @@ class BleMeshTransport(private val context: Context, private val repo: MeshRepos
         val pct = if (level >= 0 && scale > 0) level * 100 / scale else 100
         val plugged = (batt?.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) ?: 0) != 0
         val saver = context.getSystemService(PowerManager::class.java)?.isPowerSaveMode == true
+        repo.core.setBatterySaver(saver)
         return MeshDutyCycle.profile(pct, plugged, saver, repo.core.meshMaxLinks())
     }
 

@@ -223,6 +223,8 @@ pub struct RelayEngine {
     discovery_fwd: (u64, u32),
     /// §20.8(4)(a) per-neighbour discovery-tag range pacing.
     discovery_pacing: crate::community::discovery::DiscoveryPacing,
+    /// §20.8(5)(b) / TM30: discovery exchange pauses while the OS battery saver is on.
+    battery_saver: bool,
     /// Links over the gateway / internet path (no "Near you").
     gateway_links: BTreeSet<u64>,
     /// Full digests received from neighbours (post-restore hold, MR30).
@@ -331,6 +333,7 @@ impl RelayEngine {
             }),
             discovery_fwd: (0, 0),
             discovery_pacing: Default::default(),
+            battery_saver: false,
             gateway_links: BTreeSet::new(),
             full_digests: 0,
             store: RelayStore::new(cfg.budget),
@@ -442,9 +445,17 @@ impl RelayEngine {
         &self.discovery
     }
 
+    /// §20.8(5)(b): pause discovery exchange while the OS battery saver is on.
+    pub fn set_battery_saver(&mut self, on: bool) {
+        self.battery_saver = on;
+    }
+    pub fn battery_saver(&self) -> bool {
+        self.battery_saver
+    }
+
     /// §20.8(4)(a): whether discovery-tag ranges may go to `link` now.
     pub fn discovery_may_send_ranges(&self, link: u64, now_ms: u64) -> bool {
-        self.discovery_pacing.may_send(link, now_ms)
+        !self.battery_saver && self.discovery_pacing.may_send(link, now_ms)
     }
 
     pub fn discovery_mark_ranges_sent(&mut self, link: u64, now_ms: u64) {
@@ -977,7 +988,7 @@ impl RelayEngine {
                 let links: Vec<u64> = self.neighbours.keys().copied().collect();
                 let mut ev = Vec::new();
                 for l in links {
-                    if self.discovery_pacing.may_send(l, now_ms) {
+                    if self.discovery_may_send_ranges(l, now_ms) {
                         self.discovery_pacing.mark_sent(l, now_ms);
                         let full = full_digest_frame(&self.digest);
                         let hello = LinkControl::hello_for(&self.digest, false).encode();
@@ -1018,7 +1029,7 @@ impl RelayEngine {
         let links: Vec<u64> = self.neighbours.keys().copied().collect();
         for l in links {
             let include_discovery =
-                self.advertised.contains(&dtag) && self.discovery_pacing.may_send(l, now_ms);
+                self.advertised.contains(&dtag) && self.discovery_may_send_ranges(l, now_ms);
             let (frame, has_delta, digest_for_hello) =
                 if include_discovery || !self.advertised.contains(&dtag) {
                     // Full advertised set (with or without discovery absent entirely).
@@ -2429,6 +2440,13 @@ mod tests {
         assert!(a.discovery_may_send_ranges(1, now + 1));
         a.discovery_mark_ranges_sent(1, now + 1);
         assert!(!a.discovery_may_send_ranges(1, now + 1 + DISCOVERY_PACING_MS - 1));
+        assert!(a.discovery_may_send_ranges(1, now + 1 + DISCOVERY_PACING_MS));
+        a.set_battery_saver(true);
+        assert!(
+            !a.discovery_may_send_ranges(1, now + 1 + DISCOVERY_PACING_MS),
+            "battery saver pauses discovery exchange even when pacing would allow it"
+        );
+        a.set_battery_saver(false);
         assert!(a.discovery_may_send_ranges(1, now + 1 + DISCOVERY_PACING_MS));
     }
 }
