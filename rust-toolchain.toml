@@ -1,9 +1,8 @@
-# Pin ≥1.99.1: 1.99.0 miscompiles bool returns across FFI (UniFFI).
-# ml-kem 0.3.x / ctutils also need a recent stable (1.87+).
-# Targets listed here so rustup installs them on this pin (CI's
-# dtolnay/rust-toolchain@stable only adds targets to "stable").
+# Always track newest stable; keep builds clean so upgrades stay green.
+# Targets listed here so rustup installs them with the toolchain (CI adds
+# targets via rustup when using channel = "stable").
 [toolchain]
-channel = "1.99.1"
+channel = "stable"
 components = ["rustfmt", "clippy"]
 targets = [
     "aarch64-linux-android",

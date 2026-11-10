@@ -24,7 +24,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Security
-import androidx.compose.material.icons.filled.Send
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -405,7 +405,7 @@ fun ChatThreadScreen(
                         ),
                     contentAlignment = Alignment.Center,
                 ) {
-                    if (burnOn) Text("🔥") else Icon(Icons.Default.Send, contentDescription = "Send")
+                    if (burnOn) Text("🔥") else Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
                 }
             }
         },

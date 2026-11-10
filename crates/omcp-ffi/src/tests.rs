@@ -4311,3 +4311,57 @@ fn owner_handover_travels_over_1to1() {
         );
     }
 }
+
+#[test]
+fn contact_old_epoch_tags_survive_restart() {
+    let a = node("Alice");
+    let b = node("Bob");
+    befriend_mls(&a, &b);
+    let bid = parse_id(&b.identity().peer_id_hex).unwrap();
+    {
+        let mut st = a.inner.lock();
+        assert!(st.mesh.mls_ready(&bid));
+        st.retire_contact_tag(&bid).unwrap();
+        assert!(!st.mesh.contact_old_tags[&bid].is_empty());
+    }
+    let saved = a.inner.lock().mesh.contact_old_tags[&bid].clone();
+    {
+        let mut st = a.inner.lock();
+        st.mesh.contact_old_tags.clear();
+        let rows = vec![(bid, saved.clone())];
+        st.db.put_meta(b"contact-old-tags-v1", &rows).unwrap();
+        let old: Vec<([u8; 32], omcp_core::sync::tag::EpochTagHistory)> =
+            st.db.get_meta(b"contact-old-tags-v1").unwrap().unwrap();
+        st.mesh.contact_old_tags = old.into_iter().collect();
+        assert_eq!(st.mesh.contact_old_tags[&bid], saved);
+        st.mesh
+            .contact_old_tags
+            .get_mut(&bid)
+            .unwrap()
+            .expire(now_ms() + omcp_core::sync::tag::OLD_EPOCH_ACCEPT_MS);
+        assert!(st.mesh.contact_old_tags[&bid].is_empty());
+    }
+}
+
+#[test]
+fn leave_commit_uses_online_leaves_not_fixed_sentinel() {
+    let a = node("Alice");
+    let c = a.community_create("G".into()).unwrap();
+    let gid = parse_id(&c.community_id_hex).unwrap();
+    let leaves = a.inner.lock().online_leaves_for(&gid);
+    // Alone: we are the only online leaf.
+    assert_eq!(leaves.len(), 1);
+    // With a pending leave, lowest online (us) is due immediately.
+    let due = a
+        .inner
+        .lock()
+        .mesh
+        .community
+        .list
+        .get(&gid)
+        .unwrap()
+        .member
+        .leave_commit_due(now_ms(), &leaves, 3_600_000);
+    // No pending leave yet → false.
+    assert!(!due);
+}

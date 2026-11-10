@@ -69,7 +69,7 @@ fun OnboardingFlow(
             OutlinedTextField(
                 s.restorePhrase, vm::setRestorePhrase,
                 label = { Text(stringResource(R.string.onb_24_words)) },
-                keyboardOptions = KeyboardOptions(autoCorrect = false, capitalization = KeyboardCapitalization.None),
+                keyboardOptions = KeyboardOptions(autoCorrectEnabled = false, capitalization = KeyboardCapitalization.None),
                 minLines = 4,
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -115,7 +115,7 @@ fun OnboardingFlow(
                         )
                     },
                     visualTransformation = PasswordVisualTransformation(),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrect = false),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false),
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Button(onClick = { io.launch(kotlinx.coroutines.Dispatchers.IO) { vm.backupToDrive() } }, enabled = s.drivePasswordOk, modifier = Modifier.fillMaxWidth()) {
@@ -158,7 +158,7 @@ fun OnboardingFlow(
                     supportingText = if (f.error) ({ Text(stringResource(R.string.onb_word_wrong, f.position + 1)) }) else null,
                     trailingIcon = if (f.ok) ({ Text("✓") }) else null,
                     singleLine = true,
-                    keyboardOptions = KeyboardOptions(autoCorrect = false, capitalization = KeyboardCapitalization.None),
+                    keyboardOptions = KeyboardOptions(autoCorrectEnabled = false, capitalization = KeyboardCapitalization.None),
                     modifier = Modifier.fillMaxWidth(),
                 )
             }

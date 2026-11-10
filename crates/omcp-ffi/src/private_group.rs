@@ -304,8 +304,8 @@ pub struct CommunityMember {
     pub is_me: bool,
 }
 
-/// Per-group wait before a non-lowest member commits a leave: 10–60 min,
-/// fixed per group so it is stable across ticks (§23.10.12(1)(c)).
+/// Per-group jitter (10–60 min) when we are online but not the lowest
+/// online leaf (§23.10.12(1)(c)); stable across ticks.
 fn leave_jitter(id: &[u8; 32]) -> u64 {
     let m = omcp_core::mls::group::LEAVE_COMMIT_DEADLINE_MS / 24; // 1 h
     m / 6 + (u64::from(id[0]) * (m - m / 6)) / 255
@@ -949,20 +949,40 @@ impl NodeState {
         for p in self.roster_contacts(&id, &[peer]) {
             self.post(p, &fwd);
         }
-        let Some(c) = self.mesh.community.list.get_mut(&id) else {
-            return Ok(());
-        };
-        let leaves: Vec<u32> = c
-            .member
-            .member_identities()
-            .map_err(mls)?
-            .into_iter()
-            .map(|(l, _)| l)
-            .collect();
-        if c.member.leave_commit_due(now, &leaves, leave_jitter(&id)) {
+        let leaves = self.online_leaves_for(&id);
+        let due = self
+            .mesh
+            .community
+            .list
+            .get(&id)
+            .is_some_and(|c| c.member.leave_commit_due(now, &leaves, leave_jitter(&id)));
+        if due {
             self.commit_leave(&id)?;
         }
         self.save_communities()
+    }
+
+    /// Leaf indices of members currently reachable (us + peers with a live link).
+    pub(crate) fn online_leaves_for(&self, id: &[u8; 32]) -> Vec<u32> {
+        let Some(c) = self.mesh.community.list.get(id) else {
+            return Vec::new();
+        };
+        let Ok(idents) = c.member.member_identities() else {
+            return Vec::new();
+        };
+        let me_leaf = c.member.own_leaf_index().ok();
+        let online_peers: std::collections::HashSet<[u8; 32]> =
+            self.links_up.values().copied().collect();
+        let mut out = Vec::new();
+        for (leaf, cred) in idents {
+            let Ok(pid) = <[u8; 32]>::try_from(cred.as_slice()) else {
+                continue;
+            };
+            if me_leaf == Some(leaf) || online_peers.contains(&pid) {
+                out.push(leaf);
+            }
+        }
+        out
     }
 
     /// Commit pending leaves of group `id` and send the commit.
@@ -1009,19 +1029,19 @@ impl NodeState {
         Ok(())
     }
 
-    /// `tick`: commit any leave whose 10–60 min wait (or 24 h bound) is over.
+    /// `tick`: commit pending leaves using real online status (§23.10.12(1)(c)).
     pub(crate) fn commit_due_leaves(&mut self, now: u64) -> Result<(), FfiError> {
-        let due: Vec<[u8; 32]> = self
-            .mesh
-            .community
-            .list
-            .iter()
-            .filter(|(id, c)| {
-                c.member
-                    .leave_commit_due(now, &[u32::MAX], leave_jitter(id))
-            })
-            .map(|(id, _)| *id)
-            .collect();
+        let ids: Vec<[u8; 32]> = self.mesh.community.list.keys().copied().collect();
+        let mut due = Vec::new();
+        for id in ids {
+            let online = self.online_leaves_for(&id);
+            let Some(c) = self.mesh.community.list.get(&id) else {
+                continue;
+            };
+            if c.member.leave_commit_due(now, &online, leave_jitter(&id)) {
+                due.push(id);
+            }
+        }
         for id in due {
             self.commit_leave(&id)?;
         }

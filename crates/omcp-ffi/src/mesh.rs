@@ -205,6 +205,8 @@ pub(crate) struct MeshState {
     pub discovery: crate::discovery::DiscoveryState,
     /// Inbound owner-handover 1:1 frames waiting for OmcpNode processing.
     pub handover_inbox: Vec<([u8; 32], Vec<u8>)>,
+    /// §22.7(13): retired MLS tag secrets for 1:1 chats (7 days, across restarts).
+    pub contact_old_tags: HashMap<[u8; 32], omcp_core::sync::tag::EpochTagHistory>,
 }
 
 impl MeshState {
@@ -230,6 +232,7 @@ impl MeshState {
             discovery: Default::default(),
             restore_hold: None,
             handover_inbox: Vec::new(),
+            contact_old_tags: HashMap::new(),
         }
     }
 
@@ -337,6 +340,22 @@ fn open_from(
     peer: &[u8; 32],
     env: &EnvelopeV1,
 ) -> Result<zeroize::Zeroizing<Vec<u8>>, FfiError> {
+    let before_epoch = st.mesh.mls.get(peer).and_then(|m| m.member.epoch().ok());
+    // Retire tag secret if decrypt will advance the MLS epoch.
+    if let Some(ep) = before_epoch {
+        let _ = ep;
+        // Capture secret before decrypt may rotate.
+        let _ = st
+            .mesh
+            .mls
+            .get(peer)
+            .and_then(|m| m.member.tag_exporter(0).ok());
+    }
+    let pre_sec = st
+        .mesh
+        .mls
+        .get(peer)
+        .and_then(|m| m.member.tag_exporter(0).ok());
     let m = st
         .mesh
         .mls
@@ -347,7 +366,19 @@ fn open_from(
         .decrypt_app_message_with_aad(&env.ciphertext)
         .map_err(mls_err)?;
     let plain = zeroize::Zeroizing::new(plain);
+    let after_epoch = m.member.epoch().ok();
     st.save_mls(peer)?;
+    if before_epoch != after_epoch {
+        if let Some(sec) = pre_sec {
+            st.mesh
+                .contact_old_tags
+                .entry(*peer)
+                .or_default()
+                .retire(sec.to_vec(), now_ms());
+            let _ = st.save_contact_old_tags();
+            st.mesh.tags_for = None;
+        }
+    }
     let m = &st.mesh.mls[peer];
     if got_aad != aad(env) || leaf != other_leaf(&m.member)? {
         return Err(invalid("mesh envelope binding"));
@@ -368,6 +399,20 @@ impl NodeState {
             if let Ok(mut member) = OmcpMlsMember::restore(&r.1) {
                 member.set_one_to_one(); // MR52: 1:1 chats never leave or remove
                 mesh.mls.insert(*id, ContactMls { member, ready: r.0 });
+            }
+        }
+        if let Ok(Some(old)) = self
+            .db
+            .get_meta::<Vec<([u8; 32], omcp_core::sync::tag::EpochTagHistory)>>(
+                b"contact-old-tags-v1",
+            )
+        {
+            let now = now_ms();
+            for (id, mut h) in old {
+                h.expire(now);
+                if !h.is_empty() {
+                    mesh.contact_old_tags.insert(id, h);
+                }
             }
         }
         // §20.8: the index first, so carried listings it no longer holds drop.
@@ -417,6 +462,43 @@ impl NodeState {
             let rec: ContactMlsRec = (m.ready, m.member.export_state().map_err(mls_err)?);
             self.db.put_meta(&mls_key(peer), &rec)?;
         }
+        Ok(())
+    }
+
+    pub(crate) fn save_contact_old_tags(&mut self) -> Result<(), FfiError> {
+        let now = now_ms();
+        for h in self.mesh.contact_old_tags.values_mut() {
+            h.expire(now);
+        }
+        self.mesh.contact_old_tags.retain(|_, h| !h.is_empty());
+        let rows: Vec<_> = self
+            .mesh
+            .contact_old_tags
+            .iter()
+            .map(|(id, h)| (*id, h.clone()))
+            .collect();
+        self.db.put_meta(b"contact-old-tags-v1", &rows)?;
+        Ok(())
+    }
+
+    /// Retire the current 1:1 tag secret before an MLS epoch change (§22.7(13)).
+    pub(crate) fn retire_contact_tag(&mut self, peer: &[u8; 32]) -> Result<(), FfiError> {
+        let Some(m) = self.mesh.mls.get(peer) else {
+            return Ok(());
+        };
+        if !m.member.has_group() {
+            return Ok(());
+        }
+        let Ok(sec) = m.member.tag_exporter(0) else {
+            return Ok(());
+        };
+        self.mesh
+            .contact_old_tags
+            .entry(*peer)
+            .or_default()
+            .retire(sec.to_vec(), now_ms());
+        self.save_contact_old_tags()?;
+        self.mesh.tags_for = None;
         Ok(())
     }
 
@@ -606,9 +688,23 @@ pub(crate) fn refresh_wants(st: &mut NodeState, now: u64) -> Result<(), FfiError
         let Ok(leaf) = m.member.own_leaf_index() else {
             continue;
         };
+        let mut secrets: Vec<[u8; 32]> = Vec::new();
         for e in [epoch.saturating_sub(1), epoch] {
-            let ts = m.member.tag_exporter(e).map_err(mls_err)?;
-            tags.insert(subtag(&ts, leaf, e)?, *id);
+            if let Ok(ts) = m.member.tag_exporter(e) {
+                secrets.push(ts);
+            }
+        }
+        if let Some(h) = st.mesh.contact_old_tags.get(id) {
+            for s in h.secrets(now) {
+                if let Ok(a) = <[u8; 32]>::try_from(s) {
+                    secrets.push(a);
+                }
+            }
+        }
+        for ts in secrets {
+            for e in [epoch.saturating_sub(1), epoch] {
+                tags.insert(subtag(&ts, leaf, e)?, *id);
+            }
         }
     }
     let mut wants: BTreeSet<MailboxTag> = tags.keys().copied().collect();
@@ -826,6 +922,7 @@ impl MeshLink {
         match (kind, creator) {
             (SETUP_KEY_PACKAGE, true) => {
                 // New group (also after the joiner lost its state).
+                let _ = node.retire_contact_tag(peer);
                 let mut member = OmcpMlsMember::generate(me.to_vec()).map_err(mls_err)?;
                 member.set_one_to_one();
                 let kp = member.parse_key_package(body).map_err(mls_err)?;
@@ -842,11 +939,17 @@ impl MeshLink {
                 node.queue_setup(self.handle, SETUP_WELCOME, &welcome);
             }
             (SETUP_WELCOME, false) => {
-                let Some(m) = node.mesh.mls.get_mut(peer) else {
-                    return Ok(());
-                };
-                if m.member.has_group() {
+                let already = node
+                    .mesh
+                    .mls
+                    .get(peer)
+                    .is_some_and(|m| m.member.has_group());
+                if already {
                     // Creator restarted the group: start over with a fresh member.
+                    let _ = node.retire_contact_tag(peer);
+                    let Some(m) = node.mesh.mls.get_mut(peer) else {
+                        return Ok(());
+                    };
                     let mut fresh = OmcpMlsMember::generate(me.to_vec()).map_err(mls_err)?;
                     fresh.set_one_to_one();
                     std::mem::swap(&mut m.member, &mut fresh);
@@ -856,6 +959,9 @@ impl MeshLink {
                     node.queue_setup(self.handle, SETUP_KEY_PACKAGE, &kp);
                     return Ok(());
                 }
+                let Some(m) = node.mesh.mls.get_mut(peer) else {
+                    return Ok(());
+                };
                 m.member.join_from_welcome(body).map_err(mls_err)?;
                 m.ready = true;
                 became_ready = true;

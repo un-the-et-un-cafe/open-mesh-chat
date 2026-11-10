@@ -1,5 +1,12 @@
 # OMCP Design Pack — Changelog
 
+## v0.1.39 — 2026-11-10
+
+- **Pending leaves use real online status:** `online_leaves_for` (self + live-link peers) drives `leave_commit_due` instead of the fixed `[u32::MAX]` sentinel.
+- **`u_inv_more` menu:** Block / Report on incoming private-group invites live under a ⋯ menu (Accept / Decline stay primary).
+- **1:1 old-epoch tags:** `contact_old_tags` keeps retired MLS tag secrets 7 days and across restarts, same idea as private-group `old_tags`.
+- **Always-newest-stable toolchain:** `rust-toolchain.toml` tracks `channel = "stable"` (rustfmt, clippy, four mobile targets kept); Android Gradle Wrapper 9.9.0; AGP 9.5.1 with built-in Kotlin + Compose compiler 2.4.21; Compose BOM / AndroidX / JNA bumped to current stables (compileSdk 37 for those libs; targetSdk stays 36); `cargo +stable clippy --all-targets -D warnings` clean; cheap AGP/Gradle deprecation cleanups (`localeFilters`, source-set `directories`, `providers.exec` for git SHA).
+
 ## v0.1.38 — 2026-11-10
 
 - **Owner handover over 1:1 E2E:** request / accept (`OwnerHandoverAccept` 0x03) / offer travel as `application/omcp-owner-handover` media on the existing chat channel; inbox auto-advances the pipeline. Paste-hex kept only as a debug fallback when the candidate is not a contact.

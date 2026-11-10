@@ -102,7 +102,7 @@ fun ChatRow(
                             PathKind.Gateway -> "Gateway"
                             PathKind.Mixed -> "Mixed"
                             PathKind.Queued -> "Queued"
-                            else -> "Mesh"
+                            PathKind.Mesh -> "Mesh"
                         },
                         micro = true,
                         modifier = Modifier.padding(top = 4.dp),

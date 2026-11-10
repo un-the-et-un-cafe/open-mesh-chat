@@ -19,7 +19,10 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Badge
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -222,11 +225,25 @@ fun InviteRequestsScreen(core: OmcpCore, onBack: () -> Unit) {
                                 Text(stringResource(R.string.u_inv_accepted_d, r.groupName.ifBlank { r.communityName }), color = c.ink3,
                                     style = MaterialTheme.typography.bodySmall)
                             }
-                        } else FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Button(onClick = { core.inviteAnswer(r.offerId, true); list = core.inviteRequests() }, Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.inv_accept)) }
-                            OutlinedButton(onClick = { pending = Triple(r, false, System.currentTimeMillis()) }, Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.inv_decline)) }
-                            TextButton(onClick = { pending = Triple(r, true, System.currentTimeMillis()) }, Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.inv_block), color = c.danger) }
-                            TextButton(onClick = { core.inviteReport(r.offerId)?.let { shareReport(ctx, it) } }, Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.inv_report)) }
+                        } else {
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Button(onClick = { core.inviteAnswer(r.offerId, true); list = core.inviteRequests() }, Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.inv_accept)) }
+                                OutlinedButton(onClick = { pending = Triple(r, false, System.currentTimeMillis()) }, Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.inv_decline)) }
+                                var more by remember(r.offerId) { mutableStateOf(false) }
+                                IconButton(onClick = { more = true }) {
+                                    Icon(Icons.Filled.MoreVert, stringResource(R.string.u_inv_more))
+                                }
+                                DropdownMenu(more, { more = false }) {
+                                    DropdownMenuItem(
+                                        text = { Text(stringResource(R.string.inv_block), color = c.danger) },
+                                        onClick = { more = false; pending = Triple(r, true, System.currentTimeMillis()) },
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text(stringResource(R.string.inv_report)) },
+                                        onClick = { more = false; core.inviteReport(r.offerId)?.let { shareReport(ctx, it) } },
+                                    )
+                                }
+                            }
                         }
                     }
                 }

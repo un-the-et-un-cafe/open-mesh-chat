@@ -1,5 +1,9 @@
 # Hopla team moderation
 
+## v0.1.39 — leave online status
+
+- Pending leave commits use live-link online leaves (lowest online commits at once; others wait jitter).
+
 ## v0.1.38 — handover 1:1 transport + auto sk erase
 
 - Request / accept / offer sent over 1:1 E2E (`application/omcp-owner-handover`); receivers auto-complete the next step.
