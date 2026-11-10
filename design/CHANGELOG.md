@@ -1,5 +1,11 @@
 # OMCP Design Pack — Changelog
 
+## v0.1.41 — 2026-11-10
+
+- **Approval-only joins deferred past v1.0 (TM36, MR76, §20.8(2)):** v1.0 always sends `join_policy = 1` and never offers an approval-only option. A received announcement with `join_policy` other than 1 is stored, relayed and shown, with no Join button and the invite-only copy ("This community joins by invite. Ask a member for an invite."); the app never sends a join from discovery.
+- **Community icons deferred past v1.0:** v1.0 always sends `has_icon = 0`. A received `has_icon = 1` stays stored and shown; `icon_hash` is ignored and nothing is fetched. Cards, the community detail screen, and the former `#` tile use a default icon with the first letter of the name. The 5 MB icon cache stays reserved and unused.
+
+
 ## v0.1.40 — 2026-11-10
 
 - **Language filter (TM25, §20.8(7)):** Discover filters the on-device index by announced BCP 47 tags; the founder can set up to 3 languages on a listing. Nothing about the filter is sent.

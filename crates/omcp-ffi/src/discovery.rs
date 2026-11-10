@@ -191,7 +191,7 @@ fn listing_of(a: &Announcement, near_you: bool, joined: bool) -> DiscoveryListin
         size_max,
         near_you,
         issued_ms: a.issued_ms,
-        approval_needed: a.join_policy == 2,
+        approval_needed: a.join_policy != 1,
         joined,
     }
 }
@@ -428,6 +428,9 @@ impl OmcpNode {
                 .discovery()
                 .get(&r)
                 .ok_or_else(|| invalid("listing"))?;
+            if e.ann.join_policy != 1 {
+                return Err(invalid("invite"));
+            }
             let (id, keys) = (e.ann.community_id, (e.ann.community_pk, e.ann.owner_pk));
             if st.mesh.open.communities.contains_key(&id) {
                 return Ok(true);

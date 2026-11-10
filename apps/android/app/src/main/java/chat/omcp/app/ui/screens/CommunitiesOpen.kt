@@ -76,12 +76,12 @@ import chat.omcp.app.ui.components.CalloutKind
 import chat.omcp.app.ui.components.EmptyState
 import chat.omcp.app.ui.theme.LocalOmcpColors
 
-/** `#` glyph in a neutral rounded-square tile (§5.128). */
+/** Default community icon: first letter of the name (TM36). */
 @Composable
-fun HashTile(modifier: Modifier = Modifier) {
+fun CommunityIcon(name: String, modifier: Modifier = Modifier) {
     val c = LocalOmcpColors.current
     Box(modifier.size(40.dp).background(c.surface2, RoundedCornerShape(10.dp)), contentAlignment = Alignment.Center) {
-        Text("#", fontWeight = FontWeight.Bold, color = c.ink2)
+        Text(name.trim().take(1).uppercase(), fontWeight = FontWeight.Bold, color = c.ink2)
     }
 }
 
@@ -109,7 +109,7 @@ fun CreateChooserSheet(core: OmcpCore, onDismiss: () -> Unit, onCreated: (kind: 
             Text(stringResource(R.string.u_create_t), style = MaterialTheme.typography.titleLarge)
             if (kind == null) {
                 ChooserRow(stringResource(R.string.u_create_grp), stringResource(R.string.u_create_grp_d), { GroupAvatar("") }) { kind = "group" }
-                ChooserRow(stringResource(R.string.u_create_comm), stringResource(R.string.u_create_comm_d), { HashTile() }) { kind = "community" }
+                ChooserRow(stringResource(R.string.u_create_comm), stringResource(R.string.u_create_comm_d), { CommunityIcon("") }) { kind = "community" }
             } else {
                 Text(stringResource(if (kind == "group") R.string.u_create_grp else R.string.u_create_comm), style = MaterialTheme.typography.titleMedium)
                 Text(stringResource(if (kind == "group") R.string.u_create_grp_d else R.string.u_create_comm_d), color = c.ink2)
@@ -165,7 +165,7 @@ fun OpenCommunitiesTab(core: OmcpCore, onOpen: (String) -> Unit, onOpenGroup: (S
             items(list, key = { it.id }) { k ->
                 Row(Modifier.fillMaxWidth().heightIn(min = 64.dp).clickable { onOpen(k.id) }.padding(horizontal = 16.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    HashTile()
+                    CommunityIcon(k.name)
                     Column(Modifier.weight(1f)) {
                         Text(k.name, style = MaterialTheme.typography.titleMedium)
                         Text(stringResource(R.string.u_comm_lbl, k.members), color = c.ink2, style = MaterialTheme.typography.bodySmall)
@@ -215,7 +215,7 @@ fun OpenCommunityScreen(core: OmcpCore, id: String, onTopic: (String) -> Unit, o
             item {
                 Column(Modifier.padding(horizontal = 16.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        HashTile()
+                        CommunityIcon(k?.name ?: "")
                         // §5.149: size as the owner's bucket range, never a count.
                         val (lo, hi) = sizeRange(k?.members ?: 0)
                         Text(stringResource(R.string.u_comm_lbl_range, rangeText(lo, hi)), color = c.ink2)

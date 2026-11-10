@@ -591,6 +591,8 @@ data class DiscoveryUi(
     /** Worked out on this phone only; never sent. */
     val nearYou: Boolean,
     val joined: Boolean,
+    /** True when the listing is not open to join (join_policy ≠ 1). */
+    val approvalNeeded: Boolean = false,
 )
 
 data class ListingSettingsUi(

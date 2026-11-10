@@ -125,6 +125,7 @@ fun DiscoverSection(core: OmcpCore, onOpen: (String) -> Unit) {
     results.forEach { r ->
         DiscoveryCard(r, waiting = r.ref in waiting,
             onJoin = {
+                if (r.approvalNeeded) return@DiscoveryCard
                 when (core.discoveryJoin(r.ref)) {
                     true -> onOpen(r.id)
                     false -> waiting = waiting + r.ref
@@ -146,7 +147,7 @@ private fun DiscoveryCard(r: DiscoveryUi, waiting: Boolean, onJoin: () -> Unit, 
     Card(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                HashTile()
+                CommunityIcon(r.name)
                 Column(Modifier.weight(1f)) {
                     Text(r.name, style = MaterialTheme.typography.titleMedium)
                     Text(
@@ -176,9 +177,12 @@ private fun DiscoveryCard(r: DiscoveryUi, waiting: Boolean, onJoin: () -> Unit, 
             Text(stringResource(R.string.u_size_after_join), color = c.ink2, style = MaterialTheme.typography.bodySmall)
             Text(stringResource(R.string.u_open_not_e2ee), color = c.ink3, style = MaterialTheme.typography.bodySmall)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (r.joined) Text(stringResource(R.string.u_joined), color = c.ink2)
-                else Button(enabled = !waiting, onClick = onJoin, modifier = Modifier.heightIn(min = 48.dp)) {
-                    Text(stringResource(if (waiting) R.string.u_joining else R.string.u_join_btn))
+                when {
+                    r.joined -> Text(stringResource(R.string.u_joined), color = c.ink2)
+                    r.approvalNeeded -> Text(stringResource(R.string.u_join_invite), color = c.ink2, style = MaterialTheme.typography.bodySmall)
+                    else -> Button(enabled = !waiting, onClick = onJoin, modifier = Modifier.heightIn(min = 48.dp)) {
+                        Text(stringResource(if (waiting) R.string.u_joining else R.string.u_join_btn))
+                    }
                 }
                 TextButton(onClick = onHide, Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.u_hide)) }
             }
