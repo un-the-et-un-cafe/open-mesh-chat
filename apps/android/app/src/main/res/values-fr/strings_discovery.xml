@@ -41,4 +41,6 @@
     <string name="u_e_heard">Aucune communauté captée à proximité pour l’instant</string>
     <string name="u_e_srch2">Aucune communauté listée ne correspond à « %1$s »</string>
     <string name="u_e_srch2_d">Seules les communautés listées déjà captées apparaissent. Les non listées demandent un code.</string>
+    <string name="u_lang_all">Toutes les langues</string>
+    <string name="u_langs_l">Langues (3 max., p. ex. en, fr)</string>
 </resources>

@@ -1,4 +1,11 @@
-# Community discovery (v0.1.33, PROTOCOL §20.8, TM25–TM31)
+# Community discovery (v0.1.40, PROTOCOL §20.8, TM25–TM31)
+
+## v0.1.40 — language filter and battery-saver pause
+
+- **Language filter:** `DiscoveryIndex::search` already ranked/filtered by announced `langs`; the FFI and Discover UI now pass a selected BCP 47 tag, and the founder can set up to 3 languages on a listing (local only, MR55).
+- **Battery saver:** `RelayEngine::set_battery_saver` pauses discovery-tag digest ranges (the discovery exchange of §20.8(5)(b)) while the OS saver is on. Apps report Android battery saver / iOS Low Power Mode on each mesh tick.
+- **Still deferred / skipped:** §23.4 Reported *threshold* (score, T, R, counter-votes) has no v1.0 wire format — §23.3 (2026-11-09) parks gossiped `REPORT{}`, attestations, endorsements and counter-votes past v1.0; reports stay evidence files. The local hide hook for an already-Reported `community_ref` remains (`ctx.reported`, MR61). Community `icon_hash` (≤ 16 KB WebP, 5 MB cache, fetch on view) is specified on the wire but DESIGN_SPEC has no icon picker or placement (cards use a # tile; category chips are text). Approval-only joins (`join_policy` 2) are named in the announcement and in §23.1 ("approve joins") but have no request/approve control frames or screens.
+
 
 ## v0.1.37 — digest pacing wired
 
@@ -17,4 +24,4 @@
 - **Search is local** (MR55): `DiscoveryIndex::search` ranks by text match, then "Near you", then hop count, then recency; size only breaks ties; no badges (MR61).
 - **Near you** (MR63): heard directly over the local radio (not a gateway link) within 2 hops in the last 7 days; computed and kept on this phone only.
 - **UI:** Discover at the top of Communities (search, All + 8 category chips, Nearby filter, "Near you first", owner-estimate note, private-groups note); cards say "Members and size shown after you join"; comm-detail header shows the size range; founder alert banner on comm-detail.
-- **Deferred:** §22.2 set-reconciliation pacing (6 h per neighbour) uses the normal digest sync today; battery-saver pause; icons (`icon_hash` is always absent); approval-only joins (`join_policy` 2) and language filter UI; Reported state from §23.4 (local Hide/Report hides).
+- **Deferred / skipped:** community `icon_hash` (always absent on send; no design for a picker); approval-only joins (`join_policy` is accepted on the wire and shown as `approval_needed`, but Join is still the open `Join` control — no request/approve frames); §23.4 Reported score/T/R (v1.0 must not gossip reports, §23.3); local Hide still hides, and `ctx.reported` still hides a ref if set.

@@ -673,6 +673,8 @@ public protocol OmcpCore: AnyObject {
     func newsSetPrefs(topics: [String], langs: [String], city: String?, muted: [String], alertsNotify: Bool)
     /// RL2: report free/total storage; under 10 % free Rust lowers the relay cap.
     func meshSetFreeStorage(freeBytes: Int64, totalBytes: Int64)
+    /// §20.8(5)(b): pause discovery exchange while Low Power Mode is on.
+    func setBatterySaver(_ on: Bool)
     /// Periodic relay work; returns link handles with frames waiting.
     func meshTick(nowMs: Int64) -> [UInt64]
     func meshPendingLinks() -> [UInt64]
@@ -801,6 +803,7 @@ public extension OmcpCore {
     func moderationRemovedReason(communityIdHex: String) -> Int? { nil }
     func newsSetPrefs(topics: [String], langs: [String], city: String?, muted: [String], alertsNotify: Bool) {}
     func meshSetFreeStorage(freeBytes: Int64, totalBytes: Int64) {}
+    func setBatterySaver(_ on: Bool) {}
     func meshTick(nowMs: Int64) -> [UInt64] { [] }
     func meshPendingLinks() -> [UInt64] { [] }
     func meshTakeStatusUpdates() -> [MeshStatusUpdate] { [] }

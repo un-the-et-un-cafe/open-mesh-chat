@@ -73,14 +73,17 @@ fun DiscoverSection(core: OmcpCore, onOpen: (String) -> Unit) {
     val c = LocalOmcpColors.current
     var query by remember { mutableStateOf("") }
     var cat by remember { mutableStateOf<Int?>(null) }
+    var lang by remember { mutableStateOf<String?>(null) }
+    var langs by remember { mutableStateOf(listOf<String>()) }
     var nearOnly by remember { mutableStateOf(false) }
     var results by remember { mutableStateOf(listOf<DiscoveryUi>()) }
     var tick by remember { mutableStateOf(0) }
     var reporting by remember { mutableStateOf<String?>(null) }
     var waiting by remember { mutableStateOf(setOf<String>()) }
-    LaunchedEffect(query, cat, nearOnly, tick) {
+    LaunchedEffect(query, cat, lang, nearOnly, tick) {
         while (true) {
-            results = core.discoverySearch(query.trim(), cat, nearOnly)
+            langs = core.discoveryLanguages()
+            results = core.discoverySearch(query.trim(), cat, lang, nearOnly)
             results.firstOrNull { it.ref in waiting && it.joined }?.let { waiting = waiting - it.ref; onOpen(it.id) }
             kotlinx.coroutines.delay(2_000)
         }
@@ -95,6 +98,12 @@ fun DiscoverSection(core: OmcpCore, onOpen: (String) -> Unit) {
                 FilterChip(selected = cat == k, onClick = { cat = if (cat == k) null else k }, label = { Text(stringResource(categoryLabel(k))) })
             }
             item { FilterChip(selected = nearOnly, onClick = { nearOnly = !nearOnly }, label = { Text(stringResource(R.string.u_f_nearby)) }) }
+            if (langs.isNotEmpty()) {
+                item { FilterChip(selected = lang == null, onClick = { lang = null }, label = { Text(stringResource(R.string.u_lang_all)) }) }
+                items(langs) { code ->
+                    FilterChip(selected = lang == code, onClick = { lang = if (lang == code) null else code }, label = { Text(code) })
+                }
+            }
         }
         Text(stringResource(R.string.u_disc_note), color = c.ink2, style = MaterialTheme.typography.bodySmall)
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -140,7 +149,12 @@ private fun DiscoveryCard(r: DiscoveryUi, waiting: Boolean, onJoin: () -> Unit, 
                 HashTile()
                 Column(Modifier.weight(1f)) {
                     Text(r.name, style = MaterialTheme.typography.titleMedium)
-                    Text(stringResource(categoryLabel(r.category)) + if (r.tags.isEmpty()) "" else " · " + r.tags.joinToString(" "),
+                    Text(
+                        buildString {
+                            append(stringResource(categoryLabel(r.category)))
+                            if (r.tags.isNotEmpty()) append(" · ").append(r.tags.joinToString(" "))
+                            if (r.langs.isNotEmpty()) append(" · ").append(r.langs.joinToString(" "))
+                        },
                         color = c.ink2, style = MaterialTheme.typography.bodySmall)
                 }
                 IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, stringResource(R.string.u_rep_comm)) }
@@ -180,11 +194,13 @@ fun ListedSettingRow(core: OmcpCore, communityId: String, isFounder: Boolean) {
     var s by remember(communityId) { mutableStateOf(core.communityListing(communityId)) }
     var desc by remember(communityId) { mutableStateOf(s.description) }
     var tags by remember(communityId) { mutableStateOf(s.tags.joinToString(" ")) }
+    var langs by remember(communityId) { mutableStateOf(s.langs.joinToString(" ")) }
     var cat by remember(communityId) { mutableStateOf(s.category) }
     var notice by remember { mutableStateOf(false) }
     var failed by remember { mutableStateOf(false) }
     fun settings(listed: Boolean) = ListingSettingsUi(listed, desc.trim(), cat,
-        tags.split(' ', ',').map { it.trim().lowercase() }.filter { it.isNotEmpty() }.take(5))
+        tags.split(' ', ',').map { it.trim().lowercase() }.filter { it.isNotEmpty() }.take(5),
+        langs.split(' ', ',').map { it.trim() }.filter { it.isNotEmpty() && it.all { ch -> ch.isLetterOrDigit() || ch == '-' } }.take(3))
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
@@ -204,6 +220,7 @@ fun ListedSettingRow(core: OmcpCore, communityId: String, isFounder: Boolean) {
             items((1..8).toList()) { k -> FilterChip(selected = cat == k, onClick = { cat = k }, label = { Text(stringResource(categoryLabel(k))) }) }
         }
         OutlinedTextField(tags, { tags = it.take(130) }, Modifier.fillMaxWidth(), singleLine = true, label = { Text(stringResource(R.string.u_tags_l)) })
+        OutlinedTextField(langs, { langs = it.take(40) }, Modifier.fillMaxWidth(), singleLine = true, label = { Text(stringResource(R.string.u_langs_l)) })
         Text(stringResource(R.string.u_listing_rules), color = c.ink3, style = MaterialTheme.typography.bodySmall)
         if (s.listed) TextButton(onClick = { failed = !core.setListed(communityId, settings(true)); s = core.communityListing(communityId) },
             Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.u_listing_update)) }

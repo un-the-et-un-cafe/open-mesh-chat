@@ -345,6 +345,7 @@ public final class RustOmcpCore: HoplaKit.OmcpCore {
     public func meshSetFreeStorage(freeBytes: Int64, totalBytes: Int64) {
         try? node?.meshSetFreeStorage(freeBytes: UInt64(max(0, freeBytes)), totalBytes: UInt64(max(0, totalBytes)))
     }
+    public func setBatterySaver(_ on: Bool) { node?.setBatterySaver(on: on) }
     public func meshTick(nowMs: Int64) -> [UInt64] { (try? node?.meshTick(nowMs: UInt64(max(0, nowMs)))).flatMap { $0 } ?? [] }
     public func meshPendingLinks() -> [UInt64] { node?.meshPendingLinks() ?? [] }
     public func meshTakeStatusUpdates() -> [MeshStatusUpdate] {

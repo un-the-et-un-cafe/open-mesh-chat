@@ -4004,7 +4004,9 @@ fn discovery_list_find_join_delist() {
     assert!(!a.open_community_listing(id.clone()).listed);
     assert!(a.discovery_listed_notice().starts_with("Listing makes"));
     sync(2);
-    assert!(b.discovery_search(String::new(), None, false).is_empty());
+    assert!(b
+        .discovery_search(String::new(), None, None, false)
+        .is_empty());
     // Only the founder; description capped at 140 code points.
     assert!(b
         .open_community_set_listed(id.clone(), true, "x".into(), 1, vec![], vec![])
@@ -4022,7 +4024,7 @@ fn discovery_list_find_join_delist() {
     )
     .unwrap();
     sync(2);
-    let r = b.discovery_search("seeds".into(), Some(1), false);
+    let r = b.discovery_search("seeds".into(), Some(1), None, false);
     assert_eq!(r.len(), 1);
     let l = &r[0];
     assert!(l.near_you && !l.joined);
@@ -4031,7 +4033,9 @@ fn discovery_list_find_join_delist() {
     let rep = b.discovery_report(l.community_ref_hex.clone(), 4).unwrap();
     assert!(omcp_core::community::discovery::Listing::decode(&rep).is_ok());
     assert!(b.discovery_report(l.community_ref_hex.clone(), 8).is_err());
-    assert!(b.discovery_search("seeds".into(), None, false).is_empty()); // hidden
+    assert!(b
+        .discovery_search("seeds".into(), None, None, false)
+        .is_empty()); // hidden
     let cref = l.community_ref_hex.clone();
     // Join from discovery: completes when the genesis arrives.
     let now = b.discovery_join(cref.clone()).unwrap();
@@ -4048,6 +4052,48 @@ fn discovery_list_find_join_delist() {
     sync(2);
     let st = b.inner.lock();
     assert!(st.mesh.engine.discovery().is_empty());
+}
+
+/// Language filter is local (TM25) and battery saver pauses discovery exchange (TM30).
+#[test]
+fn discovery_language_filter_and_battery_saver_pauses_exchange() {
+    let (a, b, la, lb) = paired();
+    pump(&la, &lb, la.start().unwrap());
+    let sync = |n: usize| {
+        for _ in 0..n {
+            a.mesh_tick(now_ms()).unwrap();
+            b.mesh_tick(now_ms()).unwrap();
+            pump(&la, &lb, la.flush().unwrap());
+            pump(&lb, &la, lb.flush().unwrap());
+        }
+    };
+    sync(3);
+    let c = a.open_community_create("Jardin".into()).unwrap();
+    let id = c.community_id_hex.clone();
+    a.open_community_set_listed(
+        id,
+        true,
+        "Seed swaps".into(),
+        1,
+        vec!["seeds".into()],
+        vec!["fr".into()],
+    )
+    .unwrap();
+    sync(2);
+    assert_eq!(b.discovery_languages(), vec!["fr".to_string()]);
+    assert_eq!(
+        b.discovery_search("seeds".into(), None, Some("fr".into()), false)
+            .len(),
+        1
+    );
+    assert!(b
+        .discovery_search("seeds".into(), None, Some("en".into()), false)
+        .is_empty());
+    assert!(!b.battery_saver());
+    b.set_battery_saver(true);
+    assert!(b.battery_saver());
+    let now = now_ms();
+    assert!(!b.inner.lock().mesh.engine.discovery_may_send_ranges(1, now));
 }
 
 /// §22.7(9): small-group envelopes carry the recipients' sub-tags (TLV
