@@ -43,4 +43,6 @@
     <string name="u_e_srch2_d">Only listed communities heard so far show up. Unlisted ones need a code.</string>
     <string name="u_lang_all">All languages</string>
     <string name="u_langs_l">Languages (up to 3, e.g. en, fr)</string>
+    <string name="u_comm_join_invite">This community joins by invite. Ask a member for an invite.</string>
 </resources>
+

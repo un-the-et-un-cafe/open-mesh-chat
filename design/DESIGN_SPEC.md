@@ -1,4 +1,4 @@
-# OMCP Smartphone Apps — Design Spec v0.1.22
+# OMCP Smartphone Apps — Design Spec v0.1.26
 
 **Platforms:** Android 12+ (Kotlin UI + Rust core), iOS 17+ (SwiftUI + Rust core)  
 **Date:** 2026-10-24 (v0.1.1; v0.1.0 2026-10-23)  
@@ -991,7 +991,7 @@ Banners `role=status` (announced once on entry, not on every scroll). Reputation
 | confirm.title | Allow screenshots? | Autoriser les captures d’écran ? | לאפשר צילומי מסך? |
 | confirm.cta | Allow screenshots / Keep blocking | Autoriser les captures / Garder le blocage | לאפשר צילומי מסך / להמשיך לחסום |
 
-## 5I. v0.1.7 — Approved decisions (maintainer, 2026-10-24)
+## 5I. v0.1.7 — Approved decisions (Jakob, 2026-10-24)
 
 Generator `/workspace/omcp-v017/gen.py`.
 
@@ -1228,7 +1228,7 @@ Follows REQUIREMENTS “Groups and communities” (Q25). Generator `/workspace/o
 - **Member list:** a footnote explains the tag: “‘Restored, not verified’: this member restored Hopla on a new device. Tap the tag to verify in person.”
 - **A11y:** the tag is `role=button` labelled “Restored, not verified. Tap to verify”. The sender line reads “Alex Rivera, restored, not verified”. The touch target is extended to 44 pt via padding on the name row.
 
-## 5O. v0.1.16 — One-tap Ask to resend; keep media you sent (approved by the maintainer, 2026-10-24)
+## 5O. v0.1.16 — One-tap Ask to resend; keep media you sent (approved by Jakob, 2026-10-24)
 
 Generator `/workspace/omcp-v0116/gen.py` (renders with `render.py`, system python3 Playwright + `/usr/bin/google-chrome`). New mockups `media-resend-note`, `settings-storage`; `media-missing` re-rendered.
 
@@ -1265,7 +1265,7 @@ Replaces the v0.1.12 confirm sheet (§5.94).
 | Presets | 30 days, 90 days, 1 year, Forever · 500 MB, 2 GB, 5 GB, No limit | 30 j, 90 j, 1 an, Toujours · 500 Mo, 2 Go, 5 Go, Sans limite | 30 יום, 90 יום, שנה, לתמיד · 500 מ״ב, 2 ג״ב, 5 ג״ב, ללא הגבלה |
 
 
-## 5P. v0.1.17 — Dark-mode WCAG AA overhaul; backup copy covers chats (requested by the maintainer, 2026-10-24)
+## 5P. v0.1.17 — Dark-mode WCAG AA overhaul; backup copy covers chats (requested by Jakob, 2026-10-24)
 
 Generator `/workspace/omcp-v0117/` (`gen.py` patches the v0.1.16 pack, `render.py`, `contrast.py`, `table.py`, `compose.py`). All 70 mockups re-rendered (445 frames).
 
@@ -1282,11 +1282,11 @@ Generator `/workspace/omcp-v0117/` (`gen.py` patches the v0.1.16 pack, `render.p
 - Applied to `onboarding-secure` (sub, honest note, password sheet), `onboarding-secure-phrase`, `onboarding-secure-reminder`, `onboarding-restore`, `settings-backup` (method lines, honest note, delete sheet), `restore-source` (“My 24 words” row), `restore-error--corrupted`, `restore-password` (forgot hint, lockout), `restore-reinstall` (forgot hint). Copy tables §5.21, §5.26–5.30, §5.31, §5.89 updated in place (EN/FR).
 - No Arabic copy exists in the pack yet (EN/FR only), so there is nothing to change in AR; RTL stays a §5 checklist item. *(v0.1.18: Hebrew added as the first RTL locale, §5.105–5.106.)*
 
-## 5Q. v0.1.18 — Light-mode WCAG AA matched to dark; Hebrew (RTL) locale draft (requested by the maintainer, 2026-10-24)
+## 5Q. v0.1.18 — Light-mode WCAG AA matched to dark; Hebrew (RTL) locale draft (requested by Jakob, 2026-10-24)
 
 Generator `/workspace/omcp-v0118/` (`gen.py` light tokens + disabled/scrim fixes, `he.py` + `he_strings.py` Hebrew frames, `he_spec.py` Hebrew copy column, `contrast.py`, `table18.py`, `compose18.py`, `docs18.py`, `render.py`). All mockups re-rendered.
 
-### 5.104 Light theme contrast (light token values changed with the maintainer’s approval)
+### 5.104 Light theme contrast (light token values changed with Jakob’s approval)
 - **Rule:** every light frame meets WCAG 2.1 AA like dark (§5.102): text 4.5:1, icons, control boundaries, toggle tracks/thumbs, focus rings 3:1. Disabled controls target 3:1 in both themes (no `opacity` dimming).
 - **Light token values:** `--ink-2` #4a5b70 → #3b495a, `--ink-3` #6b7c90 → #515e6d, `--line` #d8dee8 → #73849a, `--line-strong` #b8c2d0 → #617289. Dark values, soft tints and brand hues unchanged.
 - **Matched pair:** each light step has the same contrast on light `--surface` as the dark step on dark `--surface`: ink-2 9.18 / 9.18, ink-3 6.62 / 6.60, line 3.82 / 3.82, line-strong 4.91 / 4.87. Table and side-by-side in `a11y/light-vs-dark.png`.
@@ -1310,7 +1310,7 @@ Generator `/workspace/omcp-v0118/` (`gen.py` light tokens + disabled/scrim fixes
 - **Bidi:** wrap Latin/number runs inside Hebrew text in isolates (`<bdi>`, `\u2066…\u2069`, Android `BidiFormatter`, iOS `NSLocale`-aware formatting) so “Merci, à demain !”, “< 1 km”, “22:00 – 07:00” and IDs keep their order; prefer Hebrew-first phrasing for mixed chips (“4 בסביבה · Mesh”). Units in Hebrew: ג״ב, מ״ב, ק״מ, דק׳, שע׳.
 - **Dates:** “12 באוק׳ 2026, 21:40” (24 h clock). Week days as letters with geresh (א׳ … ש׳).
 
-## 5R. Hopla News (REQUIREMENTS § Hopla News v0.4, draft, revised 2026-10-24 — **all v0.4**) — v0.1.19, revised v0.1.20 (the maintainer’s decisions, 2026-10-24)
+## 5R. Hopla News (REQUIREMENTS § Hopla News v0.4, draft, revised 2026-10-24 — **all v0.4**) — v0.1.19, revised v0.1.20 (Jakob’s decisions, 2026-10-24)
 
 Generator `/workspace/omcp-v0120/` (`gen.py`, `strings.py`, `news.css`, `render.py`, `a11y/dark-contrast.py`, `docs20.py`); v0.1.19 generator kept at `/workspace/omcp-v0119/`. 18 mockups × 6 frames (EN, FR, HE draft; light + dark) = **108 PNGs**. No tokens added or changed (`news.css` composes existing tokens); `tokens.css` and `brand/` untouched. All people, contacts, places and stories are fictional; images are generated abstract art.
 
@@ -1341,7 +1341,7 @@ Generator `/workspace/omcp-v0120/` (`gen.py`, `strings.py`, `news.css`, `render.
 - Detail: body, shelter row, **Read on Google News**, toggle **Notify me about emergency alerts — on by default** (“You can turn this off”), mirrored in Settings › Notifications. *(Q27, Q30 resolved.)*
 
 ### 5.112 Sources — Google News RSS only (replaces Sources and curators)
-- There is no source management: for now the only source is **Google News RSS** (X dropped from v0.1.20 by the maintainer’s correction; an X news RSS feed comes later from a separate project — see §5.109). Phones with internet fetch them and relay stories over the mesh in normal envelopes; duplicates (same source + link) appear once (NW2).
+- There is no source management: for now the only source is **Google News RSS** (X dropped from v0.1.20 by Jakob’s correction; an X news RSS feed comes later from a separate project — see §5.109). Phones with internet fetch them and relay stories over the mesh in normal envelopes; duplicates (same source + link) appear once (NW2).
 - **Relay settings — placeholder:** the Relay settings screen will follow once the open relay questions are answered. Not designed yet.
 
 ### 5.113 Share to chat or community — `news-share`, `news-share-bubble`
@@ -1450,7 +1450,7 @@ Generator `/workspace/omcp-v0120/` (`gen.py`, `strings.py`, `news.css`, `render.
 | `news.le_d` | Try another city or check back when you meet someone nearby. | Essayez une autre ville ou revenez quand vous croisez quelqu’un. | אפשר לנסות עיר אחרת או לחזור כשתפגשו מישהו בסביבה. |
 | `news.le_btn` | Change city | Changer de ville | שינוי עיר |
 
-## 5S. v0.1.21 — WCAG 2.2 additions (2.5.8, 2.4.11, 2.5.7) and glass-bar contrast (requested by the maintainer, 2026-10-26)
+## 5S. v0.1.21 — WCAG 2.2 additions (2.5.8, 2.4.11, 2.5.7) and glass-bar contrast (requested by Jakob, 2026-10-26)
 
 Applies to every screen. Normative for Proggy.
 
@@ -1471,7 +1471,7 @@ Applies to every screen. Normative for Proggy.
 
 **Glass bars (iOS translucent tab bar / nav bar).** Mockups use opaque `--surface` bars, so measured contrast is the opaque one. **Rule:** if the iOS build uses system material/“Liquid Glass” bars, add a scrim under the blur of at least **85 % `--surface` (light) / 85 % `--surface` (dark)** or use `.systemThickMaterial`/opaque appearance, so that over the worst content behind (white photo in dark mode, black photo in light mode) labels and selected/unselected tab icons keep **≥ 4.5:1 (text) / ≥ 3:1 (icons)**. Verify with screenshots over a pure white and a pure black image in both themes; if it fails, fall back to an opaque bar. With Reduce Transparency on, bars are opaque.
 
-## 5T. v0.1.22 — Communities with Live (PR #19; PROTOCOL §23.9 kinds 3/4) — requested by the maintainer, 2026-10-29
+## 5T. v0.1.22 — Communities with Live (PR #19; PROTOCOL §23.9 kinds 3/4) — requested by Jakob, 2026-10-29
 
 All screens: 6 frames (EN/FR/HE-draft × light/dark). Names of people and communities are fictional. Files: `mockups/comm-*.html`, `mockups/live-*.html` (generator `omcp-v0122/live.py`).
 
@@ -1572,6 +1572,738 @@ Shows the stream ID (16 bytes = 32 hex, grouped in 4s, monospace, `dir=ltr` also
 | `rep_note` | The host won’t know who reported. Reporting does not stop the live by itself. | L’hôte ne saura pas qui a signalé. Signaler n’arrête pas le direct à lui seul. | המארח/ת לא יידע/תדע מי דיווח. הדיווח לבדו לא עוצר את השידור. |
 
 **Accessibility:** AA contrast 0 failures (light + dark, `a11y/dark-contrast.py` on the 15 new files); targets ≥ 44 pt / 48 dp; `:focus-visible` ring (news.css); no drag-only actions.
+
+## 5U. v0.1.23 — Communities (open forum) vs Private groups (E2EE, ≤ 32) — Jakob’s product-model correction, 2026-10-29
+
+**Supersedes §5T.** v0.1.22 wrongly treated Communities as the 32-member encrypted groups. All screens: 6 frames (EN/FR/HE-draft × light/dark), fictional names, generator `omcp-v0123/gen.py` (reuses `omcp-v0122/live.py` components, avatars and locale handling). 24 screens / 144 PNGs (updated 2026-10-29 after Jakob’s answers to Q40–Q45):
+
+- `comm-tab` — Communities tab — search, community lives, joined, discover
+- `comm-detail` — Community — open header, topics, Start a private group
+- `comm-thread` — Thread — posts, moderator badge, reply
+- `comm-new-thread` — New thread — not E2EE note
+- `comm-mod-tools` — Moderator actions sheet (buttons, no swipe)
+- `comm-removed-stub` — Removed-post stub in a thread
+- `comm-report` — In-app anonymous report — reason, optional note
+- `comm-remove-reason` — Remove post — required reason, Remove disabled until chosen
+- `comm-members` — Members — roles, founder-only Make moderator
+- `comm-live` — Community live — members only, in-app report
+- `create-chooser` — Create chooser — private group vs community
+- `group-in-chats` — Chats — Groups chip, private groups with lock and x/32
+- `group-detail` — Private group — E2EE header, security, members
+- `group-security` — Group security — key fingerprint, key changes
+- `group-invite` — Invite from community members — not contacts, mesh identity, x/32
+- `group-invite-full` — Founder invite — full at 32/32
+- `group-remove` — Founder removes member — key rotation notice
+- `group-live` — Private-group live — E2EE indicator
+- `live-takedown` — v1.0 — live taken down by Hopla moderator key
+- `nav-search` — Search results labelled by type
+- `empty-comm` — Empty — no communities joined, no live now
+- `empty-topic` — Empty — no threads in a topic
+- `empty-groups` — Empty — no private groups, no private live
+- `empty-search` — Empty — discovery, no results
+
+### 5.128 Mental model
+- **Community** = open, forum-style space: topics → threads → replies; discoverable, anyone can join; membership not capped; moderators; a community Live is open to its members. **Not end-to-end encrypted, and posts travel over the mesh** (through other people’s phones) — said in the community header info line (`c_info`), the create chooser, a one-time notice before the first post (`comm-new-thread`), and the live header. Community Live is **members only** (`clive_d`, Q44).
+- **Private group** = end-to-end encrypted group conversation, **max 32 members**, founder invites/removes, group key with fingerprint, key rotates when someone leaves or is removed; private Live only for members.
+
+| | Community | Private group |
+|---|---|---|
+| Lives in | Communities tab | Chats (filter chip **Groups**) |
+| Glyph / avatar | `#` hash in a neutral rounded-square tile | Round colour avatar + **lock** corner badge |
+| Label | “Community · open · 1.2k members” | “Private group · end-to-end encrypted · 12/32” |
+| Header | Plain surface, bottom rule, moderator line | Tinted surface + “End-to-end encrypted” status line (lock + text) |
+| Size | Unlimited | 32 (counter text + progressbar) |
+| Joining | Discover / search → Join | Founder invite only |
+| Content | Topics, threads, replies | Chat messages |
+| Encryption | Transport only; not E2EE | E2EE, group key, fingerprint, rotation |
+| Live | Open to members, listed at top of Communities | Members only, E2EE indicator |
+| Moderation | Moderators remove post/thread/member, stubs | Founder removes members (key rotates) |
+
+### 5.129 Navigation decision
+Private groups live in **Chats** as encrypted group conversations (lock badge + x/32), filterable with a **Groups** chip; the **Communities** tab is only the open forum space (search, community lives strip, joined, discover). One **+ → Create chooser** (both tabs) offers “New private group” vs “New community”, one line each. Cross-links: community detail has **Start a private group** → `group-invite`, which picks from **community members, including people who aren’t your contacts** (invites go to each person’s mesh identity; still 32 max, Q43); the group then lives in Chats; a full group (32/32) offers **Create a community instead**; global search labels every result with a type badge (`#` Community / lock Private group) and groups results by type. Nav bar unchanged (Chats · News · Communities · Nearby · You).
+
+### 5.130 Live
+`comm-live`: community badge, “Members of this community only. Not end-to-end encrypted.”, host listener list with visible **Remove from live** (no swipe-only, WCAG 2.5.7), **Report this live** (in-app anonymous sheet). `group-live`: Private-group badge, lock + “Only the 12 members of this group can listen. End-to-end encrypted.” Live-start notifications reuse §5.124 (`live-notif-shade`/`live-notif-lock`, kept), with “{host} is live in {community/group}”; lock screen stays generic.
+
+### 5.131 Moderation — MVP vs v1.0
+- **MVP — roles:** Founder · Moderator · Member, labelled in `comm-members`. **Only the founder appoints moderators** (“Make moderator”, founder-only; also in the mod sheet with a “Founder only” tag) (Q42).
+- **MVP — moderator actions** from the post ⋯ menu (`comm-mod-tools`): Remove post, Remove thread, Remove member, Make moderator (founder only), Report. All buttons, no swipe.
+- **Remove post needs a reason** (`comm-remove-reason`, Q45): radio list (Off-topic, Selling or spam, Harassment or hate, Personal information, Other + text). **Remove post** stays `aria-disabled` with the hint “Choose a reason to continue” until a reason is picked (and Other has text).
+- **Removed stub** (`comm-removed-stub`): “Post removed by a moderator” + reason, the same for everyone, moderators included. There’s no “view original”: removed content can’t be viewed by anyone (Q42 answer).
+- **Reports are anonymous** (Q40): nobody, moderators included, sees who reported. In-app sheet `comm-report`: reason list, optional note, lock + “Reports are anonymous. Moderators won’t see who reported.” The same line is shown in the mod sheet. Live reports (`comm-live` → “Report this live”) use the same sheet.
+- **Note for Proggy:** reporting through the OS share sheet (PR #19) would reveal the sender and can’t be anonymous. Replace it with the in-app anonymous report path (protocol must strip/blind the reporter identity before it reaches moderators).
+- **Private groups:** founder removes a member (`group-remove`) with key-rotation notice, logged in `group-security`.
+- **v1.0 (not MVP):** platform takedown signed with Jakob’s Hopla moderator key (`live-takedown`, “Planned for v1.0” banner). Appeals: “Appeals aren’t available yet”, no Appeal button. v0.1.22 `comm-removed` is v1.0 too.
+
+### 5.132 Empty states
+`empty-comm` (no communities joined + no live now in communities), `empty-topic` (no threads in a topic → New thread), `empty-groups` (Chats › Groups: no private groups → New private group; no private live), `empty-search` (discovery no results → New community).
+
+### 5.133 Supersedes §5T (v0.1.22 screens)
+| v0.1.22 | v0.1.23 |
+|---|---|
+| comm-list | replaced by `comm-tab` |
+| comm-detail | replaced by `comm-detail` (topics) + `group-detail` |
+| comm-create | replaced by `create-chooser` |
+| comm-invite | **kept, renamed** → group invite (non-full state); copy key prefix `community_` → `group_` |
+| comm-invite-full | replaced by `group-invite-full` (full at 32, cross-link); `group-invite` = pick from community members |
+| comm-invite-accept | **kept, renamed** → `group-invite-accept` (copy: “Join {group}?”) |
+| live-host-members, live-remove-confirm, live-removed-toast | **kept** (host controls, used by both lives; `comm-live`/`group-live` show the context header) |
+| live-takedown-host, live-takedown-viewer | replaced by `live-takedown` — **v1.0** |
+| live-notif-shade, live-notif-lock | **kept** (context name may be a community or group) |
+| comm-removed | **kept as v1.0** (platform removal) |
+| live-report | **replaced** by in-app anonymous `comm-report` (MVP); share-sheet reporting dropped (not anonymous) |
+v0.1.22 HTML/PNGs stay in `mockups/` for reference until Proggy confirms the rename, except `comm-detail`, which is overwritten by the new version.
+
+### 5.134 Copy (EN / FR / HE draft)
+| Key | EN | FR | HE (draft) |
+|---|---|---|---|
+| `comm_lbl` | Community · open · {n} members | Communauté · ouverte · {n} membres | קהילה · פתוחה · {n} חברים |
+| `grp_lbl` | Private group · end-to-end encrypted · {n}/32 | Groupe privé · chiffré de bout en bout · {n}/32 | קבוצה פרטית · מוצפנת מקצה לקצה · {n}/32 |
+| `comm_short` | Community | Communauté | קהילה |
+| `grp_short` | Private group | Groupe privé | קבוצה פרטית |
+| `search` | Search communities | Rechercher des communautés | חיפוש קהילות |
+| `search_all` | Search chats, groups, communities | Rechercher discussions, groupes, communautés | חיפוש צ׳אטים, קבוצות, קהילות |
+| `live_comm` | Live in your communities | En direct dans vos communautés | בשידור חי בקהילות שלך |
+| `joined` | Joined | Rejointes | הצטרפת |
+| `discover` | Discover | Découvrir | גילוי |
+| `cc1` | Riverside Gardeners | Jardiniers du quai | גנני שפת הנהר |
+| `cc2` | Old Town Board Games | Jeux de société Vieille-Ville | משחקי קופסה בעיר העתיקה |
+| `cc3` | Night Sky Watchers | Observateurs du ciel | צופי שמי הלילה |
+| `g1` | Choir section leads | Chefs de pupitre | ראשי קבוצות במקהלה |
+| `g2` | Flat 4B | Appart 4B | דירה 4B |
+| `tp` | Topics | Sujets | נושאים |
+| `tp1` | Seed swap | Troc de graines | החלפת זרעים |
+| `tp2` | Pests & fixes | Nuisibles et solutions | מזיקים ופתרונות |
+| `tp3` | Meetups | Rencontres | מפגשים |
+| `threads` | {n} threads | {n} fils | {n} שרשורים |
+| `new_thread` | New thread | Nouveau fil | שרשור חדש |
+| `start_grp` | Start a private group | Créer un groupe privé | פתיחת קבוצה פרטית |
+| `start_grp_d` | Invite up to 32 members of this community, even people who aren’t your contacts. The group is end-to-end encrypted and lives in Chats. | Invitez jusqu’à 32 membres de cette communauté, même hors de vos contacts. Le groupe est chiffré de bout en bout et se trouve dans Discussions. | הזמינו עד 32 חברים מהקהילה, גם כאלה שאינם אנשי קשר. הקבוצה מוצפנת מקצה לקצה ונמצאת בצ׳אטים. |
+| `mods` | Moderators: {a}, {b} | Modération : {a}, {b} | מנחים: {a}, {b} |
+| `mod` | Moderator | Modération | מנחה |
+| `th_t` | Tomato seeds to swap — who has heirlooms? | Graines de tomates à échanger — qui a des anciennes ? | זרעי עגבניות להחלפה — למי יש זנים ישנים? |
+| `p1` | I have Cherokee Purple and Green Zebra. Bring envelopes Saturday. | J’ai Cherokee Purple et Green Zebra. Apportez des enveloppes samedi. | יש לי צ׳רוקי סגולה וזברה ירוקה. הביאו מעטפות בשבת. |
+| `p2` | Count me in, I can bring basil too. | Je viens, j’apporte aussi du basilic. | אני בפנים, אביא גם בזיליקום. |
+| `p3` | Pinned: swaps are free, no selling in this topic. | Épinglé : les échanges sont gratuits, pas de vente ici. | נעוץ: ההחלפות בחינם, אין מכירה בנושא הזה. |
+| `replies` | {n} replies | {n} réponses | {n} תגובות |
+| `reply` | Reply | Répondre | תגובה |
+| `reply_ph` | Write a reply… | Écrire une réponse… | כתיבת תגובה… |
+| `more_p` | More options for this post | Plus d’options pour ce message | אפשרויות נוספות לפוסט |
+| `nt_topic` | Topic | Sujet | נושא |
+| `nt_title` | Title | Titre | כותרת |
+| `nt_body` | Message | Message | הודעה |
+| `post` | Post | Publier | פרסום |
+| `nt_note` | Visible to everyone in the community. Not end-to-end encrypted. | Visible par toute la communauté. Pas chiffré de bout en bout. | גלוי לכל הקהילה. לא מוצפן מקצה לקצה. |
+| `nt_v` | Garlic planting date? | Quand planter l’ail ? | מתי לשתול שום? |
+| `mt_t` | Moderator actions | Actions de modération | פעולות מנחה |
+| `rm_post` | Remove post | Retirer le message | הסרת הפוסט |
+| `rm_thread` | Remove thread | Retirer le fil | הסרת השרשור |
+| `rm_member` | Remove {h} from community | Retirer {h} de la communauté | הסרת {h} מהקהילה |
+| `report` | Report… | Signaler… | דיווח… |
+| `mt_note` | Removing leaves a stub with the reason. Nobody, moderators included, can see removed content. | Un retrait laisse une mention avec le motif. Personne, modération comprise, ne peut voir le contenu retiré. | הסרה משאירה סימון עם הסיבה. אף אחד, כולל מנחים, לא יכול לראות תוכן שהוסר. |
+| `stub` | Post removed by a moderator | Message retiré par la modération | הפוסט הוסר על ידי מנחה |
+| `stub_d` | Reason: Selling or spam | Motif : Vente ou spam | סיבה: מכירה או ספאם |
+| `why_rm` | Why removed? | Pourquoi ? | למה הוסר? |
+| `ch_t` | Create | Créer | יצירה |
+| `ch_g` | New private group | Nouveau groupe privé | קבוצה פרטית חדשה |
+| `ch_g_d` | Up to 32 people you invite. End-to-end encrypted. Lives in Chats. | Jusqu’à 32 personnes invitées. Chiffré de bout en bout. Dans Discussions. | עד 32 אנשים שתזמינו. מוצפן מקצה לקצה. בצ׳אטים. |
+| `ch_c` | New community | Nouvelle communauté | קהילה חדשה |
+| `ch_c_d` | Open forum with topics and threads. Anyone can join. Not end-to-end encrypted; posts travel over the mesh. | Forum ouvert avec sujets et fils. Tout le monde peut rejoindre. Pas chiffré de bout en bout ; les messages passent par le maillage. | פורום פתוח עם נושאים ושרשורים. כל אחד יכול להצטרף. לא מוצפן מקצה לקצה; הפוסטים עוברים ברשת. |
+| `f_all` | All | Tout | הכול |
+| `f_grp` | Groups | Groupes | קבוצות |
+| `f_unread` | Unread | Non lus | לא נקראו |
+| `m1` | Rehearsal moved to 7 pm | Répétition décalée à 19 h | החזרה נדחתה ל־19:00 |
+| `m2` | Who has the spare key? | Qui a le double des clés ? | למי יש את המפתח הרזרבי? |
+| `m3` | See you tomorrow! | À demain ! | נתראה מחר! |
+| `e2e` | End-to-end encrypted | Chiffré de bout en bout | מוצפן מקצה לקצה |
+| `gmembers` | Members · {n} of 32 | Membres · {n} sur 32 | חברים · {n} מתוך 32 |
+| `security` | Security | Sécurité | אבטחה |
+| `sec_meta` | Key fingerprint, key changes | Empreinte de clé, changements de clé | טביעת מפתח, החלפות מפתח |
+| `founder_l` | Founder | Fondateur·rice | מייסד/ת |
+| `invite_m` | Invite members | Inviter des membres | הזמנת חברים |
+| `fp` | Group key fingerprint | Empreinte de la clé du groupe | טביעת מפתח הקבוצה |
+| `fp_d` | Compare with another member in person. If it matches, nobody else holds this key. | Comparez avec un autre membre en personne. Si c’est identique, personne d’autre n’a cette clé. | השוו עם חבר אחר פנים אל פנים. אם זה תואם, לאף אחד אחר אין את המפתח. |
+| `rot` | Key changes | Changements de clé | החלפות מפתח |
+| `rot1` | {h} left · new key for 12 members | {h} est parti·e · nouvelle clé pour 12 membres | {h} עזב/ה · מפתח חדש ל־12 חברים |
+| `rot2` | {h} was removed by the founder · new key | {h} retiré·e par le fondateur · nouvelle clé | {h} הוסר/ה על ידי המייסד/ת · מפתח חדש |
+| `rot_note` | The key changes whenever someone leaves or is removed, so they can’t read anything sent after. | La clé change dès que quelqu’un part ou est retiré : la personne ne peut plus lire la suite. | המפתח מתחלף בכל פעם שמישהו עוזב או מוסר, כך שלא יוכל לקרוא הודעות חדשות. |
+| `yesterday` | Yesterday | Hier | אתמול |
+| `oct` | 12 Oct | 12 oct. | 12 באוק׳ |
+| `gfull_t` | This group is full | Ce groupe est complet | הקבוצה מלאה |
+| `gfull_d` | Private groups hold 32 people so the key stays small and fast on the mesh. Remove someone, or start a community for a bigger crowd. | Un groupe privé compte 32 personnes au plus, pour que la clé reste légère sur le maillage. Retirez quelqu’un, ou créez une communauté pour plus de monde. | קבוצה פרטית מוגבלת ל־32 כדי שהמפתח יישאר קטן ומהיר ברשת. הסירו מישהו, או פתחו קהילה לקהל גדול יותר. |
+| `to_comm` | Create a community instead | Créer une communauté à la place | יצירת קהילה במקום |
+| `grm_t` | Remove {h} from the group? | Retirer {h} du groupe ? | להסיר את {h} מהקבוצה? |
+| `grm_d` | A new group key goes to the other 11 members. {h} keeps old messages but can’t read new ones. | Une nouvelle clé est envoyée aux 11 autres membres. {h} garde les anciens messages mais ne peut plus lire les nouveaux. | מפתח חדש יישלח ל־11 החברים האחרים. ל{h} יישארו ההודעות הישנות אבל לא יוכל/תוכל לקרוא חדשות. |
+| `grm_btn` | Remove and change key | Retirer et changer la clé | הסרה והחלפת מפתח |
+| `glive` | Private live | Direct privé | שידור פרטי |
+| `glive_d` | Only the 12 members of this group can listen. End-to-end encrypted. | Seuls les 12 membres du groupe peuvent écouter. Chiffré de bout en bout. | רק 12 החברים בקבוצה יכולים להאזין. מוצפן מקצה לקצה. |
+| `clive_d` | Members of this community only. Not end-to-end encrypted. | Réservé aux membres de cette communauté. Pas chiffré de bout en bout. | לחברי הקהילה בלבד. לא מוצפן מקצה לקצה. |
+| `lt1` | Section check before Sunday | Point pupitres avant dimanche | בדיקת קולות לפני יום ראשון |
+| `lt2` | Autumn planting Q&A | Questions sur les plantations d’automne | שאלות ותשובות על שתילת סתיו |
+| `v10` | Planned for v1.0 | Prévu pour la v1.0 | מתוכנן לגרסה 1.0 |
+| `v10_d` | Platform moderation with the Hopla moderator key is not in this version. | La modération de la plateforme par clé Hopla n’est pas dans cette version. | פיקוח פלטפורמה עם מפתח המנחה של Hopla לא נכלל בגרסה הזו. |
+| `no_appeal` | Appeals aren’t available yet | Les contestations ne sont pas encore disponibles | עדיין אי אפשר לערער |
+| `q` | garden | jardin | גינה |
+| `res` | Results for “garden” | Résultats pour « jardin » | תוצאות עבור „גינה” |
+| `res_c` | Communities | Communautés | קהילות |
+| `res_g` | Your private groups | Vos groupes privés | הקבוצות הפרטיות שלך |
+| `res_t` | Threads | Fils | שרשורים |
+| `gg` | Garden plot neighbours | Voisins de parcelle | שכני החלקה בגינה |
+| `e_comm` | You haven’t joined a community yet | Vous n’avez rejoint aucune communauté | עוד לא הצטרפת לקהילה |
+| `e_comm_d` | Communities are open forums. Browse topics before you join. | Les communautés sont des forums ouverts. Parcourez les sujets avant de rejoindre. | קהילות הן פורומים פתוחים. עיינו בנושאים לפני הצטרפות. |
+| `browse` | Browse communities | Parcourir les communautés | עיון בקהילות |
+| `e_live` | No one is live right now | Personne n’est en direct | אף אחד לא משדר כרגע |
+| `e_live_d` | Lives from your communities show up here. | Les directs de vos communautés apparaissent ici. | שידורים מהקהילות שלך יופיעו כאן. |
+| `e_topic` | No threads in Seed swap yet | Aucun fil dans Troc de graines | אין עדיין שרשורים בהחלפת זרעים |
+| `e_topic_d` | Start the first one. Everyone in the community can read it. | Lancez le premier. Toute la communauté peut le lire. | פתחו את הראשון. כל הקהילה יכולה לקרוא אותו. |
+| `e_grp` | No private groups yet | Aucun groupe privé | אין עדיין קבוצות פרטיות |
+| `e_grp_d` | Encrypted chats for up to 32 people you invite. | Des discussions chiffrées pour 32 personnes invitées au plus. | צ׳אטים מוצפנים לעד 32 אנשים שתזמינו. |
+| `e_glive` | No private live right now | Aucun direct privé | אין שידור פרטי כרגע |
+| `e_glive_d` | Any member can go live for the group. | Tout membre peut lancer un direct pour le groupe. | כל חבר יכול לשדר לקבוצה. |
+| `e_srch` | No communities match “origami” | Aucune communauté ne correspond à « origami » | אין קהילות שתואמות „אוריגמי” |
+| `e_srch_d` | Check the spelling, or start one. | Vérifiez l’orthographe, ou créez-en une. | בדקו את האיות, או פתחו אחת. |
+| `c_info` | Open community · not end-to-end encrypted · posts travel over the mesh | Communauté ouverte · pas chiffrée de bout en bout · les messages passent par le maillage | קהילה פתוחה · לא מוצפנת מקצה לקצה · הפוסטים עוברים ברשת |
+| `first_t` | Before your first post | Avant votre premier message | לפני הפוסט הראשון |
+| `first_d` | This community is open and not end-to-end encrypted. Your post travels over the mesh through other people’s phones, and every member can read it. | Cette communauté est ouverte et pas chiffrée de bout en bout. Votre message passe par le maillage, via les téléphones d’autres personnes, et tous les membres peuvent le lire. | הקהילה פתוחה ולא מוצפנת מקצה לקצה. הפוסט שלך עובר ברשת דרך טלפונים של אחרים, וכל החברים יכולים לקרוא אותו. |
+| `got_it` | Got it | J’ai compris | הבנתי |
+| `anon` | Reports are anonymous. Moderators won’t see who reported. | Les signalements sont anonymes. La modération ne verra pas qui a signalé. | הדיווחים אנונימיים. המנחים לא יראו מי דיווח. |
+| `report_btn` | Report | Signaler | דיווח |
+| `rep_c` | Report this post | Signaler ce message | דיווח על הפוסט |
+| `rep_live` | Report this live | Signaler ce direct | דיווח על השידור |
+| `note_opt` | Add a note (optional) | Ajouter une note (facultatif) | הוספת הערה (לא חובה) |
+| `make_mod` | Make moderator | Nommer modérateur·rice | מינוי למנחה |
+| `make_mod_h` | Make {h} a moderator | Nommer {h} modérateur·rice | מינוי {h} למנחה |
+| `founder_only` | Founder only | Fondateur·rice seulement | למייסד/ת בלבד |
+| `role_f` | Founder | Fondateur·rice | מייסד/ת |
+| `role_m` | Moderator | Modération | מנחה |
+| `role_n` | Member | Membre | חבר/ה |
+| `members_t` | Members | Membres | חברים |
+| `mod_rule` | Only the founder can make or remove moderators. | Seul·e le fondateur ou la fondatrice nomme ou retire les modérateurs. | רק המייסד/ת יכול/ה למנות או להסיר מנחים. |
+| `stub_n` | Removed content can’t be viewed by anyone. | Le contenu retiré n’est visible par personne. | אי אפשר לצפות בתוכן שהוסר. |
+| `rr_t` | Why are you removing this post? | Pourquoi retirer ce message ? | למה להסיר את הפוסט? |
+| `rr_req` | A reason is required. Everyone sees it in place of the post. | Un motif est obligatoire. Tout le monde le voit à la place du message. | חובה לבחור סיבה. כולם יראו אותה במקום הפוסט. |
+| `rr1` | Off-topic | Hors sujet | לא בנושא |
+| `rr2` | Selling or spam | Vente ou spam | מכירה או ספאם |
+| `rr3` | Harassment or hate | Harcèlement ou haine | הטרדה או שנאה |
+| `rr4` | Personal information | Informations personnelles | מידע אישי |
+| `rr5` | Other | Autre | אחר |
+| `other_ph` | Describe the reason | Décrivez le motif | תיאור הסיבה |
+| `choose` | Choose a reason to continue | Choisissez un motif pour continuer | בחרו סיבה כדי להמשיך |
+| `from_comm` | Members of {c} | Membres de {c} | חברי {c} |
+| `not_contact` | Not in your contacts | Pas dans vos contacts | לא באנשי הקשר |
+| `mesh_note` | Invites go to each person’s mesh identity, so they don’t need to be your contact. Up to 32 members. | Les invitations vont à l’identité maillage de chaque personne : pas besoin d’être en contact. 32 membres au plus. | ההזמנות נשלחות לזהות הרשת של כל אדם, כך שאין צורך שיהיה איש קשר. עד 32 חברים. |
+
+### 5.135 Accessibility
+WCAG 2.2 AA: contrast 0 failures in light and dark (`a11y/dark-contrast.py` on all 24 files (re-run on the 11 changed or new ones after Q40–Q45: 1,175 measurements per theme, 0 failures), report `a11y/v0123-contrast.md`). Type is never colour-only: glyph + text badge. Targets ≥ 44 pt / 48 dp; 3 px focus ring shown (focused field, Remove button, danger confirm); sheets keep focus inside and nothing sticky covers the focused item (2.4.11); every removal is a button (2.5.7). Fingerprint and counters are `dir=ltr` monospace in HE; RTL mirroring per §5.106 (chevrons/send flip, lock badge uses inset-inline-end); HE font Rubik → Noto Sans Hebrew → Heebo; **HE copy is draft pending native review**. iOS Liquid Glass only on nav bar/tab bar/sheets chrome, ≥ 85 % tint under blur, solid with Reduce Transparency; content cards stay solid.
+
+## 5V. v0.1.24 — Android build gaps from PR #22 (addendum to §5U) — 2026-10-30
+
+Lean addendum. Jakob’s product decisions in §5U are unchanged (members-only community Live, inviting non-contacts, discovery). Anything marked **MVP interim** is a stopgap until the protocol piece ships, then it is removed. Generator `omcp-v0124/gen24.py` (imports `omcp-v0123/gen.py`). 6 frames each (EN/FR/HE-draft × light/dark):
+- `group-invite-contacts` — **MVP interim**: invite from contacts only
+- `comm-report` — **changed**: final 7 reasons + optional note (replaces the §5U frame)
+- `comm-members-id`, `comm-thread-id` — member identity from key (variants of `comm-members` / `comm-thread`)
+- `restore-checking` — private group “Checking…” after a restore
+- `live-blocked-24h` — blocked from going live for 24 h
+
+### 5.136 Contacts-only invite (MVP interim, until §20.7 private invite path)
+`start_grp_d` → interim text “Invite people from your contacts. Inviting other community members is coming soon.” `group-invite-contacts`: “MVP interim” tag, x/32 counter, **Your contacts** list only, note “Only contacts for now…”. `u_create_grp_d` / `u_e_groups_d` in PR #22 already say “contacts” and are fine for the interim. When §20.7 ships, switch back to `group-invite` (§5U) and the final `start_grp_d`.
+
+### 5.137 Report reasons (final, in this order)
+1 Child sexual abuse material · 2 Violence or threats · 3 Harassment or hate · 4 **Self-harm or suicide (new)** · 5 Illegal goods or services · 6 Spam or scam · 7 Something else (+ optional note “Tell us more (optional)”). The note field shows for every reason but is labelled optional. Anonymity line stays. PR #22’s save/share **report file** carries no reporter identity, which is consistent with §5.131. Keep the file free of device or account metadata. Self-harm reports should also show support resources in v1.0 (open item, no copy promised now).
+
+### 5.138 Member identity in open communities (client-side, no protocol change)
+There are no display names. Every client derives the same name from the member’s public key:
+1. `h = SHA-256("omcp-pseudonym-v1" ‖ pubkey_bytes)`.
+2. **Name** = `ADJ[h[0] mod 32] + " " + NOUN[h[1] mod 32]`, giving 1,024 combinations. Collisions are expected, so the **short key** `omcp:` + first 6 hex of the key is always shown as secondary text (same as PR #22’s `take(6)`).
+3. **Colour** = `AV[h[2] mod 5]`, the avatar palette that passes contrast with white: `#1d6f8a #5a4a9e #1f6f66 #3d5a80 #6d597a`.
+4. **Identicon** = 5×5 grid, mirrored left/right: bits of `u16be(h[3..5])`, bit `r*3+c` (r 0–4, c 0–2) fills cell (r,c) and (r,4−c), in white on the colour circle at 70 % inset. Decorative (`aria-hidden`); the name and key carry the meaning.
+5. **Contacts:** if the key matches a saved contact, show **your saved name** + “Contact” badge and the normal contact avatar; the key stays secondary.
+6. Accessible name of the row: “{name}, {role}, key omcp:abc123”.
+
+**Wordlists (fixed, v1, never reorder; append only by bumping the salt to v2):**
+ADJ = Quiet, Amber, Brisk, Calm, Clever, Cosy, Daring, Gentle, Golden, Happy, Hidden, Jolly, Kind, Lively, Lucky, Mellow, Misty, Nimble, Patient, Plucky, Rapid, Rosy, Sandy, Silver, Sleepy, Sunny, Swift, Tidy, Velvet, Warm, Wise, Zesty
+NOUN = Otter, Badger, Beaver, Crane, Dolphin, Finch, Fox, Gecko, Heron, Ibex, Koala, Lark, Lynx, Marten, Moose, Newt, Owl, Panda, Puffin, Quail, Robin, Seal, Sparrow, Swan, Tapir, Toucan, Turtle, Walrus, Wren, Yak, Zebra, Kestrel
+
+**Locale decision:** pseudonyms are **English in every locale** and are not translated. A pseudonym works as a proper name: two people with different app languages must be able to say “Quiet Otter” and mean the same member, and translated lists would break that and make gender agreement in FR/HE hard. In HE the name is isolated in `<bdi dir="ltr" lang="en">` (Android: `BidiFormatter`, `TextDirection.Ltr`), and so is the key. All words are animals and gentle adjectives, checked so that no pairing is offensive.
+
+### 5.139 Checking after restore — `restore-checking`
+Private group header + status callout `role="status" aria-live="polite"`: “Checking…” + `u_checking_d`. Steps with icon + text (Found a nearby phone · Done / Syncing group members and key · In progress / Applying team actions · Waiting), progressbar with `aria-valuetext` “Step 2 of 3”. Announce only step changes, not the progress fill. Messages and composer stay hidden until done (PR #22 behaviour).
+
+### 5.140 Blocked from going live — `live-blocked-24h`
+Shown when Go live is tapped within 24 h of a takedown of that user’s live in this community. Mic icon in danger tint, title, `u_live_blocked`, reason, countdown card (“You can go live again in 17 h 42 min”, `role="timer"`, `aria-live="off"`, updated every minute), “Appeals aren’t available yet”, “You can still listen and post”. OK + How moderation works. The Go live button elsewhere stays enabled so this explanation can be reached (or is `aria-disabled` with the same text as hint).
+
+### 5.141 Still to build (frames exist in `mockups/`)
+- `group-live`: E2EE indicator line, host Remove from live (button, not swipe), member-only audience. Needs the group key for the stream (PR #22 says community live “needs an end-to-end key; go live from a private group”, consistent).
+- `group-security`: fingerprint 3×5 groups `dir=ltr` monospace, key-change log (needs a rotation event type from `private_group.rs`).
+- `group-remove`: founder-only confirm sheet, danger button “Remove and change key”, rotation notice; focus starts in the sheet.
+- `comm-mod-tools`: build as its **own modal bottom sheet** (not inline menu): Remove post → `comm-remove-reason`, Remove thread, Remove member, Make moderator (founder only, tagged), Report → `comm-report`; anonymity line; focus trapped, 48 dp rows.
+
+### 5.142 Copy table for Proggy — §5U + §5V (EN / FR / HE DRAFT)
+HE strings are a **draft pending native review**. Pseudonym words are not localized (§5.138).
+
+| Design key | Android key (PR #22) | EN | FR | HE (DRAFT, pending native review) |
+|---|---|---|---|---|
+| `start_grp_d_i` | `u_start_grp_d (interim; replaces the final text until §20.7 ships)` | Invite people from your contacts. Inviting other community members is coming soon. | Invitez des personnes de vos contacts. Inviter d’autres membres de la communauté arrive bientôt. | הזמינו אנשים מאנשי הקשר שלך. הזמנת חברי קהילה אחרים תגיע בקרוב. |
+| `inv_contacts` | — | Your contacts | Vos contacts | אנשי הקשר שלך |
+| `interim` | — | MVP interim | Version provisoire MVP | זמני ל־MVP |
+| `inv_i_note` | `u_inv_contacts_note (new)` | Only contacts for now. Inviting community members by mesh identity is coming soon. Up to 32 members. | Seulement vos contacts pour l’instant. Inviter des membres par identité maillage arrive bientôt. 32 membres au plus. | בינתיים רק אנשי קשר. הזמנת חברי קהילה לפי זהות רשת תגיע בקרוב. עד 32 חברים. |
+| `rep_r1` | `u_rep_r1` | Child sexual abuse material | Contenu pédocriminel | חומר של פגיעה מינית בילדים |
+| `rep_r2` | `u_rep_r2` | Violence or threats | Violence ou menaces | אלימות או איומים |
+| `rep_r3` | `u_rep_r3` | Harassment or hate | Harcèlement ou haine | הטרדה או שנאה |
+| `rep_r4` | `u_rep_r4 (new: Self-harm)` | Self-harm or suicide | Automutilation ou suicide | פגיעה עצמית או אובדנות |
+| `rep_r5` | `u_rep_r5 (was r4 Illegal goods)` | Illegal goods or services | Biens ou services illégaux | סחורות או שירותים לא חוקיים |
+| `rep_r6` | `u_rep_r6 (was r5 Spam)` | Spam or scam | Spam ou arnaque | ספאם או הונאה |
+| `rep_r7` | `u_rep_r7 (was r6 Other)` | Something else | Autre chose | משהו אחר |
+| `rep_note7` | `u_note_opt` | Tell us more (optional) | Précisez (facultatif) | ספרו לנו עוד (לא חובה) |
+| `contact_b` | — | Contact | Contact | איש קשר |
+| `id_note` | — | Names are made from each member’s key. People you’ve saved show your name for them. | Les noms sont créés à partir de la clé de chaque membre. Vos contacts apparaissent sous le nom que vous avez enregistré. | השמות נוצרים מהמפתח של כל חבר. אנשי קשר שמורים מוצגים בשם ששמרת. |
+| `ck_t` | `u_checking` | Checking… | Vérification… | בודקים… |
+| `ck_d` | `u_checking_d` | After a restore, this group stays hidden until your phone has synced with a nearby phone and applied any team actions. | Après une restauration, ce groupe reste masqué jusqu’à ce que votre téléphone se soit synchronisé avec un téléphone proche et ait appliqué les actions de l’équipe. | אחרי שחזור, הקבוצה נשארת מוסתרת עד שהטלפון שלך יסתנכרן עם טלפון קרוב ויחיל פעולות של הצוות. |
+| `ck1` | — | Found a nearby phone | Téléphone proche trouvé | נמצא טלפון קרוב |
+| `ck2` | — | Syncing group members and key | Synchronisation des membres et de la clé | מסנכרנים חברים ומפתח |
+| `ck3` | — | Applying team actions | Application des actions de l’équipe | מחילים פעולות צוות |
+| `ck_prog` | — | Step 2 of 3 | Étape 2 sur 3 | שלב 2 מתוך 3 |
+| `ck_wait` | — | Waiting | En attente | ממתין |
+| `ck_done` | — | Done | Terminé | הושלם |
+| `ck_now` | — | In progress | En cours | בתהליך |
+| `ck_hint` | — | Keep Hopla open near other Hopla users. Messages appear when the check is done. | Gardez Hopla ouvert près d’autres utilisateurs. Les messages apparaissent une fois la vérification terminée. | השאירו את Hopla פתוח ליד משתמשים אחרים. ההודעות יופיעו בסיום הבדיקה. |
+| `lb_t` | — | You can’t go live here for now | Vous ne pouvez pas lancer de direct ici pour l’instant | אי אפשר לשדר כאן כרגע |
+| `lb_d` | `u_live_blocked` | Your live here was taken down. You can go live here again 24 hours after that. | Votre direct ici a été retiré. Vous pourrez relancer un direct ici 24 heures après. | השידור שלך כאן הוסר. אפשר יהיה לשדר כאן שוב 24 שעות אחרי זה. |
+| `lb_left` | — | You can go live again in {h} h {m} min | Nouveau direct possible dans {h} h {m} min | אפשר לשדר שוב בעוד {h} ש׳ {m} ד׳ |
+| `lb_why` | — | Reason: {r} | Motif : {r} | סיבה: {r} |
+| `lb_other` | — | You can still listen to lives and post in this community. | Vous pouvez toujours écouter les directs et publier dans cette communauté. | עדיין אפשר להאזין לשידורים ולפרסם בקהילה. |
+| `comm_lbl` | — | Community · open · {n} members | Communauté · ouverte · {n} membres | קהילה · פתוחה · {n} חברים |
+| `grp_lbl` | — | Private group · end-to-end encrypted · {n}/32 | Groupe privé · chiffré de bout en bout · {n}/32 | קבוצה פרטית · מוצפנת מקצה לקצה · {n}/32 |
+| `comm_short` | — | Community | Communauté | קהילה |
+| `grp_short` | — | Private group | Groupe privé | קבוצה פרטית |
+| `search` | — | Search communities | Rechercher des communautés | חיפוש קהילות |
+| `search_all` | — | Search chats, groups, communities | Rechercher discussions, groupes, communautés | חיפוש צ׳אטים, קבוצות, קהילות |
+| `live_comm` | — | Live in your communities | En direct dans vos communautés | בשידור חי בקהילות שלך |
+| `joined` | — | Joined | Rejointes | הצטרפת |
+| `discover` | — | Discover | Découvrir | גילוי |
+| `cc1` | — | Riverside Gardeners | Jardiniers du quai | גנני שפת הנהר |
+| `cc2` | — | Old Town Board Games | Jeux de société Vieille-Ville | משחקי קופסה בעיר העתיקה |
+| `cc3` | — | Night Sky Watchers | Observateurs du ciel | צופי שמי הלילה |
+| `g1` | — | Choir section leads | Chefs de pupitre | ראשי קבוצות במקהלה |
+| `g2` | — | Flat 4B | Appart 4B | דירה 4B |
+| `tp` | — | Topics | Sujets | נושאים |
+| `tp1` | — | Seed swap | Troc de graines | החלפת זרעים |
+| `tp2` | — | Pests & fixes | Nuisibles et solutions | מזיקים ופתרונות |
+| `tp3` | — | Meetups | Rencontres | מפגשים |
+| `threads` | — | {n} threads | {n} fils | {n} שרשורים |
+| `new_thread` | — | New thread | Nouveau fil | שרשור חדש |
+| `start_grp` | — | Start a private group | Créer un groupe privé | פתיחת קבוצה פרטית |
+| `start_grp_d` | — | Invite up to 32 members of this community, even people who aren’t your contacts. The group is end-to-end encrypted and lives in Chats. | Invitez jusqu’à 32 membres de cette communauté, même hors de vos contacts. Le groupe est chiffré de bout en bout et se trouve dans Discussions. | הזמינו עד 32 חברים מהקהילה, גם כאלה שאינם אנשי קשר. הקבוצה מוצפנת מקצה לקצה ונמצאת בצ׳אטים. |
+| `mods` | — | Moderators: {a}, {b} | Modération : {a}, {b} | מנחים: {a}, {b} |
+| `mod` | — | Moderator | Modération | מנחה |
+| `th_t` | — | Tomato seeds to swap — who has heirlooms? | Graines de tomates à échanger — qui a des anciennes ? | זרעי עגבניות להחלפה — למי יש זנים ישנים? |
+| `p1` | — | I have Cherokee Purple and Green Zebra. Bring envelopes Saturday. | J’ai Cherokee Purple et Green Zebra. Apportez des enveloppes samedi. | יש לי צ׳רוקי סגולה וזברה ירוקה. הביאו מעטפות בשבת. |
+| `p2` | — | Count me in, I can bring basil too. | Je viens, j’apporte aussi du basilic. | אני בפנים, אביא גם בזיליקום. |
+| `p3` | — | Pinned: swaps are free, no selling in this topic. | Épinglé : les échanges sont gratuits, pas de vente ici. | נעוץ: ההחלפות בחינם, אין מכירה בנושא הזה. |
+| `replies` | — | {n} replies | {n} réponses | {n} תגובות |
+| `reply` | — | Reply | Répondre | תגובה |
+| `reply_ph` | — | Write a reply… | Écrire une réponse… | כתיבת תגובה… |
+| `more_p` | — | More options for this post | Plus d’options pour ce message | אפשרויות נוספות לפוסט |
+| `nt_topic` | — | Topic | Sujet | נושא |
+| `nt_title` | — | Title | Titre | כותרת |
+| `nt_body` | — | Message | Message | הודעה |
+| `post` | — | Post | Publier | פרסום |
+| `nt_note` | — | Visible to everyone in the community. Not end-to-end encrypted. | Visible par toute la communauté. Pas chiffré de bout en bout. | גלוי לכל הקהילה. לא מוצפן מקצה לקצה. |
+| `nt_v` | — | Garlic planting date? | Quand planter l’ail ? | מתי לשתול שום? |
+| `mt_t` | — | Moderator actions | Actions de modération | פעולות מנחה |
+| `rm_post` | — | Remove post | Retirer le message | הסרת הפוסט |
+| `rm_thread` | — | Remove thread | Retirer le fil | הסרת השרשור |
+| `rm_member` | — | Remove {h} from community | Retirer {h} de la communauté | הסרת {h} מהקהילה |
+| `report` | — | Report… | Signaler… | דיווח… |
+| `mt_note` | — | Removing leaves a stub with the reason. Nobody, moderators included, can see removed content. | Un retrait laisse une mention avec le motif. Personne, modération comprise, ne peut voir le contenu retiré. | הסרה משאירה סימון עם הסיבה. אף אחד, כולל מנחים, לא יכול לראות תוכן שהוסר. |
+| `stub` | — | Post removed by a moderator | Message retiré par la modération | הפוסט הוסר על ידי מנחה |
+| `stub_d` | — | Reason: Selling or spam | Motif : Vente ou spam | סיבה: מכירה או ספאם |
+| `why_rm` | — | Why removed? | Pourquoi ? | למה הוסר? |
+| `ch_t` | — | Create | Créer | יצירה |
+| `ch_g` | — | New private group | Nouveau groupe privé | קבוצה פרטית חדשה |
+| `ch_g_d` | — | Up to 32 people you invite. End-to-end encrypted. Lives in Chats. | Jusqu’à 32 personnes invitées. Chiffré de bout en bout. Dans Discussions. | עד 32 אנשים שתזמינו. מוצפן מקצה לקצה. בצ׳אטים. |
+| `ch_c` | — | New community | Nouvelle communauté | קהילה חדשה |
+| `ch_c_d` | — | Open forum with topics and threads. Anyone can join. Not end-to-end encrypted; posts travel over the mesh. | Forum ouvert avec sujets et fils. Tout le monde peut rejoindre. Pas chiffré de bout en bout ; les messages passent par le maillage. | פורום פתוח עם נושאים ושרשורים. כל אחד יכול להצטרף. לא מוצפן מקצה לקצה; הפוסטים עוברים ברשת. |
+| `f_all` | — | All | Tout | הכול |
+| `f_grp` | — | Groups | Groupes | קבוצות |
+| `f_unread` | — | Unread | Non lus | לא נקראו |
+| `m1` | — | Rehearsal moved to 7 pm | Répétition décalée à 19 h | החזרה נדחתה ל־19:00 |
+| `m2` | — | Who has the spare key? | Qui a le double des clés ? | למי יש את המפתח הרזרבי? |
+| `m3` | — | See you tomorrow! | À demain ! | נתראה מחר! |
+| `e2e` | — | End-to-end encrypted | Chiffré de bout en bout | מוצפן מקצה לקצה |
+| `gmembers` | — | Members · {n} of 32 | Membres · {n} sur 32 | חברים · {n} מתוך 32 |
+| `security` | — | Security | Sécurité | אבטחה |
+| `sec_meta` | — | Key fingerprint, key changes | Empreinte de clé, changements de clé | טביעת מפתח, החלפות מפתח |
+| `founder_l` | — | Founder | Fondateur·rice | מייסד/ת |
+| `invite_m` | — | Invite members | Inviter des membres | הזמנת חברים |
+| `fp` | — | Group key fingerprint | Empreinte de la clé du groupe | טביעת מפתח הקבוצה |
+| `fp_d` | — | Compare with another member in person. If it matches, nobody else holds this key. | Comparez avec un autre membre en personne. Si c’est identique, personne d’autre n’a cette clé. | השוו עם חבר אחר פנים אל פנים. אם זה תואם, לאף אחד אחר אין את המפתח. |
+| `rot` | — | Key changes | Changements de clé | החלפות מפתח |
+| `rot1` | — | {h} left · new key for 12 members | {h} est parti·e · nouvelle clé pour 12 membres | {h} עזב/ה · מפתח חדש ל־12 חברים |
+| `rot2` | — | {h} was removed by the founder · new key | {h} retiré·e par le fondateur · nouvelle clé | {h} הוסר/ה על ידי המייסד/ת · מפתח חדש |
+| `rot_note` | — | The key changes whenever someone leaves or is removed, so they can’t read anything sent after. | La clé change dès que quelqu’un part ou est retiré : la personne ne peut plus lire la suite. | המפתח מתחלף בכל פעם שמישהו עוזב או מוסר, כך שלא יוכל לקרוא הודעות חדשות. |
+| `yesterday` | — | Yesterday | Hier | אתמול |
+| `oct` | — | 12 Oct | 12 oct. | 12 באוק׳ |
+| `gfull_t` | — | This group is full | Ce groupe est complet | הקבוצה מלאה |
+| `gfull_d` | — | Private groups hold 32 people so the key stays small and fast on the mesh. Remove someone, or start a community for a bigger crowd. | Un groupe privé compte 32 personnes au plus, pour que la clé reste légère sur le maillage. Retirez quelqu’un, ou créez une communauté pour plus de monde. | קבוצה פרטית מוגבלת ל־32 כדי שהמפתח יישאר קטן ומהיר ברשת. הסירו מישהו, או פתחו קהילה לקהל גדול יותר. |
+| `to_comm` | — | Create a community instead | Créer une communauté à la place | יצירת קהילה במקום |
+| `grm_t` | — | Remove {h} from the group? | Retirer {h} du groupe ? | להסיר את {h} מהקבוצה? |
+| `grm_d` | — | A new group key goes to the other 11 members. {h} keeps old messages but can’t read new ones. | Une nouvelle clé est envoyée aux 11 autres membres. {h} garde les anciens messages mais ne peut plus lire les nouveaux. | מפתח חדש יישלח ל־11 החברים האחרים. ל{h} יישארו ההודעות הישנות אבל לא יוכל/תוכל לקרוא חדשות. |
+| `grm_btn` | — | Remove and change key | Retirer et changer la clé | הסרה והחלפת מפתח |
+| `glive` | — | Private live | Direct privé | שידור פרטי |
+| `glive_d` | — | Only the 12 members of this group can listen. End-to-end encrypted. | Seuls les 12 membres du groupe peuvent écouter. Chiffré de bout en bout. | רק 12 החברים בקבוצה יכולים להאזין. מוצפן מקצה לקצה. |
+| `clive_d` | `u_comm_live_members` | Members of this community only. Not end-to-end encrypted. | Réservé aux membres de cette communauté. Pas chiffré de bout en bout. | לחברי הקהילה בלבד. לא מוצפן מקצה לקצה. |
+| `lt1` | — | Section check before Sunday | Point pupitres avant dimanche | בדיקת קולות לפני יום ראשון |
+| `lt2` | — | Autumn planting Q&A | Questions sur les plantations d’automne | שאלות ותשובות על שתילת סתיו |
+| `report_share` | — | Report via share | Signaler via Partager | דיווח דרך שיתוף |
+| `v10` | — | Planned for v1.0 | Prévu pour la v1.0 | מתוכנן לגרסה 1.0 |
+| `v10_d` | — | Platform moderation with the Hopla moderator key is not in this version. | La modération de la plateforme par clé Hopla n’est pas dans cette version. | פיקוח פלטפורמה עם מפתח המנחה של Hopla לא נכלל בגרסה הזו. |
+| `no_appeal` | — | Appeals aren’t available yet | Les contestations ne sont pas encore disponibles | עדיין אי אפשר לערער |
+| `q` | — | garden | jardin | גינה |
+| `res` | — | Results for “garden” | Résultats pour « jardin » | תוצאות עבור „גינה” |
+| `res_c` | — | Communities | Communautés | קהילות |
+| `res_g` | — | Your private groups | Vos groupes privés | הקבוצות הפרטיות שלך |
+| `res_t` | — | Threads | Fils | שרשורים |
+| `gg` | — | Garden plot neighbours | Voisins de parcelle | שכני החלקה בגינה |
+| `e_comm` | — | You haven’t joined a community yet | Vous n’avez rejoint aucune communauté | עוד לא הצטרפת לקהילה |
+| `e_comm_d` | — | Communities are open forums. Browse topics before you join. | Les communautés sont des forums ouverts. Parcourez les sujets avant de rejoindre. | קהילות הן פורומים פתוחים. עיינו בנושאים לפני הצטרפות. |
+| `browse` | — | Browse communities | Parcourir les communautés | עיון בקהילות |
+| `e_live` | — | No one is live right now | Personne n’est en direct | אף אחד לא משדר כרגע |
+| `e_live_d` | — | Lives from your communities show up here. | Les directs de vos communautés apparaissent ici. | שידורים מהקהילות שלך יופיעו כאן. |
+| `e_topic` | — | No threads in Seed swap yet | Aucun fil dans Troc de graines | אין עדיין שרשורים בהחלפת זרעים |
+| `e_topic_d` | — | Start the first one. Everyone in the community can read it. | Lancez le premier. Toute la communauté peut le lire. | פתחו את הראשון. כל הקהילה יכולה לקרוא אותו. |
+| `e_grp` | — | No private groups yet | Aucun groupe privé | אין עדיין קבוצות פרטיות |
+| `e_grp_d` | — | Encrypted chats for up to 32 people you invite. | Des discussions chiffrées pour 32 personnes invitées au plus. | צ׳אטים מוצפנים לעד 32 אנשים שתזמינו. |
+| `e_glive` | — | No private live right now | Aucun direct privé | אין שידור פרטי כרגע |
+| `e_glive_d` | — | Any member can go live for the group. | Tout membre peut lancer un direct pour le groupe. | כל חבר יכול לשדר לקבוצה. |
+| `e_srch` | — | No communities match “origami” | Aucune communauté ne correspond à « origami » | אין קהילות שתואמות „אוריגמי” |
+| `e_srch_d` | — | Check the spelling, or start one. | Vérifiez l’orthographe, ou créez-en une. | בדקו את האיות, או פתחו אחת. |
+| `c_info` | `u_c_info` | Open community · not end-to-end encrypted · posts travel over the mesh | Communauté ouverte · pas chiffrée de bout en bout · les messages passent par le maillage | קהילה פתוחה · לא מוצפנת מקצה לקצה · הפוסטים עוברים ברשת |
+| `first_t` | — | Before your first post | Avant votre premier message | לפני הפוסט הראשון |
+| `first_d` | `u_first_d` | This community is open and not end-to-end encrypted. Your post travels over the mesh through other people’s phones, and every member can read it. | Cette communauté est ouverte et pas chiffrée de bout en bout. Votre message passe par le maillage, via les téléphones d’autres personnes, et tous les membres peuvent le lire. | הקהילה פתוחה ולא מוצפנת מקצה לקצה. הפוסט שלך עובר ברשת דרך טלפונים של אחרים, וכל החברים יכולים לקרוא אותו. |
+| `got_it` | — | Got it | J’ai compris | הבנתי |
+| `anon` | `u_anon` | Reports are anonymous. Moderators won’t see who reported. | Les signalements sont anonymes. La modération ne verra pas qui a signalé. | הדיווחים אנונימיים. המנחים לא יראו מי דיווח. |
+| `report_btn` | — | Report | Signaler | דיווח |
+| `rep_c` | — | Report this post | Signaler ce message | דיווח על הפוסט |
+| `rep_live` | — | Report this live | Signaler ce direct | דיווח על השידור |
+| `note_opt` | — | Add a note (optional) | Ajouter une note (facultatif) | הוספת הערה (לא חובה) |
+| `make_mod` | `u_make_mod` | Make moderator | Nommer modérateur·rice | מינוי למנחה |
+| `make_mod_h` | — | Make {h} a moderator | Nommer {h} modérateur·rice | מינוי {h} למנחה |
+| `founder_only` | — | Founder only | Fondateur·rice seulement | למייסד/ת בלבד |
+| `role_f` | — | Founder | Fondateur·rice | מייסד/ת |
+| `role_m` | — | Moderator | Modération | מנחה |
+| `role_n` | — | Member | Membre | חבר/ה |
+| `members_t` | — | Members | Membres | חברים |
+| `mod_rule` | `u_mod_rule` | Only the founder can make or remove moderators. | Seul·e le fondateur ou la fondatrice nomme ou retire les modérateurs. | רק המייסד/ת יכול/ה למנות או להסיר מנחים. |
+| `stub_n` | `u_stub_n` | Removed content can’t be viewed by anyone. | Le contenu retiré n’est visible par personne. | אי אפשר לצפות בתוכן שהוסר. |
+| `rr_t` | `u_rr_t` | Why are you removing this post? | Pourquoi retirer ce message ? | למה להסיר את הפוסט? |
+| `rr_req` | `u_rr_req` | A reason is required. Everyone sees it in place of the post. | Un motif est obligatoire. Tout le monde le voit à la place du message. | חובה לבחור סיבה. כולם יראו אותה במקום הפוסט. |
+| `rr1` | — | Off-topic | Hors sujet | לא בנושא |
+| `rr2` | — | Selling or spam | Vente ou spam | מכירה או ספאם |
+| `rr3` | — | Harassment or hate | Harcèlement ou haine | הטרדה או שנאה |
+| `rr4` | — | Personal information | Informations personnelles | מידע אישי |
+| `rr5` | — | Other | Autre | אחר |
+| `other_ph` | — | Describe the reason | Décrivez le motif | תיאור הסיבה |
+| `choose` | — | Choose a reason to continue | Choisissez un motif pour continuer | בחרו סיבה כדי להמשיך |
+| `from_comm` | — | Members of {c} | Membres de {c} | חברי {c} |
+| `not_contact` | — | Not in your contacts | Pas dans vos contacts | לא באנשי הקשר |
+| `mesh_note` | — | Invites go to each person’s mesh identity, so they don’t need to be your contact. Up to 32 members. | Les invitations vont à l’identité maillage de chaque personne : pas besoin d’être en contact. 32 membres au plus. | ההזמנות נשלחות לזהות הרשת של כל אדם, כך שאין צורך שיהיה איש קשר. עד 32 חברים. |
+
+**Accessibility:** contrast 0 failures (light + dark, 6 files, 603 measurements per theme; `a11y/v0124-contrast.md`). Targets ≥ 44 pt / 48 dp, focus ring shown on the note field, live-region rules above.
+
+## 5W. v0.1.25 — Discovery, no community Live, self-harm notice, timed member removal (Jakob’s decisions, 2026-10-31)
+
+Lean addendum to §5U/§5V. Generator `omcp-v0125/gen25.py` (imports v0.1.24/v0.1.23). 12 screens × 6 frames = 72 PNGs:
+- **New:** `comm-discover`, `comm-discover-loading`, `comm-search`, `comm-preview`, `comm-create-visibility`, `comm-report-selfharm`, `comm-remove-member`, `comm-removed-member-notice`, `comm-mod-limit`
+- **Added 2026-10-31 (alignment):** `comm-listed-notice`, `comm-founder-alert`
+- **Changed (overwritten):** `empty-comm`, `empty-search` (discovery wording, offline state), `comm-detail` (community Live removed, interim start-group copy)
+
+### 5.143 Discovery model: Listed vs Unlisted
+- **Listed:** the community periodically announces a signed listing record over the mesh and through gateways. Anyone nearby or online can find it and read its public threads. **Unlisted:** never announced, joined only by invite link, QR code/code or private invite (TM28). Posts of both types still travel over the mesh and are **not** E2EE (copy says so in both options).
+- Chosen at creation (`comm-create-visibility`, step 2 of 3, **Unlisted pre-selected: Listed is off by default**, PROTOCOL §20.8, TM27) and changeable only by the founder in community settings. Turning Listed on first shows the TM27 public notice (`comm-listed-notice`). Listing rules shown inline.
+- **Private groups are never listed or searchable.** `comm-search` says so (lock + `u_no_groups_disc`).
+- **Client needs (Proggy picks the transport):** listing record = {community id, name, short description ≤ 140 Unicode code points, category, member count (approx.), founder key, listing version, timestamp, signature by founder key}. Keep a local cache of heard listings with `last_heard` and source (mesh vs gateway) for freshness (“seen 5 min ago”, “via gateway · 2 h ago”). Listings expire 14 days after they were last heard or refreshed (owner re-announces every 7 days), and descriptions are capped at 140 characters (§20.8; **Jakob-approved 2026-10-31**). Search runs locally over the cache. See §5.149 for “Near you” and sorting. Unlisting sends a signed tombstone.
+- **Join by code** stays as the secondary path “Have a code?” at the bottom of discovery, in empty states and in search.
+
+### 5.144 Discovery screens
+`comm-discover`: search (“Search listed communities”), category chips, Your communities, **Nearby · heard over the mesh**, **Popular**, cards with # tile, name, description, member count, freshness, “Open · not end-to-end encrypted”, Join + ⋯ (Report community). `comm-discover-loading`: skeleton cards (`aria-hidden`) + polite status “Listening for communities nearby…”. `comm-search`: filter chips (Nearby / Any size / Seen today, `aria-pressed`), result count, listed communities only. `comm-preview`: **decision: recent public threads are readable before joining** (they are already public and relay over the mesh, so hiding them would give a false sense of privacy). Posting and replying require Join. Shows the description, rules, moderators by role (key pseudonyms §5.138), Join community, Report community. Empty: `empty-comm` (offline: “No communities heard nearby yet” + Have a code?), `empty-search` (no listed results; unlisted ones need a code).
+**Safety:** Report community is on every card (⋯) and in the preview, using the anonymous `comm-report` sheet. Listing rules: no illegal content, a clear description, active moderators. Platform delisting of a listed community is v1.0 (moderator key).
+
+### 5.145 Community Live: Later, needs a community key
+Community Live is **removed from the MVP**. `comm-tab` (§5U) is superseded by `comm-discover`; anything in §5U/§5V that mentions community Live is overridden by this section. There is no Live strip on the Communities tab, no Live card or Go live in `comm-detail`, no live in community empty states. `comm-live` (§5U) and `live-blocked-24h` (§5V) are marked **Later — needs community key**. Private-group Live (`group-live`) stays. No cross-link from communities to group lives.
+
+### 5.146 Self-harm report notice — `comm-report-selfharm`
+Selecting “Self-harm or suicide” shows a supportive notice inside the sheet (`role="status"`): “You’re not alone. If you or someone else is in danger, find a helpline near you.” Button-styled link **Find a helpline (findahelpline.com)** → `https://findahelpline.com`, opens in the browser (“Opens in your browser”). Send report stays available; the notice never blocks reporting.
+
+### 5.147 Member removal (approved)
+- **Effect:** a removed member can still **read** but can’t post or reply until it ends. The composer is replaced by a read-only, `aria-disabled` field “You can’t post here until the removal ends” (`comm-removed-member-notice`).
+- **Notice** shows the remover’s **role** (“A moderator removed you…” / “The founder removed you…”), never the name, plus the reason, time left and “Appeals aren’t available yet”.
+- **Durations:** 1 hour, 24 hours, 7 days, 30 days, 365 days (maximum). **No permanent option** for community roles (TM19: a longer ban is done by renewing; only the Hopla team may remove permanently, v1.0). A moderator can remove the member again when the time ends. Duration chips (`role="radio"`, 44 pt) + **required reason** (§5U list); the danger button names the duration (“Remove for 7 days”) and shows the hourly quota left. Opened from `comm-mod-tools` › Remove member or from the member’s row.
+- **Rate limit (Jakob-approved 2026-10-31, §23.10.11, TM21):** 10 removals per rolling hour and 30 per rolling day for **moderators and admins only**. The **founder and the Hopla team are exempt**. Other phones ignore removals over the limit (not applied, not relayed) but still count them for the owner. The founder is alerted when a moderator or admin makes **more than 5 removals in a day** (`comm-founder-alert`, in-app banner with View removals / Revoke moderator and the Removals list). `comm-mod-limit` (shown to moderators/admins only): “Removal limit reached”, the counters (“10 of 10 this hour · 14 of 30 today”), when it resets, and that post removal and reporting still work.
+
+### 5.149 Alignment with PROTOCOL §20.8, §23.10.11 and REQUIREMENTS TM19, TM21, TM25–TM31 (2026-10-31). This section wins over anything above.
+- **Categories (TM31), exactly in this order:** Local & neighbourhood · News & current affairs · Hobbies & games · Arts, music & culture · Sports & fitness · Science, tech & learning · Support & wellbeing · Other. The chips show All + these 8. **Unknown category codes display as Other.** Each community has 1 category plus **up to 5 free tags** (lowercase), shown on `comm-preview` and in `comm-create-visibility`.
+- **Near you (TM31, §20.8):** the “Near you” label (icon + text) appears **only when this phone heard the listing itself, directly over Bluetooth/Wi-Fi, within 2 hops, in the last 7 days**. This is worked out on the phone only and never shared. **Never show a distance, place name or map.** Near-you listings sort higher. The discover section is named “Near you first”. Sort order: text match, then Near you/nearness, then recency; size is only a tie-breaker.
+- **Size as a range (TM26):** discovery cards and the preview show the owner’s member bucket (“201–1,000 members”), never an exact count, plus the line “Shows communities that have reached phones near you. Sizes are the owner’s estimate.” (Community headers of joined communities in §5U still show “1.2k”. Proggy should use the bucket there too until real counts exist.)
+- **Each result:** Join, Hide, Report community (`comm-preview` shows all three; the card ⋯ menu holds Hide/Report).
+- **Report community** uses the same reason list as `comm-report`, including Self-harm or suicide with the findahelpline.com notice (`comm-report-selfharm`, TM29). The report contains only the signed announcement bytes.
+- **Listed notice (TM27), `comm-listed-notice`:** “Listing makes this community findable by anyone nearby and by phones that pass it on. Its name, description, tags and approximate size become public. Posts in communities are public.” Buttons: Turn on Listed / Keep unlisted (focus starts on Keep unlisted, the safe choice).
+- **Removals:** presets 1 h–365 d, no permanent option. Limit 10/h, 30/day for moderators and admins only (founder and team exempt); over-limit removals are ignored by other phones; founder alert at more than 5 in a day.
+
+### 5.148 Copy (EN / FR / HE DRAFT), u_ keys
+| Android key | EN | FR | HE (DRAFT, pending native review) |
+|---|---|---|---|
+| `u_disc_search` | Search listed communities | Rechercher des communautés listées | חיפוש קהילות רשומות |
+| `u_cat_all` | All | Tout | הכול |
+| `u_cat_garden` | Gardening | Jardinage | גינון |
+| `u_cat_games` | Games | Jeux | משחקים |
+| `u_cat_local` | Neighbourhood | Quartier | שכונה |
+| `u_cat_music` | Music | Musique | מוזיקה |
+| `u_your` | Your communities | Vos communautés | הקהילות שלך |
+| `u_nearby` | Near you first | Près de vous d’abord | בקרבת מקום תחילה |
+| `u_popular` | Popular | Populaires | פופולריות |
+| `u_open_tag` | Open · not end-to-end encrypted | Ouverte · pas chiffrée de bout en bout | פתוחה · לא מוצפנת מקצה לקצה |
+| `u_seen` | seen {n} min ago | vue il y a {n} min | נראתה לפני {n} דק׳ |
+| `u_seen_gw` | via gateway · {n} h ago | via passerelle · il y a {n} h | דרך שער · לפני {n} ש׳ |
+| `u_members_n` | {n} members | {n} membres | {n} חברים |
+| `u_d1` | Swaps, pests and planting dates by the river. | Trocs, nuisibles et dates de plantation au bord du fleuve. | החלפות, מזיקים ומועדי שתילה ליד הנהר. |
+| `u_d2` | Weekly game nights and a rules corner. | Soirées jeux chaque semaine et coin des règles. | ערבי משחק שבועיים ופינת חוקים. |
+| `u_d3` | Clear-sky alerts and telescope tips. | Alertes ciel dégagé et conseils télescope. | התראות שמיים בהירים וטיפים לטלסקופ. |
+| `u_have_code` | Have a code? | Vous avez un code ? | יש לך קוד? |
+| `u_report_comm` | Report community | Signaler la communauté | דיווח על הקהילה |
+| `u_no_groups_disc` | Private groups are never listed or searchable. You join them only by invite. | Les groupes privés ne sont jamais listés ni trouvables. On n’y entre que sur invitation. | קבוצות פרטיות לעולם לא מופיעות ברשימות או בחיפוש. מצטרפים אליהן רק בהזמנה. |
+| `u_f_nearby` | Nearby | À proximité | בסביבה |
+| `u_f_size` | Any size | Toute taille | כל גודל |
+| `u_f_fresh` | Seen today | Vues aujourd’hui | נראו היום |
+| `u_res_n` | {n} listed communities | {n} communautés listées | {n} קהילות רשומות |
+| `u_about` | About | À propos | אודות |
+| `u_rules` | Rules | Règles | כללים |
+| `u_rule1` | Be kind. No selling. | Restez bienveillant·e. Pas de vente. | להיות אדיבים. בלי מכירות. |
+| `u_rule2` | Stay on topic; moderators remove off-topic posts with a reason. | Restez dans le sujet ; la modération retire les messages hors sujet avec un motif. | להישאר בנושא; מנחים מסירים פוסטים שלא בנושא עם סיבה. |
+| `u_mods_t` | Moderators | Modération | מנחים |
+| `u_recent` | Recent threads | Fils récents | שרשורים אחרונים |
+| `u_preview_note` | You can read public threads before joining. Join to post or reply. | Vous pouvez lire les fils publics avant de rejoindre. Rejoignez pour publier ou répondre. | אפשר לקרוא שרשורים ציבוריים לפני הצטרפות. הצטרפו כדי לפרסם או להגיב. |
+| `u_join_comm` | Join community | Rejoindre la communauté | הצטרפות לקהילה |
+| `u_vis_t` | Who can find it? | Qui peut la trouver ? | מי יכול למצוא אותה? |
+| `u_listed` | Listed | Listée | רשומה |
+| `u_listed_d` | Announced over the mesh and gateways. Anyone nearby or online can find it and read its threads. | Annoncée via le maillage et les passerelles. Tout le monde à proximité ou en ligne peut la trouver et lire ses fils. | מוכרזת ברשת ובשערים. כל מי שבסביבה או מחובר יכול למצוא אותה ולקרוא את השרשורים. |
+| `u_unlisted` | Unlisted | Non listée | לא רשומה |
+| `u_unlisted_d` | Not announced. People join with an invite link, QR code or code, or a private invite. Posts still travel over the mesh and aren’t end-to-end encrypted. | Pas annoncée. On rejoint par lien d’invitation, QR code ou code, ou invitation privée. Les messages passent quand même par le maillage et ne sont pas chiffrés de bout en bout. | לא מוכרזת. מצטרפים בקישור הזמנה, קוד QR או קוד, או בהזמנה פרטית. הפוסטים עדיין עוברים ברשת ולא מוצפנים מקצה לקצה. |
+| `u_vis_change` | Unlisted is the default. Only the founder can turn Listed on, now or later in community settings. | Non listée par défaut. Seul·e le fondateur ou la fondatrice peut activer Listée, maintenant ou plus tard dans les réglages. | ברירת המחדל: לא רשומה. רק המייסד/ת יכול/ה להפעיל רישום, עכשיו או אחר כך בהגדרות. |
+| `u_listing_rules` | Listed communities must follow the listing rules: no illegal content, a clear description, and active moderators. | Les communautés listées suivent les règles de listage : aucun contenu illégal, une description claire et une modération active. | קהילות רשומות חייבות לעמוד בכללי הרישום: בלי תוכן לא חוקי, תיאור ברור ומנחים פעילים. |
+| `u_desc` | Short description | Description courte | תיאור קצר |
+| `u_next` | Continue | Continuer | המשך |
+| `u_step` | Step 2 of 3 | Étape 2 sur 3 | שלב 2 מתוך 3 |
+| `u_loading` | Listening for communities nearby… | Recherche de communautés à proximité… | מאזינים לקהילות בסביבה… |
+| `u_e_heard` | No communities heard nearby yet | Aucune communauté captée à proximité pour l’instant | עוד לא נקלטו קהילות בסביבה |
+| `u_e_heard_d` | Listings arrive when phones running Hopla are nearby or a gateway is reachable. You’re offline right now. | Les annonces arrivent quand des téléphones avec Hopla sont proches ou qu’une passerelle est joignable. Vous êtes hors ligne. | רישומים מגיעים כשטלפונים עם Hopla בסביבה או כששער זמין. כרגע אין חיבור. |
+| `u_e_srch2` | No listed communities match “origami” | Aucune communauté listée ne correspond à « origami » | אין קהילות רשומות שתואמות „אוריגמי” |
+| `u_e_srch2_d` | Only listed communities heard so far show up. Unlisted ones need a code. | Seules les communautés listées déjà captées apparaissent. Les non listées demandent un code. | מופיעות רק קהילות רשומות שכבר נקלטו. לא רשומות דורשות קוד. |
+| `u_sh_t` | You’re not alone | Vous n’êtes pas seul·e | את/ה לא לבד |
+| `u_sh_d` | If you or someone else is in danger, find a helpline near you. | Si vous ou quelqu’un d’autre êtes en danger, trouvez une ligne d’écoute près de chez vous. | אם את/ה או מישהו אחר בסכנה, מצאו קו סיוע קרוב. |
+| `u_sh_link` | Find a helpline (findahelpline.com) | Trouver une ligne d’écoute (findahelpline.com) | מציאת קו סיוע (findahelpline.com) |
+| `u_sh_ext` | Opens in your browser | S’ouvre dans le navigateur | נפתח בדפדפן |
+| `u_rmm_t` | Remove {h} from the community | Retirer {h} de la communauté | הסרת {h} מהקהילה |
+| `u_dur` | For how long? | Pour combien de temps ? | לכמה זמן? |
+| `u_d1` | 1 hour | 1 heure | שעה |
+| `u_d24` | 24 hours | 24 heures | 24 שעות |
+| `u_d7` | 7 days | 7 jours | 7 ימים |
+| `u_d30` | 30 days | 30 jours | 30 ימים |
+| `u_d365` | 365 days (maximum) | 365 jours (maximum) | 365 ימים (מקסימום) |
+| `u_rmm_what` | They can still read, but can’t post or reply until it ends. They’ll see that a moderator removed them, not who. | La personne peut encore lire mais ne peut ni publier ni répondre jusqu’à la fin. Elle verra qu’un·e modérateur·rice l’a retirée, pas qui. | הם עדיין יכולים לקרוא, אבל לא לפרסם או להגיב עד הסוף. הם יראו שמנחה הסיר אותם, לא מי. |
+| `u_reason_req` | Reason (required) | Motif (obligatoire) | סיבה (חובה) |
+| `u_rmm_btn` | Remove for {d} | Retirer pour {d} | הסרה ל־{d} |
+| `u_left_q` | {n} of 10 removals left this hour | Encore {n} retraits sur 10 cette heure | נותרו {n} מתוך 10 הסרות בשעה זו |
+| `u_rn_t` | A moderator removed you from {c} | Un·e modérateur·rice vous a retiré·e de {c} | מנחה הסיר/ה אותך מ{c} |
+| `u_rn_f` | The founder removed you from {c} | Le fondateur ou la fondatrice vous a retiré·e de {c} | המייסד/ת הסיר/ה אותך מ{c} |
+| `u_rn_d` | You can keep reading. You can post again in 6 days 23 h. | Vous pouvez continuer à lire. Vous pourrez publier dans 6 j 23 h. | אפשר להמשיך לקרוא. אפשר יהיה לפרסם שוב בעוד 6 ימים ו־23 ש׳. |
+| `u_rn_comp` | You can’t post here until the removal ends | Vous ne pouvez pas publier ici avant la fin du retrait | אי אפשר לפרסם כאן עד סוף ההסרה |
+| `u_lim_t` | Removal limit reached | Limite de retraits atteinte | הגעת למגבלת ההסרות |
+| `u_lim_d` | Moderators and admins can remove up to 10 members an hour and 30 a day. Other phones ignore removals over the limit. The founder and the Hopla team aren’t limited. | Modération et admins peuvent retirer 10 membres par heure et 30 par jour au plus. Les autres téléphones ignorent les retraits au-delà. Le fondateur ou la fondatrice et l’équipe Hopla ne sont pas limités. | מנחים ומנהלים יכולים להסיר עד 10 חברים בשעה ו־30 ביום. טלפונים אחרים מתעלמים מהסרות מעבר למגבלה. המייסד/ת וצוות Hopla אינם מוגבלים. |
+| `u_lim_when` | You can remove members again in 38 min. | Vous pourrez retirer des membres dans 38 min. | אפשר יהיה להסיר חברים שוב בעוד 38 דק׳. |
+| `u_lim_still` | You can still remove posts and report. | Vous pouvez toujours retirer des messages et signaler. | עדיין אפשר להסיר פוסטים ולדווח. |
+| `u_lim_bar` | 10 of 10 this hour · 14 of 30 today | 10 sur 10 cette heure · 14 sur 30 aujourd’hui | 10 מתוך 10 בשעה זו · 14 מתוך 30 היום |
+| `u_cat_1` | Local & neighbourhood | Local et quartier | מקומי ושכונה |
+| `u_cat_2` | News & current affairs | Actualité | חדשות ואקטואליה |
+| `u_cat_3` | Hobbies & games | Loisirs et jeux | תחביבים ומשחקים |
+| `u_cat_4` | Arts, music & culture | Arts, musique et culture | אמנות, מוזיקה ותרבות |
+| `u_cat_5` | Sports & fitness | Sport et forme | ספורט וכושר |
+| `u_cat_6` | Science, tech & learning | Sciences, tech et savoir | מדע, טכנולוגיה ולמידה |
+| `u_cat_7` | Support & wellbeing | Soutien et bien-être | תמיכה ורווחה |
+| `u_cat_8` | Other | Autre | אחר |
+| `u_near_tag` | Near you | Près de vous | בקרבת מקום |
+| `u_disc_note` | Shows communities that have reached phones near you. Sizes are the owner’s estimate. | Affiche les communautés arrivées sur des téléphones proches. Les tailles sont estimées par le ou la propriétaire. | מציג קהילות שהגיעו לטלפונים בסביבה. הגדלים הם הערכה של הבעלים. |
+| `u_range1` | 51–200 members | 51 à 200 membres | 51–200 חברים |
+| `u_range2` | 201–1,000 members | 201 à 1 000 membres | 201–1,000 חברים |
+| `u_range3` | 1,001–5,000 members | 1 001 à 5 000 membres | 1,001–5,000 חברים |
+| `u_range0` | 11–50 members | 11 à 50 membres | 11–50 חברים |
+| `u_hide` | Hide | Masquer | הסתרה |
+| `u_tags` | Tags (up to 5) | Mots-clés (5 max.) | תגיות (עד 5) |
+| `u_cat_l` | Category | Catégorie | קטגוריה |
+| `u_tg1` | seeds | graines | זרעים |
+| `u_tg2` | allotments | potagers | חלקות |
+| `u_tg3` | swaps | trocs | החלפות |
+| `u_ln_t` | Make this community listed? | Lister cette communauté ? | להפוך את הקהילה לרשומה? |
+| `u_ln_d` | Listing makes this community findable by anyone nearby and by phones that pass it on. Its name, description, tags and approximate size become public. Posts in communities are public. | Lister rend cette communauté trouvable par toute personne à proximité et par les téléphones qui la relaient. Son nom, sa description, ses mots-clés et sa taille approximative deviennent publics. Les messages des communautés sont publics. | רישום הופך את הקהילה לניתנת למציאה על ידי כל מי שבסביבה ועל ידי טלפונים שמעבירים אותה. השם, התיאור, התגיות והגודל המשוער שלה הופכים לציבוריים. פוסטים בקהילות הם ציבוריים. |
+| `u_ln_on` | Turn on Listed | Activer Listée | הפעלת רישום |
+| `u_ln_off` | Keep unlisted | Garder non listée | להשאיר לא רשומה |
+| `u_lim_owner` | The founder sees every removal and is alerted after more than 5 in a day. | Le fondateur ou la fondatrice voit chaque retrait et reçoit une alerte au-delà de 5 par jour. | המייסד/ת רואה כל הסרה ומקבל/ת התראה אחרי יותר מ־5 ביום. |
+| `u_fa_t` | {h} removed 6 members today | {h} a retiré 6 membres aujourd’hui | {h} הסיר/ה היום 6 חברים |
+| `u_fa_d` | That’s more than 5 in a day. Check their removals, or revoke their moderator role. | C’est plus de 5 en une journée. Vérifiez ses retraits ou retirez son rôle de modération. | זה יותר מ־5 ביום. בדקו את ההסרות שלהם, או בטלו את תפקיד המנחה. |
+| `u_fa_view` | View removals | Voir les retraits | צפייה בהסרות |
+| `u_fa_revoke` | Revoke moderator | Retirer le rôle | ביטול תפקיד מנחה |
+| `u_removals` | Removals | Retraits | הסרות |
+| `u_fa_r` | {h} removed {t} · 7 days · Selling or spam | {h} a retiré {t} · 7 jours · Vente ou spam | {h} הסיר/ה את {t} · 7 ימים · מכירה או ספאם |
+
+**Accessibility:** contrast 0 failures (light + dark; 12 files, 1,446 measurements per theme; re-run on the 8 changed/new files after alignment, 1,021 per theme, 0 failures; `a11y/v0125-contrast.md`). Targets ≥ 44 pt / 48 dp, 3 px focus ring shown (helpline link, OK button, selected visibility option), live regions polite, skeletons hidden from AT, no drag-only actions. HE is a draft pending native review.
+
+## 5X. v0.1.26 — Private invites (app 0.1.28) and Live placement — 2026-10-31
+
+Lean addendum. Sources: PROTOCOL §20.7, REQUIREMENTS TM13–TM17, repo `main` @ 6dd105d (`crates/omcp-ffi/src/invites.rs`, `strings_communities.xml`). Generator `omcp-v0126/gen26.py`. 8 screens × 6 frames = 48 PNGs:
+- `invite-request`, `invite-accepted`, `invite-declined`, `invite-blocked`, `comm-settings-invites`, `invite-sent-status`, `live-entry-chats`, `live-entry-headers`
+
+Copy keys: the **existing Android keys are kept as built** (`inv_*`, no `u_` prefix, e.g. `inv_status_pending`); new keys use `u_inv_*` / `u_live_*`.
+
+### 5.150 Incoming invite — `invite-request`, `invite-accepted`, `invite-declined`, `invite-blocked`
+- **Where requests live:** a **Requests** row at the top of Chats with a count badge (“2 private group invites”, `live-entry-chats`) opens *Private group invites* (`inv_req_h`). Requests never appear in the Communities tab or in community history (§20.7(7)).
+- **Card:** key avatar + `inv_req_line` (“{pseudonym} from {community} invites you to a private group”), short key, Private-group badge (lock) + community badge (#), optional group name (`group_display`), “Members and size shown after you join”, lock + E2EE line. **Accept** (primary), **Decline** (secondary), then **Block** and **Report invite** (ghost row, also in ⋯). Report uses the anonymous report sheet (§5.142/5.146); the report contains only the signed `InviteOffer` (MR38).
+- A contact never appears here: invites from contacts use the normal 1:1 path. Where a pseudonym matches a contact, show the saved name (§5.138).
+- **Accepted:** card stays with `role=status` “Accepted. Waiting to join…” (`inv_waiting`) until the MLS Welcome arrives; then the group appears in Chats. **Declined / Blocked:** the card is removed and a status toast confirms, with **Undo** (≥ 5 s, focus not moved). Blocking drops future offers silently; the inviter is not told.
+
+### 5.151 Setting — `comm-settings-invites`
+Community settings › Privacy: switch **“Invites from people who aren’t contacts”** (`inv_setting_t`), **off by default** in every newly joined community, with `inv_setting_d`. The same per-community switch is also listed in Settings › Privacy (TM15). The app offers it in context with `inv_turn_on` (on join and when opening group invites) and never turns it on by itself.
+
+### 5.152 Sent invites — `invite-sent-status`
+Mesh-only notice on every send (`inv_mesh_only`, MR39). Status labels **exactly as built** (`SentOffer.status`: 0 pending, 1 accepted, 2 declined, 3 expired), each a neutral badge with **icon + text**, never colour alone:
+
+| Code | Label | Icon | Meta |
+|---|---|---|---|
+| 0 | Not delivered yet | sync | “Expires in N days”; footnote “Waiting for a reply. Delivery over the mesh can take hours or days.” |
+| 1 | Accepted | check | — |
+| 2 | Declined | × | — |
+| 3 | Expired | info | — |
+
+There is **no “Delivered” state**: the protocol has no delivery receipt, only a reply. **Recipient switch off:** that member publishes no `invite_pk`, so in the member picker they show neutrally “Doesn’t accept invites from non-contacts” with Invite `aria-disabled`. If they **blocked** you or the offer was dropped by their limits, you see the same as a slow delivery (Not delivered yet → Expired); nothing reveals a block. Sender limits shown: 10 an hour, 30 a day (TM16).
+
+### 5.153 Live placement (community Live removed, §5.145)
+| Where | Entry | Notes |
+|---|---|---|
+| Private-group header | **Go live** button | members only, E2EE (`group-live`) |
+| 1:1 chat header | **Go live** button next to Call | E2EE |
+| Chats list | active-live banner “{host} is live in {group}” + Join | `role=status`; Live badge icon + text |
+| Notifications | live-start (§5.124, kept) | lock screen stays generic |
+| Communities tab / community pages | **none** | Later, needs community key |
+`live-entry-chats` (Requests row + banner) and `live-entry-headers` show these; the line “Live is only in 1:1 chats and private groups, always end-to-end encrypted.” explains it.
+
+### 5.154 Spec mismatches found (for Jakob/Writey/Proggy)
+1. **Member count in the invite:** the brief asked for “x/32”, but `InviteOffer` (§20.7(3a)) carries no group ID, members or size; the invitee learns them only after the Welcome. The card says “Members and size shown after you join”. Adding a count would need a protocol field.
+2. **“Delivered” state:** no such state exists (no receipt); the statuses are Not delivered yet / Accepted / Declined / Expired.
+3. **Setting location:** TM15 puts the switch in Settings › Privacy; the brief puts it in community settings. The design shows it in both (same setting).
+4. **Mesh notice wording:** app string reads “It may not reach…” (singular “it” after plural “Invites”); suggested EN fix: “Invites travel over the mesh only, so an invite may not reach someone who is only reachable over the internet.” (FR/HE given in the table follow the app string.)
+5. `u_comm_live_d` / `u_comm_live_members` and `u_start_grp_d`’s final text are still in the Android strings; with community Live removed (§5.145), `u_comm_live_*` should be deleted.
+
+### 5.155 Copy (EN / FR / HE DRAFT)
+| Key | EN | FR | HE (DRAFT, pending native review) |
+|---|---|---|---|
+| `inv_req_h` | Private group invites | Invitations à des groupes privés | הזמנות לקבוצות פרטיות |
+| `inv_req_line` | {p} from {c} invites you to a private group | {p}, de {c}, vous invite dans un groupe privé | {p} מ{c} מזמין/ה אותך לקבוצה פרטית |
+| `inv_accept` | Accept | Accepter | אישור |
+| `inv_decline` | Decline | Refuser | דחייה |
+| `inv_block` | Block | Bloquer | חסימה |
+| `inv_report` | Report invite | Signaler l’invitation | דיווח על ההזמנה |
+| `inv_waiting` | Accepted. Waiting to join… | Acceptée. En attente pour rejoindre… | אושר. ממתינים להצטרפות… |
+| `inv_setting_t` | Invites from people who aren’t contacts | Invitations de personnes hors contacts | הזמנות מאנשים שאינם אנשי קשר |
+| `inv_setting_d` | Lets members of this community invite you to a private group. Nobody else learns about it. Off until you turn it on. | Permet aux membres de cette communauté de vous inviter dans un groupe privé. Personne d’autre ne le sait. Désactivé tant que vous ne l’activez pas. | מאפשר לחברי הקהילה להזמין אותך לקבוצה פרטית. אף אחד אחר לא יודע על כך. כבוי עד שתפעילו. |
+| `inv_mesh_only` | Invites travel over the mesh only. It may not reach someone who is only reachable over the internet. | Les invitations passent uniquement par le maillage. Elle peut ne pas atteindre une personne joignable seulement par internet. | ההזמנות עוברות ברשת בלבד. ייתכן שלא תגיע למי שזמין רק דרך האינטרנט. |
+| `inv_status_pending` | Not delivered yet | Pas encore remise | עוד לא נמסרה |
+| `inv_status_accepted` | Accepted | Acceptée | אושרה |
+| `inv_status_declined` | Declined | Refusée | נדחתה |
+| `inv_status_expired` | Expired | Expirée | פגה |
+| `inv_none` | Nobody here accepts invites yet. | Personne ici n’accepte encore d’invitations. | אף אחד כאן עוד לא מקבל הזמנות. |
+| `inv_turn_on` | Turn on to get invites from community members | Activez pour recevoir des invitations des membres | הפעילו כדי לקבל הזמנות מחברי הקהילה |
+| `u_inv_requests` | Requests | Demandes | בקשות |
+| `u_inv_req_n` | {n} private group invites | {n} invitations à des groupes privés | {n} הזמנות לקבוצות פרטיות |
+| `u_inv_group` | Group: {g} | Groupe : {g} | קבוצה: {g} |
+| `u_inv_count` | Members and size shown after you join | Membres et taille visibles après avoir rejoint | החברים והגודל יוצגו אחרי ההצטרפות |
+| `u_inv_e2e` | End-to-end encrypted. Accept and Decline stay private; nothing is posted in the community. | Chiffré de bout en bout. Accepter et Refuser restent privés ; rien n’est publié dans la communauté. | מוצפן מקצה לקצה. אישור ודחייה נשארים פרטיים; שום דבר לא מתפרסם בקהילה. |
+| `u_inv_more` | More options for this invite | Plus d’options pour cette invitation | אפשרויות נוספות להזמנה |
+| `u_inv_declined_t` | Invite declined | Invitation refusée | ההזמנה נדחתה |
+| `u_inv_declined_d` | {p} sees only that you declined, nobody else. | Seul·e {p} voit que vous avez refusé. | רק {p} רואה שדחית. |
+| `u_inv_blocked_t` | {p} blocked | {p} bloqué·e | {p} נחסם/ה |
+| `u_inv_blocked_d` | You won’t see invites from them. They aren’t told. | Vous ne verrez plus ses invitations. La personne n’est pas prévenue. | לא יוצגו לך הזמנות מהם. הם לא מקבלים הודעה. |
+| `u_undo` | Undo | Annuler | ביטול |
+| `u_inv_accepted_d` | You’ll join {g} when the welcome arrives over the mesh. It shows up in Chats. | Vous rejoindrez {g} dès que l’accueil arrive par le maillage. Il apparaîtra dans Discussions. | תצטרפו ל{g} כשהודעת הקבלה תגיע ברשת. היא תופיע בצ׳אטים. |
+| `u_inv_sent_h` | Sent invites | Invitations envoyées | הזמנות שנשלחו |
+| `u_inv_exp` | Expires in {n} days | Expire dans {n} jours | פגה בעוד {n} ימים |
+| `u_inv_noacc` | Doesn’t accept invites from non-contacts | N’accepte pas d’invitations hors contacts | לא מקבל/ת הזמנות מאנשים שאינם אנשי קשר |
+| `u_inv_pending_d` | Waiting for a reply. Delivery over the mesh can take hours or days. | En attente de réponse. La remise par le maillage peut prendre des heures ou des jours. | ממתינים לתשובה. מסירה ברשת יכולה לקחת שעות או ימים. |
+| `u_inv_limits` | You can send 10 invites an hour and 30 a day. | Vous pouvez envoyer 10 invitations par heure et 30 par jour. | אפשר לשלוח 10 הזמנות בשעה ו־30 ביום. |
+| `u_settings` | Community settings | Réglages de la communauté | הגדרות הקהילה |
+| `u_notif` | Notifications | Notifications | התראות |
+| `u_privacy` | Privacy | Confidentialité | פרטיות |
+| `u_set_also` | Also in Settings › Privacy, per community. | Aussi dans Réglages › Confidentialité, par communauté. | גם בהגדרות › פרטיות, לכל קהילה. |
+| `u_leave` | Leave community | Quitter la communauté | עזיבת הקהילה |
+| `u_live_banner` | {h} is live in {g} | {h} est en direct dans {g} | {h} בשידור חי ב{g} |
+| `u_live_join` | Join | Rejoindre | הצטרפות |
+| `u_live_btn` | Go live | Lancer un direct | שידור חי |
+| `u_live_1to1` | Live with {h} | Direct avec {h} | שידור עם {h} |
+| `u_call` | Call | Appeler | שיחה |
+| `u_live_where` | Live is only in 1:1 chats and private groups, always end-to-end encrypted. | Les directs existent seulement en discussions privées et groupes privés, toujours chiffrés de bout en bout. | שידור חי קיים רק בצ׳אטים אישיים ובקבוצות פרטיות, תמיד מוצפן מקצה לקצה. |
+| `inv_members_h` | Members of {c} | Membres de {c} | חברי {c} |
+
+**Accessibility:** contrast 0 failures (light + dark, 8 files, 801 measurements per theme, `a11y/v0126-contrast.md`). Targets ≥ 44 pt / 48 dp, focus ring on the switch row, toasts with Undo don’t steal focus, statuses are icon + text.
+
+## 5Y. v0.1.27 — Default community letter icon and invite-only listing line — 2026-11-10
+
+Lean addendum. Sources: REQUIREMENTS TM36, PROTOCOL §20.8(2) (deferred past v1.0, 2026-11-10, MR76). Custom community icons and approval-only joins are out of v1.0. This section only specifies the default letter tile that replaces the # tile, and the non-interactive line that replaces Join when a received listing has `join_policy` other than `1`. v1.0 apps still send `has_icon = 0` and `join_policy = 1`; a received `has_icon = 1` is ignored and the letter tile is shown. Generator `omcp-v0127/gen27.py`. Reference frames only (not a 6-variant set): `comm-icon-ref` (EN light), `comm-icon-ref--he-dark` (HE draft).
+
+### 5.156 Default community icon — `CommunityIcon` (letter tile)
+
+Replaces the # tile on discover cards, the community preview/detail header, Chats rows, and chat headers. Private groups are unchanged (letter on the existing solid avatar colour, plus the lock badge). The community *type* badge (hash glyph + “Community”) is also unchanged — it marks the kind of chat, not the community itself.
+
+**Letter rule.** Take the community’s display name and walk it as Unicode extended grapheme clusters (UAX #29; Android `BreakIterator.getCharacterInstance(ULocale.ROOT)`, Swift `Character`). Skip leading clusters that are only whitespace, only `#`, only punctuation (every non-mark code point has General_Category P*), or emoji (the cluster contains `Extended_Pictographic` or a Regional_Indicator pair, or is an emoji keycap / ZWJ sequence). The first remaining cluster is the icon. If that script has case, apply Unicode Default Case Conversion (locale-independent uppercase). Hebrew, Arabic, CJK and other caseless scripts stay as they are; a single RTL letter is drawn as-is, centred in the tile (do not mirror it). If nothing remains, the icon is `#` — a character in the same type, not the old hash glyph. The letter updates when the name changes; the colour does not (it is keyed to the community id).
+
+**Colour.** Deterministic from the community id, same on every phone. Hash `SHA-256("omcp-comm-icon-v1" || raw community id bytes)` and take `digest[0] % 6` as an index into this token palette (no new tokens). Every pair is AA ≥ 4.5:1 in light and dark:
+
+| Index | Letter | Tile |
+|---|---|---|
+| 0 | `--brand` | `--brand-soft` |
+| 1 | `--path-gateway` | `--path-gateway-soft` |
+| 2 | `--path-mixed` | `--path-mixed-soft` |
+| 3 | `--ok` | `--ok-soft` |
+| 4 | `--path-queue` | `--path-queue-soft` |
+| 5 | `--ink` | `--surface-2` |
+
+No border. Font is the system UI stack (`--f`), weight 700, centred, `letter-spacing: 0`. The tile is decorative (`aria-hidden="true"`): the adjacent name is the accessible name, and the letter is not announced again.
+
+**Sizes** (logical px):
+
+| Placement | Tile | Corner radius | Letter size |
+|---|---|---|---|
+| Discover card | 40×40 | 10 (`--r`) | 16 |
+| Chats row | 40×40 | 10 | 16 |
+| Chat header (thread nav) | 32×32 | 8 | 13 |
+| Preview / detail header | 56×56 | 12 | 22 |
+
+### 5.157 Invite-only listing line
+
+A listing whose `join_policy` is not `1` (open) never shows a Join button, on the discover card or on the preview/detail screen. In its place, show the non-interactive line `u_comm_join_invite`: “This community joins by invite. Ask a member for an invite.” Hide and Report stay as they are. Do not send a join from discovery.
+
+Style: not a button (no `role="button"`, no fill, no outline, no underline, no pressed state). Info icon (existing 16 px on cards, 18 px on preview, `aria-hidden`) + the sentence, `role="note"`, colour `--ink-2`, 13 px, regular weight. Contrast ≥ 4.5:1. On a discover card the line sits in the text column under the meta, full width of that column, not in the old Join slot; the ⋯ menu remains. On preview/detail it replaces the primary “Join community” button only. If the person is already a member, the line is not shown (they see the usual member view). Do not show `u_preview_note` (“Join to post or reply”) on an invite-only preview, because there is no Join on that screen.
+
+### 5.158 Copy (EN / FR / HE DRAFT)
+
+| Key | EN | FR | HE (DRAFT, pending native review) |
+|---|---|---|---|
+| `u_comm_join_invite` | This community joins by invite. Ask a member for an invite. | Cette communauté se rejoint sur invitation. Demandez une invitation à un membre. | לקהילה הזו מצטרפים בהזמנה. בקשו הזמנה מאחד החברים. |
+
+### 5.159 Open questions (for Proggy / Writey)
+
+1. **Colour hash.** The index uses `SHA-256("omcp-comm-icon-v1" || raw 32-byte community id)`, first byte modulo 6, so every phone paints the same tile. Confirm the hash (BLAKE2b would match `icon_hash`) and that the id is the raw bytes, not a hex string.
+2. **Uppercase locale.** Default Unicode uppercase (not the community’s language locale), so a Turkish `i` becomes `I`, not `İ`. Confirm, or key off the listing language.
+3. The `#` Community type badge stays a hash glyph. Confirm it should not switch to the letter tile.
+
+**Accessibility:** contrast 0 failures (light + dark, 2 frames, 48 measurements per theme, `a11y/v0127-contrast.md`). Hide, Report, Join and ⋯ targets stay ≥ 44 pt / 48 dp. Hebrew is RTL and still a draft pending native review (§5.106).
 
 ## 6. Path indicator component (normative UX)
 
@@ -1700,7 +2432,7 @@ Resolved in v0.1.2: v0.1.1 Q1 (skip phrase confirm) — superseded by REQUIREMEN
 3. **Wrong-password limits:** O4 asks for rate-limited retries; mockups assume 3 tries then 5-minute cooldown (escalating). Confirm numbers with the Rust core.
 Resolved in v0.1.5 by the maintainer (REQUIREMENTS § Decisions): Q4 calls → “Hopla · Incoming call”; Q5 per-chat opt-out allowed; Q6 Android lock → “Hopla · New message”; Q7 Nearby must be a pleasure on iOS → sessions + Live Activity + area mode (§5.58); Q8 no screenshots anywhere (§5.57).
 
-Resolved 2026-10-24 (maintainer approved; REQUIREMENTS Decision 5 / SS1 updated by Writey):
+Resolved 2026-10-24 (Jakob approved; REQUIREMENTS Decision 5 / SS1 updated by Writey):
 - ~~Q4 Live Activity on Private notifications~~ → counts hidden (§5.73).
 - ~~Q5 Android recents~~ → black when Block screenshots is on, normal preview when off (§5.72).
 - ~~Q6 Session length~~ → superseded 2026-10-24: no time limit; auto-pause + 4 h check-in (§5.75).
@@ -1723,14 +2455,14 @@ Open (v0.1.10):
 17. ~~**Partner no longer has the file:**~~ → **Resolved 2026-10-24** (§5.94) REQUIREMENTS only covers re-fetch from a partner who still holds it. `media-missing--gone` assumes the protocol gets a “not found” reply for the hash. Is there such a reply, or does the placeholder wait forever (and for how long)?
 18. ~~**Requester privacy:**~~ → **Resolved 2026-10-24** (§5.94; superseded by the restore indicator §5.95: the restore is announced, and re-requests carry no extra metadata) does an auto re-request reveal to the partner that I restored (and when)? Copy assumes it's fine.
 19. ~~**Chunk resume / Wi-Fi:**~~ → **Resolved 2026-10-24** (§5.94) should media re-fetch over a gateway respect the backup's Wi-Fi-only default, or always use mesh/gateway freely?
-20. ~~**Safety number after a restore**~~ → **Resolved 2026-10-24 (maintainer: yes)**: the safety number covers the identity key + current device key, a restore resets every contact's verified badge, and re-verification is in person by QR (§5.98, RS2).
+20. ~~**Safety number after a restore**~~ → **Resolved 2026-10-24 (Jakob: yes)**: the safety number covers the identity key + current device key, a restore resets every contact's verified badge, and re-verification is in person by QR (§5.98, RS2).
 21. ~~**Default types when media backup is turned on:**~~ → **Resolved 2026-10-24:** every type is pre-selected except Videos, as mocked.  the mockup pre-selects everything except Videos (size). Confirm, or select all?
 22. ~~**Media backup cadence:**~~ → **Resolved 2026-10-24:** media is backed up in a separate daily pass, Wi-Fi only by default. Copy: “Backed up daily on Wi-Fi” (§5.96).  the chat backup runs at most hourly, padded to 64 KiB buckets. Should media follow the same cadence and padding (padding large videos gets costly), or use a separate daily pass?
 23. ~~**Partial restore:**~~ → **Resolved 2026-10-24:** a partial media restore falls back to placeholders that refill from nearby contacts (`restore-media--partial`, §5.97).  if media download fails mid-restore (quota or offline), do the remaining items fall back to placeholders and contact re-fetch automatically? Assumed yes.
 24. ~~**REQUIREMENTS O3 wording:**~~ → **Resolved 2026-10-24:** REQUIREMENTS O3 is reworded (“your verifications of contacts are restored; contacts' verification of you resets, RS2”).
 25. ~~**Group / community chats:**~~ → **Resolved 2026-10-24:** compact tag in groups and communities, with the system notice in 1:1 only (§5.99).
 
-Hopla News questions (v0.1.19) — closed in v0.1.20 by the maintainer’s decisions and the revised REQUIREMENTS (2026-10-24):
+Hopla News questions (v0.1.19) — closed in v0.1.20 by Jakob’s decisions and the revised REQUIREMENTS (2026-10-24):
 - ~~Q26 tab bar~~ → News tab; Live at the top of Communities (§5.107).
 - ~~Q27 alert notification default~~ → on by default (§5.111).
 - ~~Q28 unsigned/invalid states~~, ~~Q29 verified vs signed~~ → obsolete: no per-story signature checks or trust levels (§5.109).
@@ -1742,18 +2474,32 @@ Hopla News questions (v0.1.19) — closed in v0.1.20 by the maintainer’s decis
 - ~~Q35 Read more online~~ → link opens the browser with an inline “leaves Hopla” note, no confirm.
 - Q36 Relay settings → still a placeholder until the relay questions are answered.
 Open (v0.1.20):
-37. **REQUIREMENTS still lists the X API** as a second source (and its account/tier as an open decision); the design follows the maintainer’s correction (Google News RSS only). REQUIREMENTS should be updated to match.
+37. **REQUIREMENTS still lists the X API** as a second source (and its account/tier as an open decision); the design follows Jakob’s correction (Google News RSS only). REQUIREMENTS should be updated to match.
 38. **Mute a topic:** mocked as long-press on a chip + a Muted topics row; confirm, or add an explicit Mute in the topic’s overflow menu.
 39. **City from location:** reverse-geocoding to a city name needs a geocoder; on-device dataset vs OS geocoder (Apple/Google, which sends coordinates) — the copy says the location is never sent, so this must be on-device or the copy changes.
+
+Answered by Jakob on 2026-10-29 (v0.1.23):
+- ~~Q40 Reporter anonymity~~ → reports are anonymous, moderators included; in-app report sheet, no share sheet (§5.131).
+- ~~Q41 Community encryption~~ → not E2EE; posts relay over the mesh; said in the header, chooser and first-post notice (§5.128).
+- ~~Q42 Moderator roles~~ → only the founder appoints moderators; nobody, moderators included, can see removed content (§5.131).
+- ~~Q43 Private group from a community~~ → can invite community members who aren’t contacts, via mesh identity, 32 cap (§5.129).
+- ~~Q44 Community live audience~~ → members only (as designed).
+- ~~Q45 Removed-post reason~~ → required; Remove disabled until chosen (§5.131).
 
 ---
 
 ## Document control
 
+- v0.1.27 (2026-11-10): §5Y default letter-tile community icon and invite-only listing line.
+- v0.1.26 (2026-10-31): §5X private invites and Live placement.
+- v0.1.25 (2026-10-31): §5W discovery, no community Live, self-harm notice, timed removal.
+- v0.1.24 (2026-10-30): §5V addendum for PR #22.
+- v0.1.23 (2026-10-29): §5U Communities vs Private groups (supersedes §5T).
 - v0.1.22 (2026-10-29): §5T Communities with Live (PR #19).
 
 | Version | Date | Notes |
 |---------|------|-------|
+| 0.1.27 | 2026-11-10 | Default community letter tile + invite-only listing line §5Y (5.156–5.159); 2 reference PNGs |
 | 0.1.0 | 2026-10-23 | First design pack: tokens, IA, MVP + v0.2 sketches, 6 HTML mockups |
 | 0.1.1 | 2026-10-24 | Hopla naming; §5.14–5.24 onboarding, contact add, file transfer; 11 new mockups (17 PNG frames); resolved v0.1.0 questions |
 | 0.1.2 | 2026-10-24 | 4-screen onboarding + recovery backup (§5.1, §5.14 updated; §5.25–5.31 new); §5.15/5.16/5.18 deprecated; 8 new + 1 updated mockups (24 PNG frames); new §12 questions |

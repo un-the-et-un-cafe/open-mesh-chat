@@ -226,7 +226,7 @@ class RustOmcpCore : OmcpCore {
     override fun discoverySearch(query: String, category: Int?, lang: String?, nearOnly: Boolean): List<DiscoveryUi> =
         runCatching { node?.discoverySearch(query, category?.toUByte(), lang, nearOnly) }.getOrNull()?.map {
             DiscoveryUi(it.communityIdHex, it.communityRefHex, it.name, it.description, it.category.toInt(), it.tags,
-                it.langs, it.sizeMin.toInt(), it.sizeMax.toInt(), it.nearYou, it.joined)
+                it.langs, it.sizeMin.toInt(), it.sizeMax.toInt(), it.nearYou, it.joined, it.approvalNeeded)
         } ?: emptyList()
     override fun discoveryLanguages(): List<String> = node?.discoveryLanguages().orEmpty()
     override fun discoveryHide(ref: String): Boolean = runCatching { node?.discoveryHide(ref); true }.getOrDefault(false)

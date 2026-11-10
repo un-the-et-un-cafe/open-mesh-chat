@@ -43,4 +43,6 @@
     <string name="u_e_srch2_d">Seules les communautés listées déjà captées apparaissent. Les non listées demandent un code.</string>
     <string name="u_lang_all">Toutes les langues</string>
     <string name="u_langs_l">Langues (3 max., p. ex. en, fr)</string>
+    <string name="u_comm_join_invite">Cette communauté se rejoint sur invitation. Demandez une invitation à un membre.</string>
 </resources>
+

@@ -4096,6 +4096,120 @@ fn discovery_language_filter_and_battery_saver_pauses_exchange() {
     assert!(!b.inner.lock().mesh.engine.discovery_may_send_ranges(1, now));
 }
 
+/// MR76: v1.0 always sends join_policy = 1 and has_icon = 0; a received
+/// announcement with join_policy = 2 or has_icon = 1 is stored, relayed and
+/// shown; discovery_join is refused for the former and no icon is fetched.
+#[test]
+fn mr76_v1_open_join_and_default_icon() {
+    use ed25519_dalek::SigningKey;
+    use omcp_core::community::discovery::{seal, Announcement, Listing, ListingFields, OWN_TTL};
+
+    let (a, b, la, lb) = paired();
+    pump(&la, &lb, la.start().unwrap());
+    let sync = |n: usize| {
+        for _ in 0..n {
+            a.mesh_tick(now_ms()).unwrap();
+            b.mesh_tick(now_ms()).unwrap();
+            pump(&la, &lb, la.flush().unwrap());
+            pump(&lb, &la, lb.flush().unwrap());
+        }
+    };
+    sync(3);
+    let c = a.open_community_create("Garden club".into()).unwrap();
+    let id = c.community_id_hex.clone();
+    a.open_community_set_listed(
+        id,
+        true,
+        "Seed swaps".into(),
+        1,
+        vec!["seeds".into()],
+        vec!["en".into()],
+    )
+    .unwrap();
+    // Outgoing v1.0 announcement: policy 1, no icon.
+    {
+        let st = a.inner.lock();
+        let e = st.mesh.engine.discovery().entries().next().expect("listed");
+        assert_eq!(e.ann.join_policy, 1);
+        assert_eq!(e.ann.icon_hash, None);
+    }
+    sync(2);
+    let open = b.discovery_search("seeds".into(), None, None, false);
+    assert_eq!(open.len(), 1);
+    assert!(!open[0].approval_needed);
+
+    // A "newer app" announcement: approval-only + icon hash.
+    let now = now_ms();
+    let sk = SigningKey::from_bytes(&[0x11; 32]);
+    let cid = [0x42; 32];
+    let foreign = Announcement::sign(
+        cid,
+        &sk,
+        &sk,
+        1,
+        now,
+        ListingFields {
+            name: "Closed garden".into(),
+            description: "Members only".into(),
+            langs: vec!["en".into()],
+            categories: vec![1],
+            tags: vec!["closed".into()],
+            member_bucket: 1,
+            join_policy: 2,
+            icon_hash: Some([0xCD; 32]),
+        },
+    )
+    .unwrap();
+    {
+        let mut st = a.inner.lock();
+        let ev = st
+            .mesh
+            .engine
+            .submit_discovery_own(seal(&Listing::Announce(foreign), OWN_TTL), now)
+            .unwrap();
+        st.route(ev).unwrap();
+    }
+    // A stored it, including the hash; nothing is fetched (no icon body exists).
+    {
+        let st = a.inner.lock();
+        let e = st
+            .mesh
+            .engine
+            .discovery()
+            .entries()
+            .find(|e| e.ann.name == "Closed garden")
+            .expect("stored");
+        assert_eq!(e.ann.join_policy, 2);
+        assert_eq!(e.ann.icon_hash, Some([0xCD; 32]));
+    }
+    sync(3);
+    // B received the relayed listing and shows it.
+    let closed = b.discovery_search("closed".into(), None, None, false);
+    assert_eq!(closed.len(), 1);
+    assert_eq!(closed[0].name, "Closed garden");
+    assert!(closed[0].approval_needed);
+    assert!(!closed[0].joined);
+    let cref = closed[0].community_ref_hex.clone();
+    assert!(b.discovery_join(cref).is_err());
+    assert!(b.inner.lock().mesh.discovery.pending.is_empty());
+    assert!(!b
+        .open_communities()
+        .iter()
+        .any(|x| x.name == "Closed garden"));
+    {
+        let st = b.inner.lock();
+        let e = st
+            .mesh
+            .engine
+            .discovery()
+            .entries()
+            .find(|e| e.ann.name == "Closed garden")
+            .expect("relayed");
+        assert_eq!(e.ann.join_policy, 2);
+        assert_eq!(e.ann.icon_hash, Some([0xCD; 32]));
+    }
+}
+
 /// §22.7(9): small-group envelopes carry the recipients' sub-tags (TLV
 /// 0x56), the recipient wants its own sub-tag and opens the frame through
 /// it; the chat tag stays as the fallback. Sub-tags change at a commit.

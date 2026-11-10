@@ -6,12 +6,14 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Place
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -36,9 +38,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import chat.omcp.app.R
 import chat.omcp.app.core.DiscoveryUi
 import chat.omcp.app.core.ListingSettingsUi
@@ -125,6 +130,7 @@ fun DiscoverSection(core: OmcpCore, onOpen: (String) -> Unit) {
     results.forEach { r ->
         DiscoveryCard(r, waiting = r.ref in waiting,
             onJoin = {
+                if (r.approvalNeeded) return@DiscoveryCard
                 when (core.discoveryJoin(r.ref)) {
                     true -> onOpen(r.id)
                     false -> waiting = waiting + r.ref
@@ -146,7 +152,7 @@ private fun DiscoveryCard(r: DiscoveryUi, waiting: Boolean, onJoin: () -> Unit, 
     Card(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                HashTile()
+                CommunityIcon(r.name, r.id)
                 Column(Modifier.weight(1f)) {
                     Text(r.name, style = MaterialTheme.typography.titleMedium)
                     Text(
@@ -156,6 +162,7 @@ private fun DiscoveryCard(r: DiscoveryUi, waiting: Boolean, onJoin: () -> Unit, 
                             if (r.langs.isNotEmpty()) append(" · ").append(r.langs.joinToString(" "))
                         },
                         color = c.ink2, style = MaterialTheme.typography.bodySmall)
+                    if (!r.joined && r.approvalNeeded) InviteOnlyLine(16)
                 }
                 IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, stringResource(R.string.u_rep_comm)) }
                 DropdownMenu(menu, { menu = false }) {
@@ -176,9 +183,12 @@ private fun DiscoveryCard(r: DiscoveryUi, waiting: Boolean, onJoin: () -> Unit, 
             Text(stringResource(R.string.u_size_after_join), color = c.ink2, style = MaterialTheme.typography.bodySmall)
             Text(stringResource(R.string.u_open_not_e2ee), color = c.ink3, style = MaterialTheme.typography.bodySmall)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (r.joined) Text(stringResource(R.string.u_joined), color = c.ink2)
-                else Button(enabled = !waiting, onClick = onJoin, modifier = Modifier.heightIn(min = 48.dp)) {
-                    Text(stringResource(if (waiting) R.string.u_joining else R.string.u_join_btn))
+                when {
+                    r.joined -> Text(stringResource(R.string.u_joined), color = c.ink2)
+                    r.approvalNeeded -> { /* invite line is under the meta; Hide / Report stay */ }
+                    else -> Button(enabled = !waiting, onClick = onJoin, modifier = Modifier.heightIn(min = 48.dp)) {
+                        Text(stringResource(if (waiting) R.string.u_joining else R.string.u_join_btn))
+                    }
                 }
                 TextButton(onClick = onHide, Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.u_hide)) }
             }
@@ -237,5 +247,25 @@ fun ListedSettingRow(core: OmcpCore, communityId: String, isFounder: Boolean) {
             confirmButton = { TextButton(onClick = {
                 notice = false; failed = !core.setListed(communityId, settings(true)); s = core.communityListing(communityId)
             }) { Text(stringResource(R.string.u_turn_on_listed)) } })
+    }
+}
+
+/** Non-interactive invite-only line (§5.157): ink-2, 13 px, not tappable. */
+@Composable
+fun InviteOnlyLine(iconDp: Int, modifier: Modifier = Modifier) {
+    val c = LocalOmcpColors.current
+    val text = stringResource(R.string.u_comm_join_invite)
+    Row(
+        modifier.semantics(mergeDescendants = true) { },
+        verticalAlignment = Alignment.Top,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Icon(
+            Icons.Outlined.Info,
+            contentDescription = null,
+            tint = c.ink2,
+            modifier = Modifier.size(iconDp.dp).clearAndSetSemantics { },
+        )
+        Text(text, color = c.ink2, fontSize = 13.sp, fontWeight = FontWeight.Normal, lineHeight = (13 * 1.4).sp)
     }
 }
