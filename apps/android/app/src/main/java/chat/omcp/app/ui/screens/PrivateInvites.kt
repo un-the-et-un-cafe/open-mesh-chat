@@ -226,7 +226,7 @@ fun InviteRequestsScreen(core: OmcpCore, onBack: () -> Unit) {
                                     style = MaterialTheme.typography.bodySmall)
                             }
                         } else {
-                            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Button(onClick = { core.inviteAnswer(r.offerId, true); list = core.inviteRequests() }, Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.inv_accept)) }
                                 OutlinedButton(onClick = { pending = Triple(r, false, System.currentTimeMillis()) }, Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.inv_decline)) }
                                 var more by remember(r.offerId) { mutableStateOf(false) }
