@@ -1,0 +1,61 @@
+# Keep CI and language tooling on current releases. Every Dependabot PR still
+# has to pass the full CI suite (rust, android, ios) before merge.
+# Rust itself tracks latest stable via dtolnay/rust-toolchain@stable in CI
+# (and rust-toolchain.toml channel = "stable" from Proggy's PR); Dependabot
+# does not manage the Rust channel.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "05:00"
+      timezone: Europe/Paris
+    open-pull-requests-limit: 10
+    labels:
+      - dependencies
+      - ci
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "05:00"
+      timezone: Europe/Paris
+    open-pull-requests-limit: 10
+    labels:
+      - dependencies
+      - rust
+    groups:
+      cargo-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+
+  # Android Gradle project (wrapper + plugins + dependencies under apps/android).
+  - package-ecosystem: gradle
+    directory: /apps/android
+    schedule:
+      interval: weekly
+      day: monday
+      time: "05:00"
+      timezone: Europe/Paris
+    open-pull-requests-limit: 10
+    labels:
+      - dependencies
+      - android
+    groups:
+      gradle-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
