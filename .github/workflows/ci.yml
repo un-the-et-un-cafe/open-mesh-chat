@@ -6,6 +6,11 @@ on:
   pull_request:
     # Also stacked PRs (feature branch onto feature branch).
     branches: [main, 'feat/**']
+  # Catch a new stable Rust (or other runner drift) breaking the build even
+  # when nothing was committed. Monday 05:00 UTC.
+  schedule:
+    - cron: "0 5 * * 1"
+  workflow_dispatch:
 
 permissions:
   contents: read
