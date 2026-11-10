@@ -35,7 +35,7 @@ plugins {
 
 android {
     namespace = "chat.omcp.app"
-    compileSdk = 36
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "chat.omcp.app"
