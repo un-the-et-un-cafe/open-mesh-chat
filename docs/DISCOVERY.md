@@ -3,8 +3,8 @@
 ## v0.1.41 — approval-only joins and icons deferred past v1.0
 
 - **Send:** `announce()` always sets `join_policy = 1` and `icon_hash = None` (`has_icon = 0`). There is no approval-only toggle on the founder listing sheet.
-- **Receive:** an announcement with `join_policy` other than 1, or with `has_icon = 1`, is stored, relayed and shown. `discovery_join` refuses a non-open listing (no pending Join, no control sent). Discover cards show "This community joins by invite. Ask a member for an invite." and no Join button. `icon_hash` is ignored; nothing is fetched; the 5 MB icon cache stays unused.
-- **Default icon (TM36):** community cards, the community detail header, and the create-chooser tile use the first letter of the name in place of the `#` tile.
+- **Receive:** an announcement with `join_policy` other than 1, or with `has_icon = 1`, is stored, relayed and shown. `discovery_join` refuses a non-open listing (no pending Join, no control sent). Discover cards show the non-interactive `u_comm_join_invite` line under the meta (no Join button; Hide and Report stay). `icon_hash` is ignored; nothing is fetched; the 5 MB icon cache stays unused.
+- **Default icon (TM36, §5.156):** `CommunityIcon` letter and colour rules as in DESIGN_SPEC §5Y (grapheme skip, `Locale.ROOT` uppercase, SHA-256 colour index, 40/32/56 sizes). The Community type badge stays a hash glyph. Private groups are unchanged.
 - **Still deferred / skipped:** the request/approve protocol and any icon set/fetch/verify protocol stay past v1.0. §23.4 Reported *threshold* (score, T, R, counter-votes) still has no v1.0 wire format — §23.3 (2026-11-09) parks gossiped `REPORT{}`, attestations, endorsements and counter-votes past v1.0; reports stay evidence files. The local hide hook for an already-Reported `community_ref` remains (`ctx.reported`, MR61).
 
 

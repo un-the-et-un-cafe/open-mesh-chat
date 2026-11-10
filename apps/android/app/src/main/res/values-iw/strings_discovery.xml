@@ -2,6 +2,6 @@
 <resources>
     <string name="u_lang_all">כל השפות</string>
     <string name="u_langs_l">שפות (עד 3, למשל en, fr)</string>
-    <string name="u_join_invite">הקהילה הזאת מצטרפים אליה בהזמנה. בקשו הזמנה מחבר.</string>
+    <string name="u_comm_join_invite">לקהילה הזו מצטרפים בהזמנה. בקשו הזמנה מאחד החברים.</string>
 </resources>
 

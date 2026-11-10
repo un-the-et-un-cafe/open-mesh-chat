@@ -2253,6 +2253,58 @@ There is **no “Delivered” state**: the protocol has no delivery receipt, onl
 
 **Accessibility:** contrast 0 failures (light + dark, 8 files, 801 measurements per theme, `a11y/v0126-contrast.md`). Targets ≥ 44 pt / 48 dp, focus ring on the switch row, toasts with Undo don’t steal focus, statuses are icon + text.
 
+## 5Y. v0.1.27 — Default community letter icon and invite-only listing line — 2026-11-10
+
+Lean addendum. Sources: REQUIREMENTS TM36, PROTOCOL §20.8(2) (deferred past v1.0, 2026-11-10, MR76). Custom community icons and approval-only joins are out of v1.0. This section only specifies the default letter tile that replaces the # tile, and the non-interactive line that replaces Join when a received listing has `join_policy` other than `1`. v1.0 apps still send `has_icon = 0` and `join_policy = 1`; a received `has_icon = 1` is ignored and the letter tile is shown. Generator `omcp-v0127/gen27.py`. Reference frames only (not a 6-variant set): `comm-icon-ref` (EN light), `comm-icon-ref--he-dark` (HE draft).
+
+### 5.156 Default community icon — `CommunityIcon` (letter tile)
+
+Replaces the # tile on discover cards, the community preview/detail header, Chats rows, and chat headers. Private groups are unchanged (letter on the existing solid avatar colour, plus the lock badge). The community *type* badge (hash glyph + “Community”) is also unchanged — it marks the kind of chat, not the community itself.
+
+**Letter rule.** Take the community’s display name and walk it as Unicode extended grapheme clusters (UAX #29; Android `BreakIterator.getCharacterInstance(ULocale.ROOT)`, Swift `Character`). Skip leading clusters that are only whitespace, only `#`, only punctuation (every non-mark code point has General_Category P*), or emoji (the cluster contains `Extended_Pictographic` or a Regional_Indicator pair, or is an emoji keycap / ZWJ sequence). The first remaining cluster is the icon. If that script has case, apply Unicode Default Case Conversion (locale-independent uppercase). Hebrew, Arabic, CJK and other caseless scripts stay as they are; a single RTL letter is drawn as-is, centred in the tile (do not mirror it). If nothing remains, the icon is `#` — a character in the same type, not the old hash glyph. The letter updates when the name changes; the colour does not (it is keyed to the community id).
+
+**Colour.** Deterministic from the community id, same on every phone. Hash `SHA-256("omcp-comm-icon-v1" || raw community id bytes)` and take `digest[0] % 6` as an index into this token palette (no new tokens). Every pair is AA ≥ 4.5:1 in light and dark:
+
+| Index | Letter | Tile |
+|---|---|---|
+| 0 | `--brand` | `--brand-soft` |
+| 1 | `--path-gateway` | `--path-gateway-soft` |
+| 2 | `--path-mixed` | `--path-mixed-soft` |
+| 3 | `--ok` | `--ok-soft` |
+| 4 | `--path-queue` | `--path-queue-soft` |
+| 5 | `--ink` | `--surface-2` |
+
+No border. Font is the system UI stack (`--f`), weight 700, centred, `letter-spacing: 0`. The tile is decorative (`aria-hidden="true"`): the adjacent name is the accessible name, and the letter is not announced again.
+
+**Sizes** (logical px):
+
+| Placement | Tile | Corner radius | Letter size |
+|---|---|---|---|
+| Discover card | 40×40 | 10 (`--r`) | 16 |
+| Chats row | 40×40 | 10 | 16 |
+| Chat header (thread nav) | 32×32 | 8 | 13 |
+| Preview / detail header | 56×56 | 12 | 22 |
+
+### 5.157 Invite-only listing line
+
+A listing whose `join_policy` is not `1` (open) never shows a Join button, on the discover card or on the preview/detail screen. In its place, show the non-interactive line `u_comm_join_invite`: “This community joins by invite. Ask a member for an invite.” Hide and Report stay as they are. Do not send a join from discovery.
+
+Style: not a button (no `role="button"`, no fill, no outline, no underline, no pressed state). Info icon (existing 16 px on cards, 18 px on preview, `aria-hidden`) + the sentence, `role="note"`, colour `--ink-2`, 13 px, regular weight. Contrast ≥ 4.5:1. On a discover card the line sits in the text column under the meta, full width of that column, not in the old Join slot; the ⋯ menu remains. On preview/detail it replaces the primary “Join community” button only. If the person is already a member, the line is not shown (they see the usual member view). Do not show `u_preview_note` (“Join to post or reply”) on an invite-only preview, because there is no Join on that screen.
+
+### 5.158 Copy (EN / FR / HE DRAFT)
+
+| Key | EN | FR | HE (DRAFT, pending native review) |
+|---|---|---|---|
+| `u_comm_join_invite` | This community joins by invite. Ask a member for an invite. | Cette communauté se rejoint sur invitation. Demandez une invitation à un membre. | לקהילה הזו מצטרפים בהזמנה. בקשו הזמנה מאחד החברים. |
+
+### 5.159 Open questions (for Proggy / Writey)
+
+1. **Colour hash.** The index uses `SHA-256("omcp-comm-icon-v1" || raw 32-byte community id)`, first byte modulo 6, so every phone paints the same tile. Confirm the hash (BLAKE2b would match `icon_hash`) and that the id is the raw bytes, not a hex string.
+2. **Uppercase locale.** Default Unicode uppercase (not the community’s language locale), so a Turkish `i` becomes `I`, not `İ`. Confirm, or key off the listing language.
+3. The `#` Community type badge stays a hash glyph. Confirm it should not switch to the letter tile.
+
+**Accessibility:** contrast 0 failures (light + dark, 2 frames, 48 measurements per theme, `a11y/v0127-contrast.md`). Hide, Report, Join and ⋯ targets stay ≥ 44 pt / 48 dp. Hebrew is RTL and still a draft pending native review (§5.106).
+
 ## 6. Path indicator component (normative UX)
 
 **`PathChip`:** pill, 7 px dot + label, colours from §2.1. Used in list rows (micro), status strip, settings legend.
@@ -2438,6 +2490,7 @@ Answered by Jakob on 2026-10-29 (v0.1.23):
 
 ## Document control
 
+- v0.1.27 (2026-11-10): §5Y default letter-tile community icon and invite-only listing line.
 - v0.1.26 (2026-10-31): §5X private invites and Live placement.
 - v0.1.25 (2026-10-31): §5W discovery, no community Live, self-harm notice, timed removal.
 - v0.1.24 (2026-10-30): §5V addendum for PR #22.
@@ -2446,6 +2499,7 @@ Answered by Jakob on 2026-10-29 (v0.1.23):
 
 | Version | Date | Notes |
 |---------|------|-------|
+| 0.1.27 | 2026-11-10 | Default community letter tile + invite-only listing line §5Y (5.156–5.159); 2 reference PNGs |
 | 0.1.0 | 2026-10-23 | First design pack: tokens, IA, MVP + v0.2 sketches, 6 HTML mockups |
 | 0.1.1 | 2026-10-24 | Hopla naming; §5.14–5.24 onboarding, contact add, file transfer; 11 new mockups (17 PNG frames); resolved v0.1.0 questions |
 | 0.1.2 | 2026-10-24 | 4-screen onboarding + recovery backup (§5.1, §5.14 updated; §5.25–5.31 new); §5.15/5.16/5.18 deprecated; 8 new + 1 updated mockups (24 PNG frames); new §12 questions |

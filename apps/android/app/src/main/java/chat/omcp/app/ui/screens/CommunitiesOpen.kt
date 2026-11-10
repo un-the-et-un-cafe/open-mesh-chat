@@ -76,15 +76,6 @@ import chat.omcp.app.ui.components.CalloutKind
 import chat.omcp.app.ui.components.EmptyState
 import chat.omcp.app.ui.theme.LocalOmcpColors
 
-/** Default community icon: first letter of the name (TM36). */
-@Composable
-fun CommunityIcon(name: String, modifier: Modifier = Modifier) {
-    val c = LocalOmcpColors.current
-    Box(modifier.size(40.dp).background(c.surface2, RoundedCornerShape(10.dp)), contentAlignment = Alignment.Center) {
-        Text(name.trim().take(1).uppercase(), fontWeight = FontWeight.Bold, color = c.ink2)
-    }
-}
-
 /** Round avatar with a lock corner badge (private group, §5.128). */
 @Composable
 fun GroupAvatar(name: String, modifier: Modifier = Modifier) {
@@ -165,7 +156,7 @@ fun OpenCommunitiesTab(core: OmcpCore, onOpen: (String) -> Unit, onOpenGroup: (S
             items(list, key = { it.id }) { k ->
                 Row(Modifier.fillMaxWidth().heightIn(min = 64.dp).clickable { onOpen(k.id) }.padding(horizontal = 16.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    CommunityIcon(k.name)
+                    CommunityIcon(k.name, k.id)
                     Column(Modifier.weight(1f)) {
                         Text(k.name, style = MaterialTheme.typography.titleMedium)
                         Text(stringResource(R.string.u_comm_lbl, k.members), color = c.ink2, style = MaterialTheme.typography.bodySmall)
@@ -215,7 +206,7 @@ fun OpenCommunityScreen(core: OmcpCore, id: String, onTopic: (String) -> Unit, o
             item {
                 Column(Modifier.padding(horizontal = 16.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        CommunityIcon(k?.name ?: "")
+                        CommunityIcon(k?.name ?: "", k?.id ?: "", CommunityIconSize.Detail)
                         // §5.149: size as the owner's bucket range, never a count.
                         val (lo, hi) = sizeRange(k?.members ?: 0)
                         Text(stringResource(R.string.u_comm_lbl_range, rangeText(lo, hi)), color = c.ink2)
@@ -303,7 +294,12 @@ fun OpenTopicScreen(core: OmcpCore, id: String, topicId: String, onBack: () -> U
         ReportSheet(stringResource(R.string.u_rep_c), onDismiss = { reporting = null }) { r, note -> core.openReportPost(id, pid, r, note) }
     }
     Scaffold(topBar = {
-        TopAppBar(title = { Text(title) }, navigationIcon = {
+        TopAppBar(title = {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                CommunityIcon(info?.name.orEmpty(), info?.id.orEmpty(), CommunityIconSize.Header)
+                Text(title)
+            }
+        }, navigationIcon = {
             IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.back)) }
         })
     }) { padding ->
