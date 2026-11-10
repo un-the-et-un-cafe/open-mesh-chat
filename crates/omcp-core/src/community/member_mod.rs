@@ -805,3 +805,38 @@ impl OwnerHandoverOffer {
         Ok(a)
     }
 }
+
+/// Candidate → owner: 64-byte accept signature for a prior request (1:1).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OwnerHandoverAccept {
+    pub community_ref: [u8; 32],
+    pub member_pk: [u8; 32],
+    pub owner_epoch: u64,
+    pub accept_sig: [u8; 64],
+}
+
+impl OwnerHandoverAccept {
+    pub const TYPE: u8 = 0x03;
+
+    pub fn encode(&self) -> Vec<u8> {
+        let mut b = vec![Self::TYPE];
+        b.extend_from_slice(&self.community_ref);
+        b.extend_from_slice(&self.member_pk);
+        b.extend_from_slice(&self.owner_epoch.to_be_bytes());
+        b.extend_from_slice(&self.accept_sig);
+        b
+    }
+
+    pub fn decode(b: &[u8]) -> Result<Self> {
+        if b.len() != 1 + 32 + 32 + 8 + 64 || b[0] != Self::TYPE {
+            return err("owner handover accept");
+        }
+        let a32 = |o: usize| -> [u8; 32] { b[o..o + 32].try_into().expect("32") };
+        Ok(Self {
+            community_ref: a32(1),
+            member_pk: a32(33),
+            owner_epoch: u64::from_be_bytes(b[65..73].try_into().expect("8")),
+            accept_sig: b[73..137].try_into().expect("64"),
+        })
+    }
+}

@@ -397,7 +397,9 @@ interface OmcpCore {
     fun groupLeave(groupId: String, newAdminPeerId: String? = null): Boolean = false
     /** §23.10.13(2)(f): owner leaves without successor (delists first if Listed). */
     fun leaveOwnerless(communityId: String): Boolean = false
-    /** §23.10.13: start handover — request hex for the candidate. */
+    /** §23.10.13: one-tap handover over 1:1 E2E (candidate must be a contact). */
+    fun handoverStart(communityId: String, candidateKeyHex: String): Boolean = false
+    /** Debug: request bytes hex (also tries 1:1 send). */
     fun handoverRequest(communityId: String, candidateKeyHex: String): String? = null
     /** Candidate: accept-sig hex for a request. */
     fun handoverMakeAccept(requestHex: String): String? = null

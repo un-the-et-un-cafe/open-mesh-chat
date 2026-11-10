@@ -1,5 +1,10 @@
 # OMCP Design Pack — Changelog
 
+## v0.1.38 — 2026-11-10
+
+- **Owner handover over 1:1 E2E:** request / accept (`OwnerHandoverAccept` 0x03) / offer travel as `application/omcp-owner-handover` media on the existing chat channel; inbox auto-advances the pipeline. Paste-hex kept only as a debug fallback when the candidate is not a contact.
+- **Automatic `community_sk` erase:** on gossiped `OWNER_HANDOVER`, the old owner's device drops `community_sk` using local `identity_pk`. Tests: erase + 1:1 pipeline.
+
 ## v0.1.37 — 2026-11-09
 
 Closes thin spots from v0.1.36:

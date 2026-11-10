@@ -4137,3 +4137,177 @@ fn old_epoch_tags_survive_restart_and_die_with_takedown() {
     restart(&a);
     assert!(!a.inner.lock().mesh.community.old_tags.contains_key(&gid));
 }
+
+#[test]
+fn owner_handover_erases_community_sk_for_old_owner() {
+    let a = node("Alice");
+    let c = a.open_community_create("Club".into()).unwrap();
+    let id = c.community_id_hex.clone();
+    a.open_community_set_listed(id.clone(), true, "hi".into(), 8, vec![], vec![])
+        .unwrap();
+    // community_sk must exist after listing.
+    {
+        let st = a.inner.lock();
+        let cid = parse_id(&id).unwrap();
+        assert!(st
+            .mesh
+            .discovery
+            .listed
+            .get(&cid)
+            .and_then(|r| r.community_sk)
+            .is_some());
+    }
+    // Candidate key: fabricate a member and signed OWNER_HANDOVER with Alice as actor.
+    let cand = {
+        let mut b = [0u8; 32];
+        getrandom::getrandom(&mut b).unwrap();
+        ed25519_dalek::SigningKey::from_bytes(&b)
+    };
+    let cand_pk = cand.verifying_key().to_bytes();
+    {
+        let mut st = a.inner.lock();
+        let cid = parse_id(&id).unwrap();
+        let com = st.mesh.open.communities.get_mut(&cid).unwrap();
+        com.members.insert(cand_pk);
+    }
+    let (k, _) = a.key_and_me().unwrap();
+    let cid = parse_id(&id).unwrap();
+    let cref = omcp_core::community::community_ref(&cid);
+    let epoch = 1u64;
+    let accept = omcp_core::community::owner_accept_sig(&cand, &cref, &cand_pk, epoch);
+    let action = omcp_core::community::build_signed_owner_handover(
+        &k,
+        &cid,
+        cand_pk,
+        epoch,
+        now_ms(),
+        &accept,
+    );
+    let ttl = a.inner.lock().mesh.engine.new_ttl();
+    let env = omcp_core::community::member_mod::seal_mod_action(&action, &cid, now_ms(), ttl);
+    assert!(a.inner.lock().on_open_community_envelope(&env).unwrap());
+    {
+        let st = a.inner.lock();
+        let com = st.mesh.open.get(&cid).unwrap();
+        assert_eq!(com.founder, cand_pk);
+        assert!(st
+            .mesh
+            .discovery
+            .listed
+            .get(&cid)
+            .unwrap()
+            .community_sk
+            .is_none());
+    }
+}
+
+#[test]
+fn owner_handover_travels_over_1to1() {
+    let a = node("Alice");
+    let b = node("Bob");
+    let _ = b.add_contact_from_qr(a.qr_payload()).unwrap();
+    let _ = a.add_contact_from_qr(b.qr_payload()).unwrap();
+    let c = a.open_community_create("Club".into()).unwrap();
+    let id = c.community_id_hex.clone();
+    let bob_pk = b.key_and_me().unwrap().1;
+    let alice_pk = a.key_and_me().unwrap().1;
+    {
+        let mut st = a.inner.lock();
+        st.mesh
+            .open
+            .communities
+            .get_mut(&parse_id(&id).unwrap())
+            .unwrap()
+            .members
+            .insert(bob_pk);
+    }
+    {
+        let mut st = b.inner.lock();
+        let com = a.inner.lock().mesh.open.communities[&parse_id(&id).unwrap()].clone();
+        st.mesh.open.communities.insert(parse_id(&id).unwrap(), com);
+        st.save_open_communities().unwrap();
+    }
+    a.open_community_set_listed(id.clone(), true, "hi".into(), 8, vec![], vec![])
+        .unwrap();
+    let req = a
+        .open_community_handover_request(id.clone(), hex::encode(bob_pk))
+        .unwrap();
+    b.on_owner_handover_msg(omcp_core::device::peer_id_from_identity(&alice_pk), &req)
+        .unwrap();
+    let acc_bytes = {
+        let st = b.inner.lock();
+        let peer = omcp_core::device::peer_id_from_identity(&alice_pk);
+        let q = st.queues.get(&peer).expect("accept queued");
+        let inner = q.back().expect("one").inner.clone();
+        let (_burn, content) = omcp_core::burn::decode_app(&inner).unwrap();
+        match content {
+            omcp_core::burn::AppContent::Media { bytes, mime } => {
+                assert_eq!(mime, crate::open_community::OWNER_HANDOVER_MIME);
+                bytes
+            }
+            _ => panic!("expected media"),
+        }
+    };
+    a.on_owner_handover_msg(
+        omcp_core::device::peer_id_from_identity(&bob_pk),
+        &acc_bytes,
+    )
+    .unwrap();
+    let offer_bytes = {
+        let st = a.inner.lock();
+        let peer = omcp_core::device::peer_id_from_identity(&bob_pk);
+        let q = st.queues.get(&peer).expect("offer queued");
+        let inner = q.back().expect("offer").inner.clone();
+        let (_burn, content) = omcp_core::burn::decode_app(&inner).unwrap();
+        match content {
+            omcp_core::burn::AppContent::Media { bytes, .. } => bytes,
+            _ => panic!("expected media"),
+        }
+    };
+    b.on_owner_handover_msg(
+        omcp_core::device::peer_id_from_identity(&alice_pk),
+        &offer_bytes,
+    )
+    .unwrap();
+    {
+        let st = b.inner.lock();
+        let com = st.mesh.open.get(&parse_id(&id).unwrap()).unwrap();
+        assert_eq!(com.founder, bob_pk);
+        assert!(com.admins.contains(&alice_pk));
+        assert!(st
+            .mesh
+            .discovery
+            .listed
+            .get(&parse_id(&id).unwrap())
+            .unwrap()
+            .community_sk
+            .is_some());
+    }
+    let action = {
+        let offer = omcp_core::community::OwnerHandoverOffer::decode(&offer_bytes).unwrap();
+        offer.verify_chain(now_ms()).unwrap()
+    };
+    let ttl = a.inner.lock().mesh.engine.new_ttl();
+    let env = omcp_core::community::member_mod::seal_mod_action(
+        &action,
+        &parse_id(&id).unwrap(),
+        now_ms(),
+        ttl,
+    );
+    assert!(a.inner.lock().on_open_community_envelope(&env).unwrap());
+    {
+        let st = a.inner.lock();
+        assert!(st
+            .mesh
+            .discovery
+            .listed
+            .get(&parse_id(&id).unwrap())
+            .unwrap()
+            .community_sk
+            .is_none());
+        assert_eq!(
+            st.mesh.open.get(&parse_id(&id).unwrap()).unwrap().founder,
+            bob_pk
+        );
+    }
+}

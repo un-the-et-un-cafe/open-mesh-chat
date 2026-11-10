@@ -553,10 +553,9 @@ fun OpenMembersScreen(core: OmcpCore, id: String, onBack: () -> Unit) {
 
 @Composable
 private fun OwnerHandoverSheet(core: OmcpCore, id: String, candidateKey: String, name: String, onDone: () -> Unit) {
-    var requestHex by remember { mutableStateOf<String?>(null) }
-    var acceptHex by remember { mutableStateOf("") }
-    var offerHex by remember { mutableStateOf<String?>(null) }
     var err by remember { mutableStateOf<String?>(null) }
+    var sent by remember { mutableStateOf(false) }
+    var debugHex by remember { mutableStateOf<String?>(null) }
     AlertDialog(
         onDismissRequest = onDone,
         title = { Text(stringResource(R.string.u_handover)) },
@@ -564,25 +563,21 @@ private fun OwnerHandoverSheet(core: OmcpCore, id: String, candidateKey: String,
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(stringResource(R.string.u_handover_d))
                 Text(name, style = MaterialTheme.typography.labelLarge)
-                if (requestHex == null) {
+                if (!sent) {
                     Button(onClick = {
-                        requestHex = core.handoverRequest(id, candidateKey)
-                        if (requestHex == null) err = "request failed"
+                        if (core.handoverStart(id, candidateKey)) {
+                            sent = true
+                        } else {
+                            err = "need contact + 1:1"
+                            debugHex = core.handoverRequest(id, candidateKey)
+                        }
                     }, modifier = Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.u_handover)) }
                 } else {
+                    Text(stringResource(R.string.u_handover_sent))
+                }
+                debugHex?.let {
                     Text(stringResource(R.string.u_handover_req), style = MaterialTheme.typography.bodySmall)
-                    Text(requestHex!!.take(64) + "…", style = MaterialTheme.typography.bodySmall)
-                    OutlinedTextField(acceptHex, { acceptHex = it }, label = { Text(stringResource(R.string.u_handover_accept_hint)) })
-                    Button(onClick = {
-                        offerHex = core.offerOwnerHandover(id, candidateKey, acceptHex.trim())
-                        if (offerHex == null) err = "offer failed"
-                    }, enabled = acceptHex.isNotBlank(), modifier = Modifier.heightIn(min = 48.dp)) {
-                        Text(stringResource(R.string.u_handover_make_offer))
-                    }
-                    offerHex?.let {
-                        Text(stringResource(R.string.u_handover_offer_ready), style = MaterialTheme.typography.bodySmall)
-                        Text(it.take(64) + "…", style = MaterialTheme.typography.bodySmall)
-                    }
+                    Text(it.take(64) + "…", style = MaterialTheme.typography.bodySmall)
                 }
                 err?.let { Text(it, color = LocalOmcpColors.current.danger) }
             }

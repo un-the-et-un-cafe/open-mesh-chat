@@ -8,18 +8,23 @@
 //! Team takedowns erase the community / topic / post on this device.
 
 use ed25519_dalek::SigningKey;
+use omcp_core::burn::AppContent;
 use omcp_core::community::member_mod::{
     self as mm, CommunityModActionV1, ModAction, RemovedBy, Role,
 };
 use omcp_core::community::{
     self as oc, build_signed_owner_handover, owner_accept_sig, Control, ControlKind,
-    OwnerHandoverOffer, OwnerHandoverRequest, Post, Wire,
+    OwnerHandoverAccept, OwnerHandoverOffer, OwnerHandoverRequest, Post, Wire,
 };
+use omcp_core::device::peer_id_from_identity;
 use omcp_core::EnvelopeV1;
 
 use crate::{invalid, now_ms, parse_id, FfiError, NodeState, OmcpNode};
 
 const STATE_KEY: &[u8] = b"open-communities-v1";
+
+/// 1:1 E2E payload for owner handover request / accept / offer (§23.10.13).
+pub const OWNER_HANDOVER_MIME: &str = "application/omcp-owner-handover";
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct OpenCommunityInfo {
@@ -145,10 +150,12 @@ impl NodeState {
                     // not relayed by this device's own store).
                     if self.mesh.open.apply_member_mod(&a, &m, now_ms()).is_ok() {
                         self.save_open_communities()?;
-                        if a.action == ModAction::OwnerHandover {
-                            // community_sk erase: callers use
-                            // open_community_erase_community_sk_if_handover after apply.
-                            let _ = a.actor_pk;
+                        if a.action == ModAction::OwnerHandover && a.actor_pk == self.identity_pk {
+                            // Old owner: erase community_sk after gossiped handover.
+                            if let Some(rec) = self.mesh.discovery.listed.get_mut(id) {
+                                rec.community_sk = None;
+                                self.save_listed()?;
+                            }
                         }
                     }
                     return Ok(true);
@@ -278,6 +285,107 @@ impl OmcpNode {
             .map_err(|_| invalid("community action refused"))?;
         st.save_open_communities()?;
         st.publish_open(&Wire::Control(c), &id)
+    }
+}
+
+impl OmcpNode {
+    /// Send a handover frame over the 1:1 E2E channel (contact required).
+    fn send_owner_handover_1to1(
+        &self,
+        member_pk: &[u8; 32],
+        bytes: Vec<u8>,
+    ) -> Result<(), FfiError> {
+        let contact = peer_id_from_identity(member_pk);
+        self.queue_app(
+            &hex::encode(contact),
+            AppContent::Media {
+                mime: OWNER_HANDOVER_MIME.into(),
+                bytes,
+            },
+            None,
+            None,
+            true,
+        )
+        .map(|_| ())
+    }
+
+    /// Process deferred inbound owner-handover frames (outside any node lock).
+    pub(crate) fn process_handover_inbox(&self) {
+        let inbox = std::mem::take(&mut self.inner.lock().mesh.handover_inbox);
+        for (from, bytes) in inbox {
+            let _ = self.on_owner_handover_msg(from, &bytes);
+        }
+    }
+
+    /// Handle one inbound 1:1 owner-handover payload (request / accept / offer).
+    pub(crate) fn on_owner_handover_msg(
+        &self,
+        from_peer: [u8; 32],
+        bytes: &[u8],
+    ) -> Result<(), FfiError> {
+        let now = now_ms();
+        match bytes.first().copied() {
+            Some(OwnerHandoverRequest::TYPE) => {
+                let req =
+                    OwnerHandoverRequest::decode(bytes).map_err(|_| invalid("handover request"))?;
+                if req.expires_ms <= now {
+                    return Ok(());
+                }
+                let (k, me) = self.key_and_me()?;
+                {
+                    let st = self.inner.lock();
+                    let Some(c) = st.mesh.open.get(&req.community_id) else {
+                        return Ok(());
+                    };
+                    if !c.members.contains(&me) || c.founder == me {
+                        return Ok(());
+                    }
+                    if c.founder != req.owner_pk {
+                        return Ok(());
+                    }
+                    if from_peer != peer_id_from_identity(&req.owner_pk) {
+                        return Ok(());
+                    }
+                }
+                let sig = owner_accept_sig(&k, &req.community_ref, &me, req.owner_epoch);
+                let acc = OwnerHandoverAccept {
+                    community_ref: req.community_ref,
+                    member_pk: me,
+                    owner_epoch: req.owner_epoch,
+                    accept_sig: sig,
+                };
+                self.send_owner_handover_1to1(&req.owner_pk, acc.encode())?;
+            }
+            Some(OwnerHandoverAccept::TYPE) => {
+                let acc =
+                    OwnerHandoverAccept::decode(bytes).map_err(|_| invalid("handover accept"))?;
+                if from_peer != peer_id_from_identity(&acc.member_pk) {
+                    return Ok(());
+                }
+                let id = {
+                    let st = self.inner.lock();
+                    st.mesh
+                        .open
+                        .communities
+                        .iter()
+                        .find(|(cid, _)| oc::community_ref(cid) == acc.community_ref)
+                        .map(|(cid, _)| *cid)
+                };
+                let Some(id) = id else {
+                    return Ok(());
+                };
+                let _ = self.open_community_offer_owner_handover(
+                    hex::encode(id),
+                    hex::encode(acc.member_pk),
+                    acc.accept_sig.to_vec(),
+                )?;
+            }
+            Some(OwnerHandoverOffer::TYPE) => {
+                self.open_community_accept_owner_handover(bytes.to_vec())?;
+            }
+            _ => return Err(invalid("handover type")),
+        }
+        Ok(())
     }
 }
 
@@ -653,8 +761,6 @@ impl OmcpNode {
         v
     }
 
-    /// Anonymous report of a community post: the author-signed post plus a
-    /// reason and optional note. No reporter key or identity (Q40).
     /// §23.10.13(2): start a handover — returns a request the candidate accepts.
     pub fn open_community_handover_request(
         &self,
@@ -684,7 +790,29 @@ impl OmcpNode {
             owner_epoch: epoch,
             expires_ms: now.saturating_add(7 * 86_400_000),
         };
-        Ok(req.encode())
+        let bytes = req.encode();
+        drop(st);
+        // Prefer 1:1 E2E; ignore send errors so paste-hex debug fallback still works.
+        let _ = self.send_owner_handover_1to1(&cand, bytes.clone());
+        Ok(bytes)
+    }
+
+    /// Owner: start handover over 1:1 (same as request; kept for a clear app API).
+    pub fn open_community_handover_start(
+        &self,
+        community_id_hex: String,
+        candidate_key_hex: String,
+    ) -> Result<(), FfiError> {
+        let cand = parse_id(&candidate_key_hex)?;
+        let contact = peer_id_from_identity(&cand);
+        {
+            let st = self.inner.lock();
+            if !st.contacts.contains_key(&contact) {
+                return Err(FfiError::UnknownContact);
+            }
+        }
+        self.open_community_handover_request(community_id_hex, candidate_key_hex)
+            .map(|_| ())
     }
 
     /// Candidate: produce the 64-byte accept signature for a handover request.
@@ -711,6 +839,15 @@ impl OmcpNode {
             return Err(invalid("request from non-owner"));
         }
         let sig = owner_accept_sig(&k, &req.community_ref, &me, req.owner_epoch);
+        let acc = OwnerHandoverAccept {
+            community_ref: req.community_ref,
+            member_pk: me,
+            owner_epoch: req.owner_epoch,
+            accept_sig: sig,
+        };
+        let bytes = acc.encode();
+        drop(st);
+        let _ = self.send_owner_handover_1to1(&req.owner_pk, bytes.clone());
         Ok(sig.to_vec())
     }
 
@@ -763,7 +900,10 @@ impl OmcpNode {
             action_bytes: a.encode(),
         };
         st.save_listed()?;
-        Ok(offer.encode())
+        let bytes = offer.encode();
+        drop(st);
+        let _ = self.send_owner_handover_1to1(&cand, bytes.clone());
+        Ok(bytes)
     }
 
     /// Candidate: verify the chain, apply + gossip OWNER_HANDOVER, store community_sk.
@@ -876,6 +1016,8 @@ impl OmcpNode {
         Ok(())
     }
 
+    /// Anonymous report of a community post: the author-signed post plus a
+    /// reason and optional note. No reporter key or identity (Q40).
     pub fn open_community_report_post(
         &self,
         community_id_hex: String,

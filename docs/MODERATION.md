@@ -1,5 +1,10 @@
 # Hopla team moderation
 
+## v0.1.38 — handover 1:1 transport + auto sk erase
+
+- Request / accept / offer sent over 1:1 E2E (`application/omcp-owner-handover`); receivers auto-complete the next step.
+- Old owner erases `community_sk` when a gossiped action 4 names them as `actor_pk`.
+
 ## v0.1.37 — owner handover chain + admin UI
 
 - Full owner-handover accept path: request → accept-sig → pre-signed action 4 (note = accept-sig) → offer with community_sk; `verify_chain` on receive; old owner erases community_sk.
