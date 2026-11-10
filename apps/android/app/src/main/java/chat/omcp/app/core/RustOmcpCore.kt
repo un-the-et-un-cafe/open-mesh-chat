@@ -270,6 +270,8 @@ class RustOmcpCore : OmcpCore {
     private fun toHex(bs: ByteArray?) = bs?.joinToString("") { b -> "%02x".format(b.toInt() and 0xff) }
     override fun leaveOwnerless(communityId: String): Boolean =
         runCatching { node?.openCommunityLeaveOwnerless(communityId); true }.getOrDefault(false)
+    override fun handoverStart(communityId: String, candidateKeyHex: String): Boolean =
+        runCatching { node?.openCommunityHandoverStart(communityId, candidateKeyHex); true }.getOrDefault(false)
     override fun handoverRequest(communityId: String, candidateKeyHex: String): String? =
         runCatching { toHex(node?.openCommunityHandoverRequest(communityId, candidateKeyHex)) }.getOrNull()
     override fun handoverMakeAccept(requestHex: String): String? =

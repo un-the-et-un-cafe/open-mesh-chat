@@ -547,6 +547,8 @@ impl Contact {
 }
 
 pub(crate) struct NodeState {
+    /// Ed25519 verifying key (identity); used for OWNER_HANDOVER sk erase.
+    identity_pk: [u8; 32],
     contacts: HashMap<[u8; 32], Contact>,
     queues: HashMap<[u8; 32], VecDeque<Queued>>,
     /// Received burn content (crypto-shredding store).
@@ -763,6 +765,10 @@ impl OmcpNode {
         let seed = recovery::phrase_to_seed(&phrase)?;
         let peer_id = core_device::peer_id_from_seed(&seed)?;
         let legacy_id = core_device::legacy_dh_public(&seed)?;
+        let identity_pk = core_device::identity_signing_key(&seed)
+            .map_err(|_| invalid("identity"))?
+            .verifying_key()
+            .to_bytes();
         // v0.1.4a: stores bound to the legacy X25519 id move to the PeerID.
         let legacy_install = db.rebind_owner(&legacy_id, &peer_id)?;
         let device =
@@ -781,6 +787,7 @@ impl OmcpNode {
                 device: Mutex::new(device),
                 prev_device: Mutex::new(prev_device),
                 state: Mutex::new(NodeState {
+                    identity_pk,
                     contacts: HashMap::new(),
                     queues: HashMap::new(),
                     burn_in: BurnStore::default(),
@@ -1665,7 +1672,14 @@ impl MeshLink {
                         node.persist_file_events(&out, from, now_ms())?;
                     }
                     let replies = node.queues.get(&peer).is_some_and(|q| !q.is_empty());
+                    let has_handover = !node.mesh.handover_inbox.is_empty();
                     drop(node);
+                    if has_handover {
+                        OmcpNode {
+                            inner: self.node.clone(),
+                        }
+                        .process_handover_inbox();
+                    }
                     if replies {
                         self.flush_locked(&mut st, &mut out)?;
                     }
@@ -1900,6 +1914,12 @@ impl MeshLink {
             (None, AppContent::Media { mime, bytes }) if mime == omcp_core::live::INVITE_MIME => {
                 // Live invite: stream key over the E2EE chat; no chat row.
                 node.on_live_invite(peer, &bytes, out)?;
+            }
+            (None, AppContent::Media { mime, bytes })
+                if mime == crate::open_community::OWNER_HANDOVER_MIME =>
+            {
+                // Defer to OmcpNode (needs signing key); no chat row.
+                node.mesh.handover_inbox.push((peer, bytes));
             }
             (None, AppContent::Media { mime, bytes })
                 if mime == omcp_core::live::signal::SIGNAL_MIME =>

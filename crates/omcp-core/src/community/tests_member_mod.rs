@@ -597,6 +597,13 @@ fn mr74_owner_handover_offer_accept_and_roster() {
         expires_ms: NOW + 7 * 86_400_000,
     };
     assert_eq!(OwnerHandoverRequest::decode(&req.encode()).unwrap(), req);
+    let acc = OwnerHandoverAccept {
+        community_ref: cref,
+        member_pk: pk(&cand),
+        owner_epoch: epoch,
+        accept_sig: accept,
+    };
+    assert_eq!(OwnerHandoverAccept::decode(&acc.encode()).unwrap(), acc);
 }
 
 #[test]

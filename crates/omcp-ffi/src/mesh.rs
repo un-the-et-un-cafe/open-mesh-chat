@@ -203,6 +203,8 @@ pub(crate) struct MeshState {
     pub invites: crate::invites::InviteState,
     /// §20.8 listings we own and joins started from discovery.
     pub discovery: crate::discovery::DiscoveryState,
+    /// Inbound owner-handover 1:1 frames waiting for OmcpNode processing.
+    pub handover_inbox: Vec<([u8; 32], Vec<u8>)>,
 }
 
 impl MeshState {
@@ -227,6 +229,7 @@ impl MeshState {
             invites: Default::default(),
             discovery: Default::default(),
             restore_hold: None,
+            handover_inbox: Vec::new(),
         }
     }
 
@@ -977,8 +980,16 @@ impl MeshLink {
             node.db().put_mesh_seen(&env.envelope_id, until)?;
             Self::deliver(&mut node, peer, &env, CONTENT_TYPE_INNER_V1, &plain, out)?;
         }
+        let has_handover = !node.mesh.handover_inbox.is_empty();
         if news_via {
             node.save_news()?;
+        }
+        drop(node);
+        if has_handover {
+            crate::OmcpNode {
+                inner: self.node.clone(),
+            }
+            .process_handover_inbox();
         }
         Ok(())
     }
