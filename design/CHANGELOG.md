@@ -1,5 +1,11 @@
 # OMCP Design Pack — Changelog
 
+## v0.1.39 — 2026-11-10
+
+- **Pending leaves use real online status:** `online_leaves_for` (self + live-link peers) drives `leave_commit_due` instead of the fixed `[u32::MAX]` sentinel.
+- **`u_inv_more` menu:** Block / Report on incoming private-group invites live under a ⋯ menu (Accept / Decline stay primary).
+- **1:1 old-epoch tags:** `contact_old_tags` keeps retired MLS tag secrets 7 days and across restarts, same idea as private-group `old_tags`.
+
 ## v0.1.38 — 2026-11-10
 
 - **Owner handover over 1:1 E2E:** request / accept (`OwnerHandoverAccept` 0x03) / offer travel as `application/omcp-owner-handover` media on the existing chat channel; inbox auto-advances the pipeline. Paste-hex kept only as a debug fallback when the candidate is not a contact.
