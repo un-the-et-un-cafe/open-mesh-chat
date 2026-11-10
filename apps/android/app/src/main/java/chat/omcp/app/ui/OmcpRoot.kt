@@ -5,7 +5,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Chat
+import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.Newspaper
@@ -181,7 +181,7 @@ fun OmcpRoot(
         bottomBar = {
             if (showBar) {
                 NavigationBar {
-                    NavigationBarItem(route == Routes.Chats, { nav.tab(Routes.Chats) }, { Icon(Icons.Default.Chat, null) }, label = { Text(stringResource(R.string.tab_chats)) })
+                    NavigationBarItem(route == Routes.Chats, { nav.tab(Routes.Chats) }, { Icon(Icons.AutoMirrored.Filled.Chat, null) }, label = { Text(stringResource(R.string.tab_chats)) })
                     NavigationBarItem(route == Routes.News, { nav.tab(Routes.News) }, { Icon(Icons.Default.Newspaper, null) }, label = { Text(stringResource(R.string.tab_news)) })
                     NavigationBarItem(route == Routes.Communities, { nav.tab(Routes.Communities) }, { Icon(Icons.Default.Groups, null) }, label = { Text(stringResource(R.string.tab_communities)) })
                     NavigationBarItem(route == Routes.You, { nav.tab(Routes.You) }, { Icon(Icons.Default.Person, null) }, label = { Text(stringResource(R.string.tab_you)) })

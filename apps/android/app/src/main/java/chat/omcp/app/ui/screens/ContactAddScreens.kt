@@ -217,9 +217,17 @@ fun MyQrScreen(vm: ContactAddViewModel, onBack: () -> Unit, onScanTheirs: () -> 
     val activity = LocalContext.current as? ComponentActivity
     DisposableEffect(Unit) { // raise brightness while shown, restore on leave
         val w = activity?.window
-        val old = w?.attributes?.screenBrightness
-        w?.attributes = w?.attributes?.apply { screenBrightness = 1f }
-        onDispose { w?.attributes = w?.attributes?.apply { screenBrightness = old ?: WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE } }
+        if (w == null) {
+            onDispose { }
+        } else {
+            val old = w.attributes.screenBrightness
+            w.attributes = w.attributes.apply { screenBrightness = 1f }
+            onDispose {
+                w.attributes = w.attributes.apply {
+                    screenBrightness = old
+                }
+            }
+        }
     }
     Scaffold(
         topBar = {

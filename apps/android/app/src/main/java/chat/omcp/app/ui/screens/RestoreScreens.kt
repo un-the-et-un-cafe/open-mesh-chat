@@ -157,7 +157,7 @@ fun RestorePasswordScreen(s: OnboardingState, vm: OnboardingViewModel, io: Corou
             isError = s.restoreWrong,
             singleLine = true,
             visualTransformation = PasswordVisualTransformation(),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrect = false),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false),
             modifier = Modifier.fillMaxWidth(),
         )
         if (locked) {

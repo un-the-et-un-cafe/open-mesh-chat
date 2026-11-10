@@ -58,7 +58,7 @@ fun BackupSettingsScreen(
                 label = { Text(if (s.driveOn) stringResource(R.string.backup_change_pw) else stringResource(R.string.onb_backup_password)) },
                 supportingText = { Text(stringResource(R.string.backup_pw_rule)) },
                 visualTransformation = PasswordVisualTransformation(),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrect = false),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false),
                 modifier = Modifier.fillMaxWidth(),
             )
             Button(onClick = { io.launch(kotlinx.coroutines.Dispatchers.IO) { vm.uploadWithPassword() } }, enabled = s.passwordOk, modifier = Modifier.fillMaxWidth()) {
